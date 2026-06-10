@@ -1,12 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import {
   stepPolice,
+  stepPoliceCar,
   hasCaught,
   policeSpeedForStars,
   policeSpeedFor,
   POLICE_BASE_SPEED,
   type Police,
 } from './policeAI';
+import { buildCity, tileCenter, type City } from './city';
 import { vec2, distance } from './vector';
 
 const cop = (overrides: Partial<Police> = {}): Police => ({
@@ -70,5 +72,37 @@ describe('hasCaught', () => {
 
   it('is false outside the police radius', () => {
     expect(hasCaught(cop({ radius: 12 }), vec2(50, 0))).toBe(false);
+  });
+});
+
+describe('stepPoliceCar', () => {
+  const city: City = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+  const insideBuilding = (p: { x: number; y: number }): boolean =>
+    city.buildings.some((b) => p.x > b.x && p.x < b.x + b.w && p.y > b.y && p.y < b.y + b.h);
+
+  it('drives along the road toward a target down the same lane', () => {
+    const start = tileCenter(city.spec, 0, 4); // road row 4
+    const patrol = cop({ pos: start, heading: 0, kind: 'car' });
+    const next = stepPoliceCar(patrol, tileCenter(city.spec, 8, 4), city, 1 / 60, 200);
+    expect(next.pos.x).toBeGreaterThan(start.x); // moved east, toward the target
+    expect(next.pos.y).toBeCloseTo(start.y);
+  });
+
+  it('chases along the grid and never enters a building', () => {
+    let patrol = cop({ pos: tileCenter(city.spec, 0, 4), heading: 0, kind: 'car' });
+    const target = tileCenter(city.spec, 8, 8); // requires turning off row 4
+    const startDist = distance(patrol.pos, target);
+    for (let i = 0; i < 600; i++) {
+      patrol = stepPoliceCar(patrol, target, city, 1 / 60, 200);
+      expect(insideBuilding(patrol.pos)).toBe(false);
+    }
+    expect(distance(patrol.pos, target)).toBeLessThan(startDist); // it closed in
+  });
+
+  it('turns back at a dead end rather than leaving the road', () => {
+    // Easternmost road tile on row 4; pushing east would leave the map.
+    const start = vec2(767, tileCenter(city.spec, 11, 4).y);
+    const next = stepPoliceCar(cop({ pos: start, heading: 0, kind: 'car' }), vec2(2000, start.y), city, 1 / 60, 200);
+    expect(insideBuilding(next.pos)).toBe(false);
   });
 });

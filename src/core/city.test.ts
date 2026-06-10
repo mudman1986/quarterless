@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildCity, tileCenter, boundaryWalls, DEFAULT_CITY } from './city';
-import { circleIntersectsRect } from './collision';
+import { rect, circleIntersectsRect } from './collision';
 import { vec2 } from './vector';
 
 describe('buildCity', () => {
@@ -27,6 +27,24 @@ describe('buildCity', () => {
     const intersection = tileCenter(DEFAULT_CITY, 5, 5);
     const onAnyBuilding = city.buildings.some((b) => circleIntersectsRect(intersection, 8, b));
     expect(onAnyBuilding).toBe(false);
+  });
+});
+
+describe('buildCity with a road margin', () => {
+  it('insets each building within its block footprint', () => {
+    const margin = 16;
+    const city = buildCity({ cols: 10, rows: 10, tile: 64, block: 5, margin });
+    // Block (0,0): tiles x0=1,y0=1, w=4,h=4 -> base rect (64,64,256,256), inset by 16.
+    expect(city.buildings[0]).toEqual(rect(80, 80, 224, 224));
+  });
+
+  it('widens the drivable space beside a road', () => {
+    const plain = buildCity({ cols: 10, rows: 10, tile: 64, block: 5 });
+    const roomy = buildCity({ cols: 10, rows: 10, tile: 64, block: 5, margin: 16 });
+    // A point just past the road edge (tile 0 is road, tile 1 begins at x=64).
+    const besideRoad = vec2(70, 96);
+    expect(plain.buildings.some((b) => circleIntersectsRect(besideRoad, 4, b))).toBe(true);
+    expect(roomy.buildings.some((b) => circleIntersectsRect(besideRoad, 4, b))).toBe(false);
   });
 });
 

@@ -92,7 +92,7 @@ Deployment is automated via GitHub Actions
 
 ## Project structure
 
-```
+```text
 .
 ├─ src/
 │  ├─ core/        # pure game logic (TDD, no engine) + *.test.ts
@@ -103,6 +103,7 @@ Deployment is automated via GitHub Actions
 │     ├─ main.ts
 │     ├─ input/KeyboardInput.ts
 │     ├─ audio/Sound.ts
+│     ├─ art/textures.ts
 │     └─ scenes/CityScene.ts
 ├─ e2e/            # Playwright smoke tests
 ├─ .github/workflows/deploy.yml
@@ -121,11 +122,13 @@ gameplay phase adds pure logic to `src/core/` **test-first**, then wires it into
 Phaser adapter.
 
 ### Phase 0 — Scaffolding & local play loop ✅
+
 TypeScript + Vite + Phaser, Vitest + Playwright, ESLint/Prettier, npm scripts, the
 `core/` + `game/` split, a "hello Phaser" scene, and the first unit test. Proves the
 local build/play/test loop works.
 
 ### Phase 1 — CI/CD pipeline ✅
+
 GitHub Actions workflow with a `test` job and a `deploy` job (`needs: test`) so tests
 always gate deployment to GitHub Pages.
 
@@ -139,6 +142,7 @@ GitHub Actions in the workflow are **pinned to full commit SHAs** for supply-cha
 safety (Dependabot bumps the SHAs and keeps the version comments accurate).
 
 ### Phase 2 — Movement & the city (first playable MVP) ✅
+
 Test-first `core` modules: `entity` (walking), `vehicle` (arcade car physics),
 `collision` (circle-vs-rect resolution), `city` (block layout), and the `world`
 tick loop. Adapter ([src/game/scenes/CityScene.ts](src/game/scenes/CityScene.ts)):
@@ -146,6 +150,7 @@ a tile-based city, a player on foot, camera follow, building collision, and the
 ability to enter and drive a car (Arrows/WASD to move, Space to enter/exit).
 
 ### Phase 3 — Pedestrians & police ✅
+
 Test-first `pedestrianAI` (wander + flee from threats), `policeAI` (pursuit, speed
 scales with wanted level), and the `wantedLevel` heat/star model. Integrated into the
 `world`: pedestrians wander and flee the player's car, running one over raises the
@@ -153,8 +158,10 @@ wanted level, police spawn from the map corners to pursue, and heat decays over 
 (police disperse when clear). The HUD shows the wanted stars.
 
 ### Phase 3.5 — A living city & getting busted ✅
+
 Test-first `trafficAI` (NPC cars that follow the road grid, turn at intersections, and
 turn back at dead ends). Integrated into the `world`:
+
 - **Bigger map** — the city is now a roomy 60×60 tile grid.
 - **Traffic** — cars appear as a mix of **parked** vehicles and ones **driven by NPCs**;
   the player can hijack a moving car, which stops its driver.
@@ -166,8 +173,10 @@ turn back at dead ends). Integrated into the `world`:
   screen and respawns at the start after a 10s timer or immediately on **Enter**.
 
 ### Phase 4 — Combat, missions & score ✅
+
 Test-first `weapon` (pistol, bullets), `health` (player pool), `mission` (objective
 state machine), and `score`. Integrated into the `world`:
+
 - **Shooting** — press **F** (or Shift) to fire; bullets travel, stop at buildings,
   and kill pedestrians or police on contact.
 - **Score & kills** — eliminating a pedestrian or officer (by gun or by car) scores
@@ -179,8 +188,10 @@ state machine), and `score`. Integrated into the `world`:
 - **HUD** — wanted stars, health, money (with best), ammo, and the current objective.
 
 ### Phase 5 — Polish ✅
+
 Test-first `campaign` (a chain of missions played one after another) and `highScore`
 (persistence through a small key/value port). Integrated into the game:
+
 - **A short campaign** — three escalating missions (reach + eliminate), each banking
   a bigger reward; the HUD shows the active mission and “ALL MISSIONS COMPLETE”.
 - **High score** — the best score is saved to `localStorage` (with an in-memory
@@ -190,6 +201,25 @@ Test-first `campaign` (a chain of missions played one after another) and `highSc
 - **Audio** — defensive procedural Web Audio sound effects (shot, hit, busted/wasted,
   mission fanfare); no asset files, unlocked on first key press.
 
+### Phase 6 — Depth & feel ✅
+
+A round of new features and fixes on top of the MVP:
+
+- **Varied campaign** — five missions spanning `reach`, `eliminate`, `collect`,
+  `survive`, and `wanted`-level objectives (test-first `campaign` + new objective
+  kinds). Each new mission/objective is announced with an on-screen banner.
+- **Ammo pickups** — ammo crates sit at intersections; driving or walking over one
+  refills the pistol. The HUD warns when ammo is low, and crates show on the minimap.
+- **Minimap** — a corner minimap shows the streets, the player, police, ammo crates,
+  and the current objective.
+- **Generated sprite art** — cars, the player, pedestrians, police, and crates are
+  drawn from runtime-generated textures; buildings gain rooftops and lit windows.
+- **Smoother driving** — buildings are inset from the roads (`CitySpec.margin`) for
+  wider, more forgiving streets.
+- **Smarter police** — patrol cars follow the road grid toward the player instead of
+  cutting through buildings, and now physically collide with the player's car.
+
 ### Out of scope (for now)
+
 Multiplayer, mobile/touch controls (keyboard-only MVP), and any backend — the game
 is a fully static site.

@@ -15,7 +15,33 @@ export interface EliminateObjective {
   count: number;
 }
 
-export type Objective = ReachObjective | EliminateObjective;
+/** Collect a number of pickups. */
+export interface CollectObjective {
+  kind: 'collect';
+  description: string;
+  count: number;
+}
+
+/** Stay alive for a number of seconds. */
+export interface SurviveObjective {
+  kind: 'survive';
+  description: string;
+  seconds: number;
+}
+
+/** Reach a given wanted-level star rating. */
+export interface WantedObjective {
+  kind: 'wanted';
+  description: string;
+  stars: number;
+}
+
+export type Objective =
+  | ReachObjective
+  | EliminateObjective
+  | CollectObjective
+  | SurviveObjective
+  | WantedObjective;
 
 export type MissionStatus = 'active' | 'completed';
 
@@ -36,6 +62,22 @@ export interface MissionContext {
   playerPos: Vec2;
   /** Total eliminations so far this run. */
   kills: number;
+  /** Total pickups collected so far this run. */
+  collected: number;
+  /** Total seconds elapsed so far this run. */
+  elapsed: number;
+  /** Current wanted-level star rating. */
+  wantedStars: number;
+}
+
+/**
+ * Counters captured when the current objective began, so progress
+ * (kills/pickups/time) is measured relative to its start.
+ */
+export interface MissionBaseline {
+  kills: number;
+  collected: number;
+  elapsed: number;
 }
 
 export interface MissionSpec {
@@ -61,29 +103,31 @@ export function currentObjective(m: Mission): Objective | null {
   return m.status === 'active' ? m.objectives[m.currentIndex] : null;
 }
 
-function isObjectiveMet(obj: Objective, ctx: MissionContext, killsAtStart: number): boolean {
+function isObjectiveMet(obj: Objective, ctx: MissionContext, base: MissionBaseline): boolean {
   switch (obj.kind) {
     case 'reach':
       return distance(ctx.playerPos, obj.target) <= obj.radius;
     case 'eliminate':
-      return ctx.kills - killsAtStart >= obj.count;
+      return ctx.kills - base.kills >= obj.count;
+    case 'collect':
+      return ctx.collected - base.collected >= obj.count;
+    case 'survive':
+      return ctx.elapsed - base.elapsed >= obj.seconds;
+    case 'wanted':
+      return ctx.wantedStars >= obj.stars;
   }
 }
 
 /**
  * Advance the mission against the current context. Completes the active
  * objective when met and moves to the next; marks the mission completed after
- * the last. Pure: returns a new mission. `killsAtStart` is the kill count when
- * the current objective began (for eliminate objectives).
+ * the last. Pure: returns a new mission. `baseline` holds the counters captured
+ * when the current objective began (for relative progress).
  */
-export function updateMission(
-  m: Mission,
-  ctx: MissionContext,
-  killsAtStart: number,
-): Mission {
+export function updateMission(m: Mission, ctx: MissionContext, baseline: MissionBaseline): Mission {
   const obj = currentObjective(m);
   if (!obj) return m;
-  if (!isObjectiveMet(obj, ctx, killsAtStart)) return m;
+  if (!isObjectiveMet(obj, ctx, baseline)) return m;
 
   const nextIndex = m.currentIndex + 1;
   if (nextIndex >= m.objectives.length) {

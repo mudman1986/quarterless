@@ -10,25 +10,31 @@ import {
 import type { Car } from '../../core/vehicle';
 import type { Pedestrian } from '../../core/pedestrianAI';
 import type { TrafficAI } from '../../core/trafficAI';
+import type { AmmoPickup } from '../../core/weapon';
 import { vec2, type Vec2 } from '../../core/vector';
 import { KeyboardInput } from '../input/KeyboardInput';
 import { Sound } from '../audio/Sound';
+import { createGameTextures, TEX } from '../art/textures';
 
 const COLORS = {
   road: 0x2b2b30,
-  roadLine: 0x3f3f46,
+  roadLine: 0x52525b,
   building: 0x4b5563,
-  buildingEdge: 0x1f2937,
-  player: 0x39ff14,
-  playerStroke: 0x166534,
-  car: 0xef4444,
-  carStroke: 0x7f1d1d,
-  pedestrian: 0xfbbf24,
-  police: 0x3b82f6,
-  policeStroke: 0x1e3a8a,
-  windshield: 0x0f172a,
+  buildingEdge: 0x111827,
+  buildingRoof: 0x596577,
+  window: 0xfde68a,
+  windowDark: 0x334155,
   bullet: 0xfde047,
   marker: 0x22d3ee,
+  ammo: 0xfacc15,
+  // Minimap.
+  mmBg: 0x0b0f17,
+  mmRoad: 0x334155,
+  mmBuilding: 0x1e293b,
+  mmPlayer: 0x39ff14,
+  mmPolice: 0x3b82f6,
+  mmTarget: 0x22d3ee,
+  mmAmmo: 0xfacc15,
 };
 
 /**
@@ -48,17 +54,24 @@ function safeStorage(): KeyValueStore {
   };
 }
 
-/** A roomy city: 60x60 tiles (~3840px square). */
-const CITY_SPEC = { cols: 60, rows: 60, tile: 64, block: 5 };
+/**
+ * A roomy city: 60x60 tiles, with buildings inset from the roads (`margin`) so
+ * there is comfortable driving space along every street.
+ */
+const CITY_SPEC = { cols: 60, rows: 60, tile: 64, block: 5, margin: 18 };
 const FIXED_STEP = 1 / 60;
 const MAX_SUBSTEPS = 5;
 const PLAYER_SIZE = 14;
-const CAR_LENGTH = 30;
-const CAR_WIDTH = 16;
 const PED_SIZE = 10;
+/** Car body width (px), used to offset parked cars to the kerb. */
+const CAR_WIDTH = 18;
 /** A focus jump larger than this (px) means the player wrapped a map edge:
  * snap the camera there rather than panning smoothly across the whole city. */
 const WRAP_SNAP_DISTANCE = 256;
+/** On-screen size of the square minimap. */
+const MINIMAP_SIZE = 168;
+/** Seconds a mission announcement banner stays on screen. */
+const ANNOUNCE_SECONDS = 3.2;
 
 /**
  * Renders the core `World` simulation with Phaser. The scene owns no game
@@ -70,18 +83,21 @@ export class CityScene extends Phaser.Scene {
   private world!: World;
   private input_!: KeyboardInput;
 
-  private playerSprite!: Phaser.GameObjects.Container;
-  private carSprites: Phaser.GameObjects.Container[] = [];
-  private pedSprites: Phaser.GameObjects.Arc[] = [];
-  private policeSprites: {
-    sprite: Phaser.GameObjects.Container | Phaser.GameObjects.Arc;
-    kind: 'foot' | 'car';
-  }[] = [];
+  private playerSprite!: Phaser.GameObjects.Image;
+  private carSprites: Phaser.GameObjects.Image[] = [];
+  private pedSprites: Phaser.GameObjects.Image[] = [];
+  private policeSprites: Phaser.GameObjects.Image[] = [];
   private bulletSprites: Phaser.GameObjects.Rectangle[] = [];
+  private ammoSprites: { sprite: Phaser.GameObjects.Image; pickup: AmmoPickup }[] = [];
   private missionMarker!: Phaser.GameObjects.Arc;
   private focusPoint!: Phaser.GameObjects.Rectangle;
   private hud!: Phaser.GameObjects.Text;
   private bustedText!: Phaser.GameObjects.Text;
+  private banner!: Phaser.GameObjects.Text;
+
+  // Minimap.
+  private minimapBg!: Phaser.GameObjects.Image;
+  private minimapDots!: Phaser.GameObjects.Graphics;
 
   private accumulator = 0;
 
@@ -92,11 +108,15 @@ export class CityScene extends Phaser.Scene {
   /** Procedural sound effects. */
   private readonly sfx = new Sound();
 
-  // Previous-frame snapshots, for detecting events worth a sound.
+  // Previous-frame snapshots, for detecting events worth a sound or a banner.
   private prevBullets = 0;
   private prevKills = 0;
   private prevStatus: 'playing' | 'busted' | 'wasted' = 'playing';
   private prevMissionComplete = false;
+  private prevMissionId: string | null = null;
+  private prevObjective = '';
+  /** Seconds left to show the announcement banner. */
+  private announceRemaining = 0;
 
   constructor() {
     super('City');
@@ -104,6 +124,7 @@ export class CityScene extends Phaser.Scene {
 
   create(): void {
     this.city = buildCity(CITY_SPEC);
+    createGameTextures(this);
     const spawn = tileCenter(this.city.spec, this.city.spec.block, this.city.spec.block);
 
     const traffic = this.spawnTraffic();
@@ -116,6 +137,7 @@ export class CityScene extends Phaser.Scene {
       city: this.city,
       pedestrians: this.spawnPedestrians(),
       policeSpawns: this.policeSpawnPoints(),
+      ammoPickups: this.spawnAmmoPickups(),
       bounds: { width: this.city.width, height: this.city.height },
       walls: [...this.city.buildings],
       bestScore: this.savedBest,
@@ -126,6 +148,7 @@ export class CityScene extends Phaser.Scene {
     this.createEntitySprites();
     this.setupCamera();
     this.createHud();
+    this.createMinimap();
 
     this.input_ = new KeyboardInput(this.input.keyboard!);
     // Browsers block audio until a user gesture: unlock on the first key press.
@@ -182,7 +205,19 @@ export class CityScene extends Phaser.Scene {
     return [vec2(40, 40), vec2(width - 40, 40), vec2(40, height - 40), vec2(width - 40, height - 40)];
   }
 
-  /** A short campaign of escalating missions across the city. */
+  /** Ammo crates sit at road intersections around town. */
+  private spawnAmmoPickups(): AmmoPickup[] {
+    const { spec } = this.city;
+    const pickups: AmmoPickup[] = [];
+    for (let tx = spec.block * 2; tx < spec.cols; tx += spec.block * 3) {
+      for (let ty = spec.block * 2; ty < spec.rows; ty += spec.block * 3) {
+        pickups.push({ pos: tileCenter(spec, tx, ty), amount: 18 });
+      }
+    }
+    return pickups;
+  }
+
+  /** A short campaign of escalating, varied missions across the city. */
   private buildCampaign(): Mission[] {
     const { spec } = this.city;
     const b = spec.block;
@@ -195,25 +230,37 @@ export class CityScene extends Phaser.Scene {
             kind: 'reach',
             description: 'Reach the marked junction (F to shoot)',
             target: tileCenter(spec, b * 3, b * 2),
-            radius: 48,
+            radius: 56,
           },
           { kind: 'eliminate', description: 'Take out 3 targets', count: 3 },
         ],
         reward: 1000,
       }),
       createMission({
-        id: 'heat',
-        title: 'Heat Wave',
+        id: 'supply',
+        title: 'Tooled Up',
         objectives: [
+          { kind: 'collect', description: 'Grab 2 ammo crates', count: 2 },
           {
             kind: 'reach',
-            description: 'Drive across town to the docks',
-            target: tileCenter(spec, spec.cols - b * 2, spec.rows - b * 2),
+            description: 'Deliver to the lockup',
+            target: tileCenter(spec, b * 6, b * 7),
             radius: 56,
           },
-          { kind: 'eliminate', description: 'Eliminate 5 more targets', count: 5 },
         ],
-        reward: 2500,
+        reward: 1500,
+      }),
+      createMission({
+        id: 'rampage',
+        title: 'Send a Message',
+        objectives: [{ kind: 'wanted', description: 'Reach a 3-star wanted level', stars: 3 }],
+        reward: 2000,
+      }),
+      createMission({
+        id: 'laylow',
+        title: 'Lay Low',
+        objectives: [{ kind: 'survive', description: 'Evade the law for 30s', seconds: 30 }],
+        reward: 3000,
       }),
       createMission({
         id: 'mostwanted',
@@ -228,69 +275,65 @@ export class CityScene extends Phaser.Scene {
     const { width, height, spec } = this.city;
     this.cameras.main.setBackgroundColor(COLORS.road);
 
-    // Lane markings along the road grid.
+    // Lane markings down the middle of every road.
     const lines = this.add.graphics();
-    lines.lineStyle(2, COLORS.roadLine, 1);
+    lines.lineStyle(2, COLORS.roadLine, 0.5);
     for (let tx = 0; tx <= spec.cols; tx += spec.block) {
-      lines.lineBetween(tx * spec.tile + spec.tile / 2, 0, tx * spec.tile + spec.tile / 2, height);
+      const x = tx * spec.tile + spec.tile / 2;
+      lines.lineBetween(x, 0, x, height);
     }
     for (let ty = 0; ty <= spec.rows; ty += spec.block) {
-      lines.lineBetween(0, ty * spec.tile + spec.tile / 2, width, ty * spec.tile + spec.tile / 2);
+      const y = ty * spec.tile + spec.tile / 2;
+      lines.lineBetween(0, y, width, y);
     }
 
-    // Buildings.
-    const blocks = this.add.graphics();
-    for (const b of this.city.buildings) {
-      blocks.fillStyle(COLORS.building, 1);
-      blocks.fillRect(b.x, b.y, b.w, b.h);
-      blocks.lineStyle(3, COLORS.buildingEdge, 1);
-      blocks.strokeRect(b.x, b.y, b.w, b.h);
-    }
+    // Buildings with rooftops and lit windows for a denser city look.
+    const g = this.add.graphics();
+    const shades = [0x3f4654, 0x4b5563, 0x434b59, 0x515b6b, 0x3a4150];
+    this.city.buildings.forEach((b, i) => {
+      g.fillStyle(shades[i % shades.length], 1);
+      g.fillRect(b.x, b.y, b.w, b.h);
+      g.fillStyle(COLORS.buildingRoof, 1);
+      g.fillRect(b.x + 5, b.y + 5, b.w - 10, b.h - 10);
+      g.lineStyle(2, COLORS.buildingEdge, 1);
+      g.strokeRect(b.x, b.y, b.w, b.h);
+
+      // A grid of windows; a deterministic few are "lit".
+      const pad = 12;
+      const cell = 18;
+      for (let wx = b.x + pad; wx <= b.x + b.w - pad - 8; wx += cell) {
+        for (let wy = b.y + pad; wy <= b.y + b.h - pad - 8; wy += cell) {
+          const lit = (Math.floor(wx) + Math.floor(wy)) % 3 === 0;
+          g.fillStyle(lit ? COLORS.window : COLORS.windowDark, lit ? 0.85 : 1);
+          g.fillRect(wx, wy, 8, 8);
+        }
+      }
+    });
   }
 
   private createEntitySprites(): void {
     // A pulsing ring marking the current 'reach' objective.
     this.missionMarker = this.add
-      .circle(0, 0, 48, COLORS.marker, 0.12)
+      .circle(0, 0, 52, COLORS.marker, 0.12)
       .setStrokeStyle(3, COLORS.marker)
       .setDepth(3)
       .setVisible(false);
 
-    this.carSprites = this.world.cars.map((car) => {
-      const sprite = this.makeCarSprite(COLORS.car, COLORS.carStroke);
-      sprite.setPosition(car.pos.x, car.pos.y).setRotation(car.heading);
-      return sprite;
-    });
+    this.carSprites = this.world.cars.map((car) =>
+      this.add.image(car.pos.x, car.pos.y, TEX.npcCar).setDepth(4).setRotation(car.heading),
+    );
 
-    this.pedSprites = this.world.pedestrians.map((ped) => this.makePersonSprite(ped, COLORS.pedestrian));
+    this.pedSprites = this.world.pedestrians.map((ped) =>
+      this.add.image(ped.pos.x, ped.pos.y, TEX.pedestrian).setDepth(5),
+    );
+
+    this.ammoSprites = this.world.ammoPickups.map((pickup) => ({
+      pickup,
+      sprite: this.add.image(pickup.pos.x, pickup.pos.y, TEX.ammo).setDepth(5),
+    }));
 
     const p = this.world.player;
-    this.playerSprite = this.makePlayerSprite();
-    this.playerSprite.setPosition(p.pos.x, p.pos.y).setRotation(p.angle);
-  }
-
-  /** A car body with a darker windshield near the front, so facing is visible. */
-  private makeCarSprite(fill: number, stroke: number): Phaser.GameObjects.Container {
-    const body = this.add.rectangle(0, 0, CAR_LENGTH, CAR_WIDTH, fill).setStrokeStyle(2, stroke);
-    const windshield = this.add.rectangle(CAR_LENGTH / 2 - 6, 0, 6, CAR_WIDTH - 5, COLORS.windshield, 0.7);
-    return this.add.container(0, 0, [body, windshield]).setDepth(4);
-  }
-
-  /** The player: a body square with a bright nose marking the way they face. */
-  private makePlayerSprite(): Phaser.GameObjects.Container {
-    const body = this.add
-      .rectangle(0, 0, PLAYER_SIZE, PLAYER_SIZE, COLORS.player)
-      .setStrokeStyle(2, COLORS.playerStroke);
-    const nose = this.add.rectangle(PLAYER_SIZE / 2 - 1, 0, 4, PLAYER_SIZE - 4, 0xeafff0);
-    return this.add.container(0, 0, [body, nose]).setDepth(10);
-  }
-
-  /** A person (pedestrian or foot officer) drawn as a small round token. */
-  private makePersonSprite(at: { pos: Vec2 }, fill: number): Phaser.GameObjects.Arc {
-    return this.add
-      .circle(at.pos.x, at.pos.y, PED_SIZE / 2 + 1, fill)
-      .setStrokeStyle(2, 0x000000, 0.25)
-      .setDepth(5);
+    this.playerSprite = this.add.image(p.pos.x, p.pos.y, TEX.player).setDepth(10).setRotation(p.angle);
   }
 
   /** Reconcile the bullet sprite pool with the live bullets. */
@@ -343,12 +386,80 @@ export class CityScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(2000)
       .setVisible(false);
+
+    // A transient banner that announces each new mission / objective.
+    this.banner = this.add
+      .text(this.scale.width / 2, 84, '', {
+        fontFamily: 'monospace',
+        fontSize: '20px',
+        color: '#67e8f9',
+        align: 'center',
+        backgroundColor: '#000000b0',
+        padding: { x: 18, y: 10 },
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(1500)
+      .setVisible(false);
+  }
+
+  /** Build the corner minimap: a static city backdrop plus a live dot overlay. */
+  private createMinimap(): void {
+    const scale = MINIMAP_SIZE / this.city.width;
+    const g = this.make.graphics({ x: 0, y: 0 }, false);
+    g.fillStyle(COLORS.mmRoad, 1);
+    g.fillRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
+    g.fillStyle(COLORS.mmBuilding, 1);
+    for (const b of this.city.buildings) {
+      g.fillRect(b.x * scale, b.y * scale, Math.max(1, b.w * scale), Math.max(1, b.h * scale));
+    }
+    g.generateTexture('minimap-bg', MINIMAP_SIZE, MINIMAP_SIZE);
+    g.destroy();
+
+    this.minimapBg = this.add
+      .image(0, 0, 'minimap-bg')
+      .setOrigin(0, 0)
+      .setScrollFactor(0)
+      .setDepth(1400)
+      .setAlpha(0.85);
+    this.minimapDots = this.add.graphics().setScrollFactor(0).setDepth(1401);
+  }
+
+  /** Redraw the minimap's moving dots (player, police, ammo, objective). */
+  private syncMinimap(): void {
+    const scale = MINIMAP_SIZE / this.city.width;
+    const ox = this.scale.width - MINIMAP_SIZE - 12;
+    const oy = 12;
+    this.minimapBg.setPosition(ox, oy);
+
+    const g = this.minimapDots;
+    g.clear();
+
+    const objective = this.world.missionObjective;
+    if (objective && objective.kind === 'reach') {
+      g.lineStyle(2, COLORS.mmTarget, 1);
+      g.strokeCircle(ox + objective.target.x * scale, oy + objective.target.y * scale, 4);
+    }
+
+    g.fillStyle(COLORS.mmAmmo, 1);
+    for (const a of this.world.ammoPickups) {
+      g.fillRect(ox + a.pos.x * scale - 1, oy + a.pos.y * scale - 1, 3, 3);
+    }
+
+    g.fillStyle(COLORS.mmPolice, 1);
+    for (const cop of this.world.police) {
+      g.fillCircle(ox + cop.pos.x * scale, oy + cop.pos.y * scale, 2);
+    }
+
+    g.fillStyle(COLORS.mmPlayer, 1);
+    g.fillCircle(ox + this.world.focus.x * scale, oy + this.world.focus.y * scale, 3);
   }
 
   update(_time: number, deltaMs: number): void {
     const controls = this.input_.read();
+    const dt = deltaMs / 1000;
 
-    this.accumulator += deltaMs / 1000;
+    this.accumulator += dt;
     let steps = 0;
     while (this.accumulator >= FIXED_STEP && steps < MAX_SUBSTEPS) {
       this.world.tick(controls, FIXED_STEP);
@@ -357,10 +468,18 @@ export class CityScene extends Phaser.Scene {
     }
 
     this.syncSprites();
+    this.syncMinimap();
     this.handleEvents();
+
+    // Count down the announcement banner.
+    if (this.announceRemaining > 0) {
+      this.announceRemaining -= dt;
+      this.banner.setPosition(this.scale.width / 2, 84);
+      if (this.announceRemaining <= 0) this.banner.setVisible(false);
+    }
   }
 
-  /** Persist the high score and play sounds for things that just happened. */
+  /** Persist the high score, play sounds, and announce mission changes. */
   private handleEvents(): void {
     const w = this.world;
 
@@ -372,47 +491,69 @@ export class CityScene extends Phaser.Scene {
     if (w.bullets.length > this.prevBullets) this.sfx.shot();
     if (w.kills > this.prevKills) this.sfx.hit();
     if (w.status !== 'playing' && this.prevStatus === 'playing') this.sfx.fail();
-    if (w.missionComplete && !this.prevMissionComplete) this.sfx.fanfare();
+
+    const missionId = w.mission?.id ?? null;
+    const objective = w.missionObjective?.description ?? '';
+    if (w.missionComplete && !this.prevMissionComplete) {
+      this.sfx.fanfare();
+      this.showBanner('ALL MISSIONS COMPLETE!');
+    } else if (missionId !== this.prevMissionId) {
+      // A new mission begins — the first one, or after finishing the previous.
+      if (this.prevMissionId !== null) this.sfx.fanfare();
+      if (w.mission) this.showBanner(`NEW MISSION\n${w.mission.title}\n${objective}`);
+    } else if (objective !== '' && objective !== this.prevObjective) {
+      this.showBanner(objective); // next objective within the same mission
+    }
 
     this.prevBullets = w.bullets.length;
     this.prevKills = w.kills;
     this.prevStatus = w.status;
     this.prevMissionComplete = w.missionComplete;
+    this.prevMissionId = missionId;
+    this.prevObjective = objective;
+  }
+
+  /** Flash a banner message for a few seconds. */
+  private showBanner(text: string): void {
+    this.banner.setText(text).setVisible(true);
+    this.announceRemaining = ANNOUNCE_SECONDS;
   }
 
   private syncSprites(): void {
     this.world.cars.forEach((car, i) => {
-      const sprite = this.carSprites[i];
-      sprite.setPosition(car.pos.x, car.pos.y);
-      sprite.setRotation(car.heading);
+      this.carSprites[i]
+        .setTexture(i === this.world.drivingCarIndex ? TEX.playerCar : TEX.npcCar)
+        .setPosition(car.pos.x, car.pos.y)
+        .setRotation(car.heading);
     });
 
     // Pedestrians can be removed (run over): hide any surplus sprites.
     this.pedSprites.forEach((sprite, i) => {
       const ped = this.world.pedestrians[i];
-      if (ped) {
-        sprite.setVisible(true).setPosition(ped.pos.x, ped.pos.y);
-      } else {
-        sprite.setVisible(false);
-      }
+      if (ped) sprite.setVisible(true).setPosition(ped.pos.x, ped.pos.y);
+      else sprite.setVisible(false);
     });
+
+    // Ammo crates disappear once their specific pickup is collected.
+    for (const { sprite, pickup } of this.ammoSprites) {
+      sprite.setVisible(this.world.ammoPickups.includes(pickup));
+    }
 
     // Police spawn dynamically and arrive on foot or in patrol cars.
     this.world.police.forEach((cop, i) => {
-      let entry = this.policeSprites[i];
-      if (!entry || entry.kind !== cop.kind) {
-        entry?.sprite.destroy();
-        const sprite =
-          cop.kind === 'car'
-            ? this.makeCarSprite(COLORS.police, COLORS.policeStroke).setDepth(6)
-            : this.makePersonSprite(cop, COLORS.police).setDepth(6);
-        entry = { sprite, kind: cop.kind };
-        this.policeSprites[i] = entry;
+      let sprite = this.policeSprites[i];
+      if (!sprite) {
+        sprite = this.add.image(cop.pos.x, cop.pos.y, TEX.policeFoot).setDepth(6);
+        this.policeSprites[i] = sprite;
       }
-      entry.sprite.setVisible(true).setPosition(cop.pos.x, cop.pos.y).setRotation(cop.heading);
+      sprite
+        .setTexture(cop.kind === 'car' ? TEX.policeCar : TEX.policeFoot)
+        .setVisible(true)
+        .setPosition(cop.pos.x, cop.pos.y)
+        .setRotation(cop.heading);
     });
     for (let i = this.world.police.length; i < this.policeSprites.length; i++) {
-      this.policeSprites[i].sprite.setVisible(false);
+      this.policeSprites[i].setVisible(false);
     }
 
     this.syncBullets();
@@ -464,11 +605,16 @@ export class CityScene extends Phaser.Scene {
         ? `▶ ${w.mission.title}: ${w.missionObjective?.description ?? ''}`
         : '';
 
+    const ammo =
+      w.weapon.ammo <= 4
+        ? `Pistol ${w.weapon.ammo}  ⚠ LOW — grab a crate`
+        : `Pistol ${w.weapon.ammo}`;
+
     const status = w.isDriving
       ? `DRIVING ${speed}  ·  WASD steer · Space exit · F shoot`
       : 'ON FOOT  ·  WASD move · Space car · F shoot';
 
-    return [`WANTED ${stars}    HP ${hp}`, `${money}    Pistol ${w.weapon.ammo}`, mission, status]
+    return [`WANTED ${stars}    HP ${hp}`, `${money}    ${ammo}`, mission, status]
       .filter(Boolean)
       .join('\n');
   }

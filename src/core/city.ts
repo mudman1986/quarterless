@@ -11,6 +11,11 @@ export interface CitySpec {
   tile: number;
   /** Tiles per block; every `block`-th row/column is a road lane. */
   block: number;
+  /**
+   * Pixels each building is inset from its block edges, widening the drivable
+   * space along the roads. Optional; defaults to 0 (buildings meet the road).
+   */
+  margin?: number;
 }
 
 export interface City {
@@ -33,6 +38,7 @@ export const DEFAULT_CITY: CitySpec = { cols: 25, rows: 25, tile: 64, block: 5 }
  */
 export function buildCity(spec: CitySpec = DEFAULT_CITY): City {
   const { cols, rows, tile, block } = spec;
+  const margin = spec.margin ?? 0;
   const isRoad = (tx: number, ty: number): boolean => tx % block === 0 || ty % block === 0;
 
   const buildings: Rect[] = [];
@@ -43,7 +49,10 @@ export function buildCity(spec: CitySpec = DEFAULT_CITY): City {
       const w = Math.min((bx + 1) * block, cols) - x0;
       const h = Math.min((by + 1) * block, rows) - y0;
       if (w > 0 && h > 0) {
-        buildings.push(rect(x0 * tile, y0 * tile, w * tile, h * tile));
+        // Inset by `margin` so the building does not butt right up to the road.
+        buildings.push(
+          rect(x0 * tile + margin, y0 * tile + margin, w * tile - 2 * margin, h * tile - 2 * margin),
+        );
       }
     }
   }

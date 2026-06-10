@@ -5,7 +5,7 @@ import {
   isCampaignComplete,
   updateCampaign,
 } from './campaign';
-import { createMission, updateMission, type Objective } from './mission';
+import { createMission, updateMission, type Objective, type MissionContext } from './mission';
 import { vec2 } from './vector';
 
 const reach = (target = vec2(0, 0)): Objective => ({
@@ -17,6 +17,16 @@ const reach = (target = vec2(0, 0)): Objective => ({
 
 const mission = (id: string, reward = 100) =>
   createMission({ id, title: id, objectives: [reach()], reward });
+
+/** A mission context at a player position, with no other progress. */
+const at = (pos = vec2(0, 0)): MissionContext => ({
+  playerPos: pos,
+  kills: 0,
+  collected: 0,
+  elapsed: 0,
+  wantedStars: 0,
+});
+const fresh = { kills: 0, collected: 0, elapsed: 0 };
 
 describe('createCampaign', () => {
   it('starts on the first mission', () => {
@@ -37,7 +47,7 @@ describe('updateCampaign', () => {
   it('keeps the current mission while it is still active', () => {
     const c = createCampaign([mission('a'), mission('b')]);
     // Mission still active (player far from the target): index stays.
-    const advanced = updateMission(currentMission(c)!, { playerPos: vec2(500, 0), kills: 0 }, 0);
+    const advanced = updateMission(currentMission(c)!, at(vec2(500, 0)), fresh);
     const next = updateCampaign(c, advanced);
     expect(next.currentIndex).toBe(0);
     expect(currentMission(next)?.id).toBe('a');
@@ -45,7 +55,7 @@ describe('updateCampaign', () => {
 
   it('advances to the next mission once the current one is complete', () => {
     const c = createCampaign([mission('a'), mission('b')]);
-    const done = updateMission(currentMission(c)!, { playerPos: vec2(0, 0), kills: 0 }, 0);
+    const done = updateMission(currentMission(c)!, at(vec2(0, 0)), fresh);
     const next = updateCampaign(c, done);
     expect(next.currentIndex).toBe(1);
     expect(currentMission(next)?.id).toBe('b');
@@ -54,7 +64,7 @@ describe('updateCampaign', () => {
 
   it('finishes the campaign after the last mission completes', () => {
     let c = createCampaign([mission('a')]);
-    const done = updateMission(currentMission(c)!, { playerPos: vec2(0, 0), kills: 0 }, 0);
+    const done = updateMission(currentMission(c)!, at(vec2(0, 0)), fresh);
     c = updateCampaign(c, done);
     expect(isCampaignComplete(c)).toBe(true);
     expect(currentMission(c)).toBeNull();
@@ -62,14 +72,14 @@ describe('updateCampaign', () => {
 
   it('does not mutate the input campaign', () => {
     const c = createCampaign([mission('a'), mission('b')]);
-    const done = updateMission(currentMission(c)!, { playerPos: vec2(0, 0), kills: 0 }, 0);
+    const done = updateMission(currentMission(c)!, at(vec2(0, 0)), fresh);
     updateCampaign(c, done);
     expect(c.currentIndex).toBe(0);
   });
 
   it('is a no-op once the campaign is finished', () => {
     let c = createCampaign([mission('a')]);
-    const done = updateMission(currentMission(c)!, { playerPos: vec2(0, 0), kills: 0 }, 0);
+    const done = updateMission(currentMission(c)!, at(vec2(0, 0)), fresh);
     c = updateCampaign(c, done); // now complete
     const after = updateCampaign(c, done);
     expect(after).toEqual(c);

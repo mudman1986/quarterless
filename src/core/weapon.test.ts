@@ -4,6 +4,7 @@ import {
   canFire,
   cool,
   fire,
+  giveAmmo,
   stepBullet,
   bulletHits,
 } from './weapon';
@@ -73,5 +74,15 @@ describe('bulletHits', () => {
   it('misses outside the target radius', () => {
     const { bullet } = fire(createPistol(), vec2(0, 0), 0);
     expect(bulletHits(bullet!, vec2(50, 0), 10)).toBe(false);
+  });
+});
+
+describe('giveAmmo', () => {
+  it('adds ammo to the weapon', () => {
+    expect(giveAmmo(createPistol({ ammo: 5 }), 10).ammo).toBe(15);
+  });
+
+  it('ignores a negative amount', () => {
+    expect(giveAmmo(createPistol({ ammo: 5 }), -10).ammo).toBe(5);
   });
 });

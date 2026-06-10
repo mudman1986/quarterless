@@ -11,7 +11,7 @@ import {
 } from './vehicle';
 import { type OnFootActor, walk } from './entity';
 import { type Pedestrian, stepPedestrian } from './pedestrianAI';
-import { type Police, policeSpeedFor, stepPolice, hasCaught } from './policeAI';
+import { type Police, policeSpeedFor, stepPolice, stepPoliceCar, hasCaught } from './policeAI';
 import { type TrafficAI, stepTraffic, TRAFFIC_SPEED, obstacleAhead } from './trafficAI';
 import type { City } from './city';
 import {
@@ -26,9 +26,11 @@ import {
 import {
   type Weapon,
   type Bullet,
+  type AmmoPickup,
   createPistol,
   cool,
   fire,
+  giveAmmo,
   stepBullet,
   bulletHits,
 } from './weapon';
@@ -37,6 +39,7 @@ import { type Score, createScore, award } from './score';
 import {
   type Mission,
   type Objective,
+  type MissionBaseline,
   currentObjective,
   updateMission,
   isComplete,
@@ -79,6 +82,8 @@ export interface WorldOptions {
   mission?: Mission;
   /** An optional series of missions played one after another. */
   missions?: Mission[];
+  /** Ammo pickups scattered around the map. */
+  ammoPickups?: AmmoPickup[];
   /** RNG injected for deterministic pedestrian wandering in tests. */
   rng?: () => number;
 }
@@ -99,6 +104,8 @@ export const BULLET_RADIUS = 2;
 export const SCORE_PER_PEDESTRIAN = 50;
 /** Score awarded for eliminating a police officer. */
 export const SCORE_PER_POLICE = 150;
+/** How close the player must be to an ammo pickup to collect it. */
+export const AMMO_PICKUP_RADIUS = 22;
 
 /**
  * Authoritative game simulation. Holds all entities and advances them with a
@@ -122,6 +129,10 @@ export class World {
   score: Score;
   /** Targets the player has eliminated this run. */
   kills = 0;
+  /** Ammo (and other) pickups the player has collected this run. */
+  collected = 0;
+  /** Ammo pickups still on the map. */
+  ammoPickups: AmmoPickup[];
   readonly enterRadius: number;
   drivingCarIndex: number | null = null;
   /** Whether the game is in normal play or showing the busted/wasted screen. */
@@ -139,8 +150,10 @@ export class World {
   private prevConfirm = false;
   /** The campaign of missions being tracked, or null when there are none. */
   private campaign: Campaign | null;
-  /** The kill count when the current mission objective began. */
-  private objectiveStartKills = 0;
+  /** The counters captured when the current mission objective began. */
+  private objectiveBaseline: MissionBaseline = { kills: 0, collected: 0, elapsed: 0 };
+  /** Seconds elapsed in the current run (drives survive objectives). */
+  private elapsed = 0;
 
   constructor(opts: WorldOptions) {
     this.player = opts.player;
@@ -161,6 +174,7 @@ export class World {
     this.score = createScore(opts.bestScore ?? 0);
     const missions = opts.missions ?? (opts.mission ? [opts.mission] : []);
     this.campaign = missions.length > 0 ? createCampaign(missions) : null;
+    this.ammoPickups = opts.ammoPickups ?? [];
   }
 
   get isDriving(): boolean {
@@ -222,6 +236,7 @@ export class World {
     }
 
     const actionPressed = c.action && !this.prevAction; // rising edge only
+    this.elapsed += dt;
     if (this.isDriving) {
       this.updateDriving(c, dt, actionPressed);
     } else {
@@ -231,9 +246,11 @@ export class World {
     this.resolveCarCollisions();
     this.updatePedestrians(dt);
     this.checkRoadKill();
+    this.collectAmmo();
     this.updateWeapon(c, dt);
     this.updateBullets(dt);
     this.updateWantedAndPolice(dt);
+    this.resolvePoliceVehicleCollisions();
     this.updateMissionProgress();
     this.checkBusted();
     this.prevAction = c.action;
@@ -287,6 +304,41 @@ export class World {
         this.cars[j] = b;
       }
     }
+  }
+
+  /** Make patrol cars physically collide with the player's car (no driving through). */
+  private resolvePoliceVehicleCollisions(): void {
+    const idx = this.drivingCarIndex;
+    if (idx === null) return;
+    let car = this.cars[idx];
+    this.police = this.police.map((cop) => {
+      if (cop.kind !== 'car') return cop;
+      const [movedCar, movedCop] = collideCars(car, {
+        pos: cop.pos,
+        heading: cop.heading,
+        speed: 0,
+        radius: cop.radius,
+      });
+      car = movedCar;
+      return { ...cop, pos: movedCop.pos };
+    });
+    this.cars[idx] = car;
+  }
+
+  /** Collect any ammo pickup the player is standing on (on foot or driving). */
+  private collectAmmo(): void {
+    if (this.ammoPickups.length === 0) return;
+    const reach = AMMO_PICKUP_RADIUS + this.player.radius;
+    const remaining: AmmoPickup[] = [];
+    for (const pickup of this.ammoPickups) {
+      if (distance(this.focus, pickup.pos) <= reach) {
+        this.weapon = giveAmmo(this.weapon, pickup.amount);
+        this.collected += 1;
+      } else {
+        remaining.push(pickup);
+      }
+    }
+    this.ammoPickups = remaining;
   }
 
   /** Wrap a position so leaving one edge of the map re-enters the opposite one. */
@@ -419,17 +471,28 @@ export class World {
     if (!mission) return; // campaign finished
     const advanced = updateMission(
       mission,
-      { playerPos: this.focus, kills: this.kills },
-      this.objectiveStartKills,
+      {
+        playerPos: this.focus,
+        kills: this.kills,
+        collected: this.collected,
+        elapsed: this.elapsed,
+        wantedStars: this.wantedStars,
+      },
+      this.objectiveBaseline,
     );
     if (advanced.currentIndex !== mission.currentIndex) {
-      this.objectiveStartKills = this.kills; // the next objective counts from here
+      this.objectiveBaseline = this.baselineNow(); // the next objective counts from here
     }
     if (isComplete(advanced) && !isComplete(mission)) {
       this.score = award(this.score, advanced.reward);
-      this.objectiveStartKills = this.kills; // the next mission counts from here
+      this.objectiveBaseline = this.baselineNow(); // the next mission counts from here
     }
     this.campaign = updateCampaign(this.campaign, advanced);
+  }
+
+  /** Snapshot the progress counters for measuring the next objective. */
+  private baselineNow(): MissionBaseline {
+    return { kills: this.kills, collected: this.collected, elapsed: this.elapsed };
   }
 
   private updateWantedAndPolice(dt: number): void {
@@ -462,9 +525,12 @@ export class World {
       this.police = survivors;
     }
 
-    // Police pursue the player but, like everyone else, cannot walk through
-    // buildings.
+    // Police pursue the player. Patrol cars follow the road grid (when a city is
+    // present); officers on foot home in directly but cannot cross buildings.
     this.police = this.police.map((cop) => {
+      if (cop.kind === 'car' && this.city) {
+        return stepPoliceCar(cop, this.focus, this.city, dt, policeSpeedFor('car', this.wantedStars));
+      }
       const stepped = stepPolice(cop, this.focus, dt, policeSpeedFor(cop.kind, this.wantedStars));
       return { ...stepped, pos: resolveCircleRects(stepped.pos, stepped.radius, this.walls) };
     });

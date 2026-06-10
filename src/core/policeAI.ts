@@ -1,4 +1,6 @@
-import { type Vec2, add, sub, scale, normalize, length, distance, angle } from './vector';
+import { type Vec2, vec2, add, sub, scale, normalize, length, distance, dot, angle } from './vector';
+import { type City, tileCenter } from './city';
+import { tileCoord, roadAt, openDirections } from './trafficAI';
 
 /** A police unit that pursues a target position. */
 export interface Police {
@@ -54,4 +56,50 @@ export function stepPolice(
 /** Whether the police unit has reached (caught) the target. */
 export function hasCaught(police: Police, target: Vec2): boolean {
   return distance(police.pos, target) <= police.radius;
+}
+
+/** The cardinal direction nearest to a heading (radians). */
+function nearestCardinal(heading: number): Vec2 {
+  const c = Math.cos(heading);
+  const s = Math.sin(heading);
+  return Math.abs(c) >= Math.abs(s) ? vec2(Math.sign(c) || 1, 0) : vec2(0, Math.sign(s) || 1);
+}
+
+/**
+ * Advance a patrol car one step, chasing `target` along the road grid. The car
+ * drives forward in its current cardinal direction; on entering a new tile it
+ * turns onto whichever open road heads most directly toward the target (and
+ * reverses at a dead end), snapping to lane centres so it never cuts through a
+ * building. Pure: returns a new unit.
+ */
+export function stepPoliceCar(
+  police: Police,
+  target: Vec2,
+  city: City,
+  dt: number,
+  speed = POLICE_CAR_BASE_SPEED,
+): Police {
+  const spec = city.spec;
+  let dir = nearestCardinal(police.heading);
+
+  const before = tileCoord(spec, police.pos);
+  let pos = add(police.pos, scale(dir, speed * dt));
+  const after = tileCoord(spec, pos);
+
+  if (after.tx !== before.tx || after.ty !== before.ty) {
+    // Decide turns from the tile we are entering, or the current one if that is
+    // off the road network.
+    const tile = roadAt(city, after.tx, after.ty) ? after : before;
+    const options = openDirections(city, tile.tx, tile.ty);
+    const center = tileCenter(spec, tile.tx, tile.ty);
+    const toTarget = sub(target, center);
+    if (options.length > 0) {
+      dir = options.reduce((best, d) => (dot(d, toTarget) > dot(best, toTarget) ? d : best), options[0]);
+    } else {
+      dir = vec2(-dir.x, -dir.y); // dead end: turn back
+    }
+    pos = center; // pivot cleanly on the lane centre
+  }
+
+  return { ...police, pos, heading: angle(dir) };
 }

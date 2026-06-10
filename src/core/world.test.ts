@@ -646,4 +646,97 @@ describe('World mission', () => {
     expect(w.mission).toBeNull();
     expect(w.score.current).toBe(100 + 300);
   });
+
+  it('completes a survive objective after enough time passes', () => {
+    const w = new World({
+      player: player(),
+      bounds: { width: 1000, height: 1000 },
+      missions: [
+        createMission({
+          id: 'lay-low',
+          title: 'Lay Low',
+          objectives: [{ kind: 'survive', description: 'Survive 2s', seconds: 2 }],
+          reward: 400,
+        }),
+      ],
+    });
+
+    for (let i = 0; i < 60; i++) w.tick(controls(), 1 / 60); // 1s elapsed
+    expect(w.missionComplete).toBe(false);
+    for (let i = 0; i < 90; i++) w.tick(controls(), 1 / 60); // 2.5s total
+    expect(w.missionComplete).toBe(true);
+    expect(w.score.current).toBe(400);
+  });
+
+  it('completes a collect objective by picking up ammo', () => {
+    const w = new World({
+      player: player(), // at (0,0)
+      bounds: { width: 1000, height: 1000 },
+      ammoPickups: [{ pos: vec2(0, 0), amount: 10 }],
+      missions: [
+        createMission({
+          id: 'supply',
+          title: 'Supply Run',
+          objectives: [{ kind: 'collect', description: 'Grab 1 crate', count: 1 }],
+          reward: 200,
+        }),
+      ],
+    });
+    const ammoBefore = w.weapon.ammo;
+
+    w.tick(controls(), 1 / 60);
+    expect(w.collected).toBe(1);
+    expect(w.weapon.ammo).toBe(ammoBefore + 10);
+    expect(w.ammoPickups).toHaveLength(0);
+    expect(w.missionComplete).toBe(true);
+    expect(w.score.current).toBe(200);
+  });
+});
+
+describe('World ammo pickups', () => {
+  it('refills ammo when the player reaches a pickup, then removes it', () => {
+    const w = new World({
+      player: player(),
+      ammoPickups: [{ pos: vec2(10, 0), amount: 12 }],
+      bounds: { width: 1000, height: 1000 },
+    });
+    const before = w.weapon.ammo;
+    w.tick(controls(), 1 / 60);
+    expect(w.weapon.ammo).toBe(before + 12);
+    expect(w.ammoPickups).toHaveLength(0);
+  });
+
+  it('leaves a distant pickup untouched', () => {
+    const w = new World({
+      player: player(),
+      ammoPickups: [{ pos: vec2(500, 500), amount: 12 }],
+      bounds: { width: 1000, height: 1000 },
+    });
+    const before = w.weapon.ammo;
+    w.tick(controls(), 1 / 60);
+    expect(w.weapon.ammo).toBe(before);
+    expect(w.ammoPickups).toHaveLength(1);
+  });
+});
+
+describe('World patrol car collisions', () => {
+  it('stops a patrol car from driving through the player car', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    const w = new World({
+      player: player(),
+      cars: [carAt(20, 0)],
+      city,
+      police: [{ pos: vec2(44, 0), heading: Math.PI, radius: 14, kind: 'car' }],
+      bounds: { width: city.width, height: city.height },
+    });
+    w.wanted = addHeat(createWanted(), CRIME_HEAT.hitPolice); // wanted -> the patrol car stays
+    w.tick(controls({ action: true }), 1 / 60); // hijack the car
+
+    for (let i = 0; i < 20; i++) w.tick(controls(), 1 / 60);
+    const patrol = w.police.find((c) => c.kind === 'car')!;
+    // The patrol car and the player's car never overlap.
+    expect(distance(patrol.pos, w.drivingCar!.pos)).toBeGreaterThanOrEqual(
+      patrol.radius + w.drivingCar!.radius - 1,
+    );
+  });
 });

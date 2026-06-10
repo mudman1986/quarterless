@@ -45,6 +45,17 @@ export function canFire(w: Weapon): boolean {
   return w.heat <= 0 && w.ammo > 0;
 }
 
+/** A pickup that refills the player's ammo when collected. */
+export interface AmmoPickup {
+  pos: Vec2;
+  amount: number;
+}
+
+/** Add ammo to a weapon. Pure. */
+export function giveAmmo(w: Weapon, amount: number): Weapon {
+  return { ...w, ammo: w.ammo + Math.max(0, amount) };
+}
+
 /** Reduce weapon cooldown over time. Pure. */
 export function cool(w: Weapon, dt: number): Weapon {
   return w.heat <= 0 ? w : { ...w, heat: Math.max(0, w.heat - dt) };

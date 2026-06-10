@@ -3,5 +3,13 @@
         "git remote": true,
         "npm install": true,
         "Test-Path": true
-    }
+    },
+    "cSpell.words": [
+        "cooldown",
+        "respawn",
+        "respawns",
+        "Rockstar",
+        "Sindicate",
+        "WASD"
+    ]
 }
