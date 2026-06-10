@@ -1,0 +1,41 @@
+# Dependabot keeps dependencies up to date by opening pull requests.
+# Docs: https://docs.github.com/code-security/dependabot/dependabot-version-updates
+version: 2
+updates:
+  # ---------------------------------------------------------------------------
+  # npm application dependencies.
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    # Minimum age: only consider releases that have been public for >= 7 days,
+    # across every semver level. New releases are given time to prove stable.
+    cooldown:
+      default-days: 7
+      semver-major-days: 7
+      semver-minor-days: 7
+      semver-patch-days: 7
+    # Bundle every npm update into a single pull request.
+    groups:
+      npm:
+        patterns:
+          - '*'
+
+  # ---------------------------------------------------------------------------
+  # GitHub Actions used by the workflows (kept pinned to SHAs, updated here).
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+      semver-major-days: 7
+      semver-minor-days: 7
+      semver-patch-days: 7
+    # Bundle every GitHub Actions update into a single pull request.
+    groups:
+      github-actions:
+        patterns:
+          - '*'
