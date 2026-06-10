@@ -29,11 +29,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # GitHub Actions versions are not semver, so only `default-days` is
+    # supported here (the semver-*-days properties are npm-only).
     cooldown:
       default-days: 7
-      semver-major-days: 7
-      semver-minor-days: 7
-      semver-patch-days: 7
     # Bundle every GitHub Actions update into a single pull request.
     groups:
       github-actions:
