@@ -97,10 +97,12 @@ Deployment is automated via GitHub Actions
 ├─ src/
 │  ├─ core/        # pure game logic (TDD, no engine) + *.test.ts
 │  │  ├─ vector.ts entity.ts vehicle.ts collision.ts city.ts world.ts math.ts types.ts
-│  │  └─ pedestrianAI.ts policeAI.ts wantedLevel.ts trafficAI.ts
+│  │  ├─ pedestrianAI.ts policeAI.ts wantedLevel.ts trafficAI.ts
+│  │  └─ weapon.ts health.ts mission.ts campaign.ts score.ts highScore.ts
 │  └─ game/        # Phaser adapter: scenes, sprites, input, rendering
 │     ├─ main.ts
 │     ├─ input/KeyboardInput.ts
+│     ├─ audio/Sound.ts
 │     └─ scenes/CityScene.ts
 ├─ e2e/            # Playwright smoke tests
 ├─ .github/workflows/deploy.yml
@@ -176,8 +178,17 @@ state machine), and `score`. Integrated into the `world`:
   targets) banks a reward on completion.
 - **HUD** — wanted stars, health, money (with best), ammo, and the current objective.
 
-### Phase 5 — Polish (stretch)
-Audio, an art pass, more missions, and a `localStorage` high score.
+### Phase 5 — Polish ✅
+Test-first `campaign` (a chain of missions played one after another) and `highScore`
+(persistence through a small key/value port). Integrated into the game:
+- **A short campaign** — three escalating missions (reach + eliminate), each banking
+  a bigger reward; the HUD shows the active mission and “ALL MISSIONS COMPLETE”.
+- **High score** — the best score is saved to `localStorage` (with an in-memory
+  fallback) and seeded back into each run, shown on the HUD.
+- **Art pass** — cars and the player are drawn with a windshield/nose so facing is
+  clear; pedestrians and foot officers are round tokens.
+- **Audio** — defensive procedural Web Audio sound effects (shot, hit, busted/wasted,
+  mission fanfare); no asset files, unlocked on first key press.
 
 ### Out of scope (for now)
 Multiplayer, mobile/touch controls (keyboard-only MVP), and any backend — the game

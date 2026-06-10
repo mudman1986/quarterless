@@ -56,7 +56,6 @@ const PLAYER_SIZE = 14;
 const CAR_LENGTH = 30;
 const CAR_WIDTH = 16;
 const PED_SIZE = 10;
-const POLICE_SIZE = 14;
 /** A focus jump larger than this (px) means the player wrapped a map edge:
  * snap the camera there rather than panning smoothly across the whole city. */
 const WRAP_SNAP_DISTANCE = 256;
@@ -91,7 +90,7 @@ export class CityScene extends Phaser.Scene {
   private savedBest = 0;
 
   /** Procedural sound effects. */
-  private readonly sound = new Sound();
+  private readonly sfx = new Sound();
 
   // Previous-frame snapshots, for detecting events worth a sound.
   private prevBullets = 0;
@@ -130,7 +129,7 @@ export class CityScene extends Phaser.Scene {
 
     this.input_ = new KeyboardInput(this.input.keyboard!);
     // Browsers block audio until a user gesture: unlock on the first key press.
-    this.input.keyboard?.once('keydown', () => this.sound.resume());
+    this.input.keyboard?.once('keydown', () => this.sfx.resume());
   }
 
   /** A lively mix of cars parked along the kerbs and cars driven by NPC traffic. */
@@ -358,6 +357,27 @@ export class CityScene extends Phaser.Scene {
     }
 
     this.syncSprites();
+    this.handleEvents();
+  }
+
+  /** Persist the high score and play sounds for things that just happened. */
+  private handleEvents(): void {
+    const w = this.world;
+
+    // Save a new high score as soon as it is beaten.
+    if (w.score.best > this.savedBest) {
+      this.savedBest = saveHighScore(this.store, w.score.best);
+    }
+
+    if (w.bullets.length > this.prevBullets) this.sfx.shot();
+    if (w.kills > this.prevKills) this.sfx.hit();
+    if (w.status !== 'playing' && this.prevStatus === 'playing') this.sfx.fail();
+    if (w.missionComplete && !this.prevMissionComplete) this.sfx.fanfare();
+
+    this.prevBullets = w.bullets.length;
+    this.prevKills = w.kills;
+    this.prevStatus = w.status;
+    this.prevMissionComplete = w.missionComplete;
   }
 
   private syncSprites(): void {
@@ -438,11 +458,11 @@ export class CityScene extends Phaser.Scene {
       w.score.best > 0 ? `$${w.score.current}  (best $${w.score.best})` : `$${w.score.current}`;
     const speed = w.drivingCar ? Math.round(Math.abs(w.drivingCar.speed)) : 0;
 
-    const mission = w.mission
-      ? w.missionComplete
-        ? 'MISSION COMPLETE'
-        : `▶ ${w.missionObjective?.description ?? ''}`
-      : '';
+    const mission = w.missionComplete
+      ? 'ALL MISSIONS COMPLETE'
+      : w.mission
+        ? `▶ ${w.mission.title}: ${w.missionObjective?.description ?? ''}`
+        : '';
 
     const status = w.isDriving
       ? `DRIVING ${speed}  ·  WASD steer · Space exit · F shoot`
