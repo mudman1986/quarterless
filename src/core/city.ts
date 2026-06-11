@@ -78,8 +78,11 @@ export const DEFAULT_CITY: CitySpec = { cols: 25, rows: 25, tile: 64, block: 5 }
 const FENCE = 5;
 /** Width in pixels of the sidewalk strip around each building. */
 const SIDEWALK_WIDTH = 12;
-/** Place a parking bay every Nth tile along a road beside buildings. */
-const PARKING_EVERY = 2;
+/** Spacing in pixels between parked cars along a kerb. */
+const PARK_SLOT = 60;
+/** Distance from the kerb (sidewalk road-edge) to a parked car's centre, so the
+ * car sits right against the pavement with no gap. */
+const PARK_INSET = 11;
 
 interface TileRect {
   tx: number;
@@ -209,7 +212,7 @@ export function buildCity(spec: CitySpec = DEFAULT_CITY): City {
     fences,
     sidewalks: buildSidewalks(buildings),
     crosswalks: buildCrosswalks(spec, isRoad, isWater),
-    parkingSpots: buildParkingSpots(spec, isWater),
+    parkingSpots: buildParkingSpots(spec, buildings, isWater),
     isRoad,
     isWater,
     isBridge,
@@ -245,22 +248,37 @@ function buildCrosswalks(
   return zones;
 }
 
-/** Parking bays at the kerb of vertical roads, beside the buildings. */
+/**
+ * Parallel parking laid out along the kerbs, right against the sidewalks. Each
+ * building lines the road on its left (cars pointing along the vertical road)
+ * and the road above it (cars along the horizontal road); since each road has
+ * exactly one bordering building do this, the bays never double up. Cars sit
+ * one car-width off the pavement, so there is no gap. Pure.
+ */
 function buildParkingSpots(
   spec: CitySpec,
+  buildings: readonly Rect[],
   isWater: (tx: number, ty: number) => boolean,
 ): ParkingSpot[] {
-  const { cols, rows, tile, block } = spec;
-  const curb = tile / 2 - 11; // offset from the lane centre toward the kerb
+  const { cols, rows, tile } = spec;
+  const s = SIDEWALK_WIDTH;
   const spots: ParkingSpot[] = [];
-  for (let tx = block; tx < cols; tx += block) {
-    for (let ty = 1; ty < rows - 1; ty++) {
-      if (ty % block === 0) continue; // skip intersections
-      if (ty % PARKING_EVERY !== 0) continue; // leave gaps between bays
-      if (isWater(tx, ty) || isWater(tx + 1, ty)) continue; // not over the river
-      if (tx + 1 >= cols) continue; // needs a building on the kerb side
-      const c = tileCenter(spec, tx, ty);
-      spots.push({ pos: vec2(c.x + curb, c.y), heading: Math.PI / 2 });
+  const dryAt = (x: number, y: number): boolean => {
+    const tx = Math.floor(x / tile);
+    const ty = Math.floor(y / tile);
+    return tx >= 0 && ty >= 0 && tx < cols && ty < rows && !isWater(tx, ty);
+  };
+
+  for (const b of buildings) {
+    // Left kerb: cars run down the vertical road, parked against the pavement.
+    const leftX = b.x - s - PARK_INSET;
+    for (let y = b.y + PARK_SLOT / 2; y <= b.y + b.h - PARK_SLOT / 2 + 1; y += PARK_SLOT) {
+      if (dryAt(leftX, y)) spots.push({ pos: vec2(leftX, y), heading: Math.PI / 2 });
+    }
+    // Top kerb: cars run along the horizontal road, parked against the pavement.
+    const topY = b.y - s - PARK_INSET;
+    for (let x = b.x + PARK_SLOT / 2; x <= b.x + b.w - PARK_SLOT / 2 + 1; x += PARK_SLOT) {
+      if (dryAt(x, topY)) spots.push({ pos: vec2(x, topY), heading: 0 });
     }
   }
   return spots;

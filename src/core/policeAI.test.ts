@@ -7,8 +7,10 @@ import {
   policeSpeedFor,
   POLICE_BASE_SPEED,
   POLICE_CAR_MAX_SPEED,
+  POLICE_FOOT_MAX_SPEED,
   type Police,
 } from './policeAI';
+import { WALK_SPEED } from './entity';
 import { buildCity, tileCenter, type City } from './city';
 import { vec2, distance } from './vector';
 
@@ -35,9 +37,15 @@ describe('policeSpeedFor', () => {
     expect(policeSpeedFor('car', 2)).toBeGreaterThan(policeSpeedFor('foot', 2));
   });
 
-  it('scales both kinds up with the wanted level', () => {
-    expect(policeSpeedFor('foot', 4)).toBeGreaterThan(policeSpeedFor('foot', 1));
+  it('scales patrol cars up with the wanted level', () => {
     expect(policeSpeedFor('car', 4)).toBeGreaterThan(policeSpeedFor('car', 1));
+  });
+
+  it('never lets an officer on foot run faster than the player walks', () => {
+    expect(POLICE_FOOT_MAX_SPEED).toBe(WALK_SPEED);
+    for (let stars = 1; stars <= 6; stars++) {
+      expect(policeSpeedFor('foot', stars)).toBeLessThanOrEqual(WALK_SPEED);
+    }
   });
 
   it('never lets a patrol car exceed the player car max speed', () => {

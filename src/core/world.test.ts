@@ -316,6 +316,15 @@ describe('World busted and respawn', () => {
     expect(w.isBusted).toBe(true);
   });
 
+  it('clears the wanted level and police the moment the player is busted', () => {
+    const w = setupBust();
+    expect(w.isBusted).toBe(true);
+    // The chase ends at once — stars gone and police dispersed — without waiting
+    // for the respawn countdown.
+    expect(w.wantedStars).toBe(0);
+    expect(w.police).toHaveLength(0);
+  });
+
   it('respawns at the start after the busted delay elapses', () => {
     const w = setupBust();
     expect(w.isBusted).toBe(true);
@@ -334,6 +343,19 @@ describe('World busted and respawn', () => {
     w.tick(controls({ confirm: true }), 1 / 60);
     expect(w.isBusted).toBe(false);
     expect(w.player.pos).toEqual(vec2(0, 0));
+  });
+
+  it('clears the wanted level the moment a wanted player is wasted', () => {
+    const w = new World({
+      player: player(), // on foot at the origin
+      cars: [{ pos: vec2(15, 0), heading: 0, speed: 200, radius: 12 }], // fast, lethal
+      bounds: { width: 4000, height: 4000 },
+    });
+    w.wanted = addHeat(createWanted(), CRIME_HEAT.hitPolice); // wanted before dying
+    w.tick(controls(), 1 / 60);
+    expect(w.isWasted).toBe(true);
+    expect(w.wantedStars).toBe(0); // death ends the chase immediately
+    expect(w.police).toHaveLength(0);
   });
 });
 
@@ -355,6 +377,26 @@ describe('World police obey buildings', () => {
         c.pos.x > wall.x && c.pos.x < wall.x + wall.w && c.pos.y > wall.y && c.pos.y < wall.y + wall.h;
       expect(inside).toBe(false);
     }
+  });
+
+  it('routes a foot officer around a block to reach the player instead of getting stuck', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    // Player on road row 4; officer two intersections away. The block between
+    // them would trap a straight-line chaser, but flow-field nav goes around.
+    const w = new World({
+      player: { pos: tileCenter(city.spec, 4, 4), angle: 0, radius: 8 },
+      city,
+      police: [{ pos: tileCenter(city.spec, 8, 8), heading: 0, radius: 12, kind: 'foot' }],
+      walls: [...city.buildings],
+      bounds: { width: city.width, height: city.height },
+    });
+    w.wanted = addHeat(createWanted(), CRIME_HEAT.hitPolice);
+
+    const start = distance(w.police[0].pos, w.focus);
+    for (let i = 0; i < 600 && !w.isBusted; i++) w.tick(controls(), 1 / 60);
+    // Either it caught the player (busted) or it closed in a lot — never stuck.
+    const closed = w.isBusted || distance(w.police[0].pos, w.focus) < start - 100;
+    expect(closed).toBe(true);
   });
 });
 
@@ -546,6 +588,38 @@ describe('World traffic rerouting and lights', () => {
     for (let i = 0; i < ticks; i++) {
       w.tick(controls(), 1 / 60);
       expect(w.cars[0].pos.y).toBeLessThan(intersectionY); // never entered the box
+    }
+  });
+
+  it('keeps a calm pedestrian off the road except at a crosswalk', () => {
+    const city = miniCity();
+    // A pedestrian on a building-interior tile (off the road) with a target on
+    // the far side of the road: calm, it must not stride across mid-block.
+    const start = tileCenter(city.spec, 2, 2); // interior tile, not a road
+    const ped: Pedestrian = {
+      pos: start,
+      heading: 0,
+      radius: 7,
+      state: 'wander',
+      target: tileCenter(city.spec, 2, 6), // across road row 4
+    };
+    const w = new World({
+      player: player(),
+      city,
+      pedestrians: [ped],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.5,
+    });
+
+    const roadRowTop = 4 * city.spec.tile; // y where road row 4 begins
+    const roadRowBottom = 5 * city.spec.tile;
+    for (let i = 0; i < 600; i++) {
+      w.tick(controls(), 1 / 60);
+      const p = w.pedestrians[0];
+      const onRoadRow = p.pos.y > roadRowTop && p.pos.y < roadRowBottom;
+      const atCrosswalkColumn = p.pos.x > 4 * city.spec.tile && p.pos.x < 5 * city.spec.tile;
+      // It may only be within the road row if it is at the intersection crossing.
+      if (onRoadRow) expect(atCrosswalkColumn).toBe(true);
     }
   });
 });
@@ -870,6 +944,46 @@ describe('World patrol car arrest', () => {
     expect(footAppeared).toBe(true); // an officer got out of the patrol car
     expect(w.isBusted).toBe(true); // and made the arrest
   });
+
+  it('drops an officer to arrest an on-foot player instead of ramming them', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    const spot = tileCenter(city.spec, 4, 4); // on the road grid
+    const w = new World({
+      player: { pos: spot, angle: 0, radius: 8 },
+      city,
+      police: [{ pos: vec2(spot.x + 60, spot.y), heading: Math.PI, radius: 14, kind: 'car' }],
+      bounds: { width: city.width, height: city.height },
+    });
+    w.wanted = addHeat(createWanted(), CRIME_HEAT.hitPolice);
+
+    let footAppeared = false;
+    let minCarDist = Infinity;
+    for (let i = 0; i < 360 && !w.isBusted; i++) {
+      w.tick(controls(), 1 / 60);
+      const patrol = w.police.find((c) => c.kind === 'car');
+      if (patrol) minCarDist = Math.min(minCarDist, distance(patrol.pos, w.focus));
+      if (w.police.some((c) => c.kind === 'foot')) footAppeared = true;
+    }
+    expect(footAppeared).toBe(true); // the car deployed an officer
+    expect(w.isBusted).toBe(true); // who arrested the player on foot
+    // The car itself stopped short rather than driving onto the player.
+    expect(minCarDist).toBeGreaterThan(8); // never overlapped the player's centre
+  });
+
+  it('does not bust the player by patrol-car contact alone (no officer)', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    const spot = tileCenter(city.spec, 4, 4);
+    const w = new World({
+      player: { pos: spot, angle: 0, radius: 8 },
+      city,
+      // A patrol car sitting right on the player, but already "spent" its officer.
+      police: [{ pos: spot, heading: 0, radius: 14, kind: 'car', deployed: true }],
+      bounds: { width: city.width, height: city.height },
+    });
+    w.wanted = addHeat(createWanted(), CRIME_HEAT.hitPolice);
+    w.tick(controls(), 1 / 60);
+    expect(w.isBusted).toBe(false); // a car alone cannot make the arrest
+  });
 });
 
 describe('World car explosions', () => {
@@ -918,6 +1032,82 @@ describe('World car explosions', () => {
     for (let i = 0; i < 180 && !w.wreckedCars[0]; i++) w.tick(controls({ fire: true }), 1 / 60);
     expect(w.wreckedCars[0]).toBe(true);
     expect(w.health.current).toBeLessThan(PLAYER_MAX_HEALTH); // singed by the explosion
+  });
+
+  it('blows up a car that is repeatedly rammed by another car', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    // A stopped car sits in the lane; an NPC keeps driving into it.
+    const stopped: Car = { pos: tileCenter(city.spec, 3, 4), heading: 0, speed: 0, radius: 12 };
+    const rammer: Car = { pos: tileCenter(city.spec, 1, 4), heading: 0, speed: 0, radius: 12 };
+    const w = new World({
+      player: player(), // far away at the origin
+      cars: [stopped, rammer],
+      city,
+      carDrivers: [null, { dir: vec2(1, 0) }],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9, // the NPC keeps driving straight
+    });
+    w.lights = createTrafficLights(0); // east-west green, so the rammer never stops
+
+    for (let i = 0; i < 600 && w.explosionsTriggered === 0; i++) w.tick(controls(), 1 / 60);
+    expect(w.explosionsTriggered).toBeGreaterThanOrEqual(1); // rammed to destruction
+    expect(w.wreckedCars.some(Boolean)).toBe(true);
+  });
+});
+
+describe('World tow truck', () => {
+  const miniCity = () => buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+
+  it('sends a tow truck to haul away a wreck', () => {
+    const city = miniCity();
+    const target: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 };
+    const w = new World({
+      player: { pos: tileCenter(city.spec, 0, 4), angle: 0, radius: 8 }, // on road row 4, facing +x
+      cars: [target],
+      city,
+      carDrivers: [null],
+      viewRadius: 4000, // the wreck stays "in frame"
+      bounds: { width: city.width, height: city.height },
+    });
+
+    // Shoot the car until it is destroyed into a wreck.
+    for (let i = 0; i < 200 && !w.wreckedCars[0]; i++) w.tick(controls({ fire: true }), 1 / 60);
+    expect(w.wreckedCars[0]).toBe(true);
+
+    let dispatched = false;
+    for (let i = 0; i < 1200 && !w.towedCars[0]; i++) {
+      w.tick(controls(), 1 / 60);
+      if (w.tows.length > 0) dispatched = true;
+    }
+    expect(dispatched).toBe(true); // a tow truck arrived
+    expect(w.towedCars[0]).toBe(true); // and hauled the wreck away
+  });
+
+  it('clears several wrecks at once with multiple tow trucks', () => {
+    const city = miniCity();
+    // Three wrecks dotted along the road grid (marked wrecked up front).
+    const cars: Car[] = [
+      { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 },
+      { pos: tileCenter(city.spec, 6, 4), heading: 0, speed: 0, radius: 12 },
+      { pos: tileCenter(city.spec, 8, 8), heading: 0, speed: 0, radius: 12 },
+    ];
+    const w = new World({
+      player: { pos: tileCenter(city.spec, 0, 4), angle: 0, radius: 8 },
+      cars,
+      city,
+      carDrivers: [null, null, null],
+      bounds: { width: city.width, height: city.height },
+    });
+    // Force all three into wrecks (no need to shoot each one).
+    for (let i = 0; i < cars.length; i++) w.wreckedCars[i] = true;
+
+    let maxConcurrent = 0;
+    for (let i = 0; i < 3000 && !w.towedCars.every(Boolean); i++) {
+      w.tick(controls(), 1 / 60);
+      maxConcurrent = Math.max(maxConcurrent, w.tows.length);
+    }
+    expect(maxConcurrent).toBeGreaterThan(1); // several tows worked in parallel
+    expect(w.towedCars.every(Boolean)).toBe(true); // every wreck was hauled away
   });
 });
 
@@ -1122,11 +1312,16 @@ describe('World patrol car collisions', () => {
     w.wanted = addHeat(createWanted(), CRIME_HEAT.hitPolice); // wanted -> the patrol car stays
     w.tick(controls({ action: true }), 1 / 60); // hijack the car
 
-    for (let i = 0; i < 20; i++) w.tick(controls(), 1 / 60);
-    const patrol = w.police.find((c) => c.kind === 'car')!;
-    // The patrol car and the player's car never overlap.
-    expect(distance(patrol.pos, w.drivingCar!.pos)).toBeGreaterThanOrEqual(
-      patrol.radius + w.drivingCar!.radius - 1,
-    );
+    // Check separation each tick while the chase is live (the player may get
+    // arrested partway through, which disperses the police).
+    for (let i = 0; i < 20 && !w.isBusted; i++) {
+      w.tick(controls(), 1 / 60);
+      const patrol = w.police.find((c) => c.kind === 'car');
+      if (patrol) {
+        expect(distance(patrol.pos, w.drivingCar!.pos)).toBeGreaterThanOrEqual(
+          patrol.radius + w.drivingCar!.radius - 1,
+        );
+      }
+    }
   });
 });

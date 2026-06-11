@@ -1,0 +1,138 @@
+import { type Vec2, vec2, add, sub, scale, dot, angle } from './vector';
+import { type City, type CitySpec, tileCenter } from './city';
+
+/**
+ * Shared "drive along the road grid" model used by every AI-controlled vehicle
+ * (NPC traffic, patrol cars, ambulances, tow trucks). A vehicle holds a current
+ * cardinal travel direction; each step it advances along that direction and,
+ * when it crosses into a new tile, a {@link DirectionChooser} decides which open
+ * road to take next. Type-specific behaviour (wander vs. seek a target) lives
+ * entirely in the chooser, so all vehicles obey the same road rules and never
+ * cut through buildings. Pure and engine-agnostic.
+ */
+export interface RoadVehicle {
+  pos: Vec2;
+  /** Facing in radians (derived from `dir`). */
+  heading: number;
+  /** Unit cardinal direction currently being travelled. */
+  dir: Vec2;
+}
+
+/** The four cardinal travel directions. */
+export const CARDINALS: readonly Vec2[] = [vec2(1, 0), vec2(-1, 0), vec2(0, 1), vec2(0, -1)];
+
+export function isSameDir(a: Vec2, b: Vec2): boolean {
+  return a.x === b.x && a.y === b.y;
+}
+
+export function isOppositeDir(a: Vec2, b: Vec2): boolean {
+  return a.x === -b.x && a.y === -b.y;
+}
+
+/** Tile coordinate containing a pixel position. */
+export function tileCoord(spec: CitySpec, pos: Vec2): { tx: number; ty: number } {
+  return { tx: Math.floor(pos.x / spec.tile), ty: Math.floor(pos.y / spec.tile) };
+}
+
+function inBounds(spec: CitySpec, tx: number, ty: number): boolean {
+  return tx >= 0 && ty >= 0 && tx < spec.cols && ty < spec.rows;
+}
+
+/** Whether a tile exists on the map and is a drivable road lane. */
+export function roadAt(city: City, tx: number, ty: number): boolean {
+  return inBounds(city.spec, tx, ty) && city.isRoad(tx, ty);
+}
+
+/** Cardinal directions from a tile that lead onto another road tile. */
+export function openDirections(city: City, tx: number, ty: number): Vec2[] {
+  return CARDINALS.filter((d) => roadAt(city, tx + d.x, ty + d.y));
+}
+
+/** The cardinal direction nearest to a heading (radians). */
+export function nearestCardinal(heading: number): Vec2 {
+  const c = Math.cos(heading);
+  const s = Math.sin(heading);
+  return Math.abs(c) >= Math.abs(s) ? vec2(Math.sign(c) || 1, 0) : vec2(0, Math.sign(s) || 1);
+}
+
+/**
+ * Decides the next travel direction when a vehicle reaches a tile, given the
+ * open roads there, the current direction, and the tile centre. Implementations
+ * capture any extra state (RNG, a chase target) in a closure.
+ */
+export type DirectionChooser = (options: readonly Vec2[], current: Vec2, center: Vec2) => Vec2;
+
+/** Chase a fixed point: take whichever open road heads most directly toward it. */
+export function seekChooser(target: Vec2): DirectionChooser {
+  return (options, _current, center) => {
+    const toTarget = sub(target, center);
+    return options.reduce(
+      (best, d) => (dot(d, toTarget) > dot(best, toTarget) ? d : best),
+      options[0],
+    );
+  };
+}
+
+/**
+ * Cruise the grid: continue straight, occasionally turning onto a crossing road
+ * (probability `turnChance`) and turning at dead ends, never reversing unless
+ * there is no other way out.
+ */
+export function wanderChooser(rng: () => number, turnChance: number): DirectionChooser {
+  return (options, current) => {
+    const turns = options.filter((d) => !isSameDir(d, current) && !isOppositeDir(d, current));
+    const canContinue = options.some((d) => isSameDir(d, current));
+    if (!canContinue) {
+      // The road ahead has ended: take a side road, or double back if trapped.
+      return turns.length > 0
+        ? (turns[Math.floor(rng() * turns.length)] ?? current)
+        : vec2(-current.x, -current.y);
+    }
+    if (turns.length > 0 && rng() < turnChance) {
+      return turns[Math.floor(rng() * turns.length)] ?? current;
+    }
+    return current;
+  };
+}
+
+/**
+ * Advance a road vehicle one step at `speed`. On crossing into a new tile the
+ * chooser picks the next direction; the vehicle snaps to the lane centre when it
+ * turns (or is forced off a dead end) so it always stays on the road. Pure:
+ * returns a new vehicle.
+ */
+export function stepRoadVehicle(
+  v: RoadVehicle,
+  city: City,
+  dt: number,
+  speed: number,
+  choose: DirectionChooser,
+): RoadVehicle {
+  const spec = city.spec;
+  let dir = v.dir;
+  const before = tileCoord(spec, v.pos);
+  let pos = add(v.pos, scale(dir, speed * dt));
+  const after = tileCoord(spec, pos);
+
+  if (after.tx !== before.tx || after.ty !== before.ty) {
+    const onRoad = roadAt(city, after.tx, after.ty);
+    const tile = onRoad ? after : before;
+    const options = openDirections(city, tile.tx, tile.ty);
+    if (options.length === 0) {
+      dir = vec2(-dir.x, -dir.y); // fully boxed in: reverse
+      pos = tileCenter(spec, before.tx, before.ty);
+    } else {
+      const chosen = choose(options, dir, tileCenter(spec, tile.tx, tile.ty));
+      if (!onRoad) {
+        dir = chosen; // would leave the road: turn, staying on the current tile
+        pos = tileCenter(spec, before.tx, before.ty);
+      } else if (!isSameDir(chosen, dir)) {
+        dir = chosen; // turning onto a crossing road: pivot on the lane centre
+        pos = tileCenter(spec, after.tx, after.ty);
+      }
+      // else: carry straight on without snapping.
+    }
+  }
+
+  return { pos, heading: angle(dir), dir };
+}

@@ -196,6 +196,21 @@ describe('sidewalks, crosswalks and parking', () => {
     }
   });
 
+  it('parks right against a sidewalk with no gap', () => {
+    // Every bay sits within a car-inset of some sidewalk strip (no empty space).
+    for (const spot of city.parkingSpots.slice(0, 50)) {
+      const nearest = Math.min(
+        ...city.sidewalks.map((s) =>
+          Math.hypot(
+            spot.pos.x - Math.max(s.x, Math.min(spot.pos.x, s.x + s.w)),
+            spot.pos.y - Math.max(s.y, Math.min(spot.pos.y, s.y + s.h)),
+          ),
+        ),
+      );
+      expect(nearest).toBeLessThanOrEqual(12); // PARK_INSET-ish: flush to the kerb
+    }
+  });
+
   it('keeps parking bays out of the water', () => {
     const withRiver = buildCity({
       cols: 20,

@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { buildCity, tileCenter, type City } from '../../core/city';
+import { buildCity, tileCenter, type City, type ParkingSpot } from '../../core/city';
 import { World } from '../../core/world';
 import { createMission, type Mission } from '../../core/mission';
 import {
@@ -85,6 +85,8 @@ const FIXED_STEP = 1 / 60;
 const MAX_SUBSTEPS = 5;
 const PLAYER_SIZE = 14;
 const PED_SIZE = 10;
+/** Roughly how many of the city's parking bays actually hold a parked car. */
+const PARKED_CAR_BUDGET = 90;
 /** A focus jump larger than this (px) means the player wrapped a map edge:
  * snap the camera there rather than panning smoothly across the whole city. */
 const WRAP_SNAP_DISTANCE = 256;
@@ -124,6 +126,9 @@ export class CityScene extends Phaser.Scene {
   private lightsGfx!: Phaser.GameObjects.Graphics;
   private corpseGfx!: Phaser.GameObjects.Graphics;
   private ambulanceSprite!: Phaser.GameObjects.Rectangle;
+  private towSprites: Phaser.GameObjects.Rectangle[] = [];
+  /** The parking bays that actually hold a parked car (for drawing the markings). */
+  private parkedSpots: ParkingSpot[] = [];
   /** Centre of every intersection, for drawing the traffic lights. */
   private intersectionCenters: Vec2[] = [];
   private focusPoint!: Phaser.GameObjects.Rectangle;
@@ -165,6 +170,9 @@ export class CityScene extends Phaser.Scene {
   /** Elapsed time driving the day/night cycle, and its dimming overlay. */
   private timeOfDay = 0;
   private dayNightOverlay!: Phaser.GameObjects.Rectangle;
+  /** Night-time city lighting: intersection glows + a player aura. */
+  private nightLights!: Phaser.GameObjects.Container;
+  private nightAura!: Phaser.GameObjects.Image;
 
   constructor() {
     super('City');
@@ -179,6 +187,7 @@ export class CityScene extends Phaser.Scene {
     this.bulletSprites = [];
     this.policeBulletSprites = [];
     this.ammoSprites = [];
+    this.parkedSpots = [];
     this.accumulator = 0;
     this.sirenTimer = 0;
     this.timeOfDay = 0;
@@ -239,12 +248,16 @@ export class CityScene extends Phaser.Scene {
     const cars: Car[] = [];
     const drivers: (TrafficAI | null)[] = [];
 
-    // Parked cars sit in a subset of the kerbside parking bays (keeps the
-    // streets — and the collision workload — sensible).
-    this.city.parkingSpots.forEach((spot, i) => {
-      if (i % 3 !== 0) return;
+    // Parked cars fill a spread-out subset of the kerbside bays (right against
+    // the sidewalks), kept to a budget so the streets — and the collision
+    // workload — stay sensible.
+    const spots = this.city.parkingSpots;
+    const stride = Math.max(1, Math.ceil(spots.length / PARKED_CAR_BUDGET));
+    spots.forEach((spot, i) => {
+      if (i % stride !== 0) return;
       cars.push({ pos: spot.pos, heading: spot.heading, speed: 0, radius: 14 });
       drivers.push(null);
+      this.parkedSpots.push(spot);
     });
 
     // NPC cars cruise the lane centres, one per vertical road, heading up or down.
@@ -460,20 +473,33 @@ export class CityScene extends Phaser.Scene {
     g.fillStyle(COLORS.sidewalk, 1);
     for (const s of this.city.sidewalks) g.fillRect(s.x, s.y, s.w, s.h);
 
-    // Crosswalks: a band of zebra stripes across each intersection tile.
-    const stripes = 4;
-    const stripeW = tile / (stripes * 2);
-    g.fillStyle(COLORS.crosswalk, 0.8);
+    // Crosswalks: a zebra crossing across each of the four approaches to an
+    // intersection (one band per side), leaving the middle of the box clear so
+    // it reads as a real junction rather than a painted-over square.
+    g.fillStyle(COLORS.crosswalk, 0.9);
+    const band = 10; // how far the crossing reaches in from the kerb
+    const bars = 4; // stripes per crossing
+    const step = tile / bars;
+    const barT = step * 0.5; // stripe thickness (half on, half gap)
     for (const cw of this.city.crosswalks) {
-      for (let k = 0; k < stripes; k++) {
-        g.fillRect(cw.x + k * stripeW * 2 + stripeW / 2, cw.y + 3, stripeW, tile - 6);
+      for (let k = 0; k < bars; k++) {
+        const off = k * step + (step - barT) / 2;
+        // North & south approaches: upright stripes spanning the band depth.
+        g.fillRect(cw.x + off, cw.y, barT, band);
+        g.fillRect(cw.x + off, cw.y + tile - band, barT, band);
+        // East & west approaches: stripes laid the other way.
+        g.fillRect(cw.x, cw.y + off, band, barT);
+        g.fillRect(cw.x + tile - band, cw.y + off, band, barT);
       }
     }
 
-    // Parking bays: thin outlined rectangles at each kerbside spot.
+    // Parking bays: a thin outline under each parked car, oriented to its kerb.
     g.lineStyle(1.5, COLORS.parkingLine, 0.7);
-    for (const spot of this.city.parkingSpots) {
-      g.strokeRect(spot.pos.x - 9, spot.pos.y - 16, 18, 32);
+    for (const spot of this.parkedSpots) {
+      const along = Math.abs(Math.cos(spot.heading)) > 0.5; // pointing along x?
+      const halfW = along ? 17 : 9;
+      const halfH = along ? 9 : 17;
+      g.strokeRect(spot.pos.x - halfW, spot.pos.y - halfH, halfW * 2, halfH * 2);
     }
   }
 
@@ -509,6 +535,44 @@ export class CityScene extends Phaser.Scene {
     this.corpseGfx = this.add.graphics().setDepth(4);
     // The ambulance: a white emergency vehicle, hidden until dispatched.
     this.ambulanceSprite = this.add.rectangle(0, 0, 30, 16, 0xf8fafc).setDepth(6).setVisible(false);
+    // Tow trucks: amber service vehicles, created on demand into a pool.
+    this.towSprites = [];
+
+    this.createNightLights();
+  }
+
+  /** Build the night-time lighting: a warm glow at every intersection that fades
+   * in after dark, plus a soft aura around the player so the streets stay
+   * playable at midnight. All additive, so by day (alpha 0) they cost nothing. */
+  private createNightLights(): void {
+    // A reusable soft radial-glow texture (concentric translucent circles).
+    if (!this.textures.exists('glow')) {
+      const size = 256;
+      const r = size / 2;
+      const g = this.make.graphics({ x: 0, y: 0 }, false);
+      for (let rad = r; rad > 0; rad -= 2) {
+        g.fillStyle(0xffe1aa, 0.05);
+        g.fillCircle(r, r, rad);
+      }
+      g.generateTexture('glow', size, size);
+      g.destroy();
+    }
+
+    // Streetlights at every intersection (world space), hidden by day.
+    this.nightLights = this.add.container(0, 0).setDepth(901).setAlpha(0);
+    for (const c of this.intersectionCenters) {
+      const light = this.add.image(c.x, c.y, 'glow').setScale(0.7).setBlendMode(Phaser.BlendModes.ADD);
+      this.nightLights.add(light);
+    }
+
+    // A soft aura that follows the player on screen, so wherever they are is lit.
+    this.nightAura = this.add
+      .image(this.scale.width / 2, this.scale.height / 2, 'glow')
+      .setScrollFactor(0)
+      .setDepth(902)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setScale(3.2)
+      .setAlpha(0);
   }
 
   /** Reconcile the bullet sprite pool with the live bullets. */
@@ -580,10 +644,15 @@ export class CityScene extends Phaser.Scene {
     const g = this.corpseGfx;
     g.clear();
     for (const c of this.world.corpses) {
-      g.fillStyle(0x7f1d1d, 0.55); // blood puddle
-      g.fillEllipse(c.pos.x, c.pos.y, 28, 18);
-      g.fillStyle(0x27272a, 1); // the body
-      g.fillCircle(c.pos.x, c.pos.y, 5);
+      g.fillStyle(0x6b1414, 0.5); // blood puddle
+      g.fillEllipse(c.pos.x, c.pos.y, 30, 20);
+      g.fillStyle(0x3b4252, 1); // the body, lying on its back (torso)
+      g.fillEllipse(c.pos.x, c.pos.y + 1, 16, 9);
+      g.fillStyle(0xd6a77a, 1); // head
+      g.fillCircle(c.pos.x - 9, c.pos.y, 4);
+      g.fillStyle(0x2b2f3a, 1); // legs
+      g.fillRect(c.pos.x + 5, c.pos.y - 4, 7, 3);
+      g.fillRect(c.pos.x + 5, c.pos.y + 1, 7, 3);
     }
   }
 
@@ -594,6 +663,21 @@ export class CityScene extends Phaser.Scene {
       this.ambulanceSprite.setVisible(true).setPosition(amb.pos.x, amb.pos.y).setRotation(amb.heading);
     } else {
       this.ambulanceSprite.setVisible(false);
+    }
+  }
+
+  /** Show every active tow truck, tracking each one's position and heading. */
+  private syncTow(): void {
+    this.world.tows.forEach((tow, i) => {
+      let sprite = this.towSprites[i];
+      if (!sprite) {
+        sprite = this.add.rectangle(0, 0, 32, 16, 0xf59e0b).setDepth(6);
+        this.towSprites[i] = sprite;
+      }
+      sprite.setVisible(true).setPosition(tow.pos.x, tow.pos.y).setRotation(tow.heading);
+    });
+    for (let i = this.world.tows.length; i < this.towSprites.length; i++) {
+      this.towSprites[i].setVisible(false);
     }
   }
 
@@ -797,14 +881,20 @@ export class CityScene extends Phaser.Scene {
     }
   }
 
-  /** Advance the day/night cycle and dim the world toward midnight. */
+  /** Advance the day/night cycle and dim the world toward midnight, while the
+   * city lights and the player's aura fade in to keep the streets readable. */
   private updateDayNight(dt: number): void {
     this.timeOfDay += dt;
     const phase = (this.timeOfDay % DAY_LENGTH) / DAY_LENGTH; // 0..1 across a day
     const darkness = (1 - Math.cos(phase * Math.PI * 2)) / 2; // 0 at noon → 1 at midnight
+    // Cap the gloom so midnight is dusky, not pitch black, then light it up.
     this.dayNightOverlay
       .setPosition(this.scale.width / 2, this.scale.height / 2)
-      .setFillStyle(0x0a0f24, darkness * 0.6);
+      .setFillStyle(0x0a0f24, darkness * 0.45);
+    this.nightLights.setAlpha(darkness);
+    this.nightAura
+      .setPosition(this.scale.width / 2, this.scale.height / 2)
+      .setAlpha(darkness * 0.8);
   }
 
   /** Wail the siren on a steady cadence whenever a chase is on. */
@@ -878,9 +968,13 @@ export class CityScene extends Phaser.Scene {
   private syncSprites(): void {
     this.world.cars.forEach((car, i) => {
       const sprite = this.carSprites[i];
+      if (this.world.towedCars[i]) {
+        sprite.setVisible(false); // hauled away by a tow truck
+        return;
+      }
       if (this.world.wreckedCars[i]) {
         // A destroyed car is a charred, static wreck.
-        sprite.setTexture(TEX.npcCar).setTint(0x3a3a3a).setPosition(car.pos.x, car.pos.y).setRotation(car.heading);
+        sprite.setVisible(true).setTexture(TEX.npcCar).setTint(0x3a3a3a).setPosition(car.pos.x, car.pos.y).setRotation(car.heading);
         return;
       }
       sprite
@@ -928,6 +1022,7 @@ export class CityScene extends Phaser.Scene {
     this.syncLights();
     this.syncCorpses();
     this.syncAmbulance();
+    this.syncTow();
 
     // Mission marker: show the ring only while a 'reach' objective is active.
     const objective = this.world.missionObjective;

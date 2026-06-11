@@ -1,7 +1,13 @@
-import { type Vec2, vec2, add, sub, scale, normalize, length, distance, dot, angle } from './vector';
-import { type City, tileCenter } from './city';
-import { tileCoord, roadAt, openDirections } from './trafficAI';
+import { type Vec2, add, sub, scale, normalize, length, distance, angle } from './vector';
+import { type City } from './city';
+import {
+  type RoadVehicle,
+  nearestCardinal,
+  seekChooser,
+  stepRoadVehicle,
+} from './roadVehicle';
 import { DEFAULT_CAR_TUNING } from './vehicle';
+import { WALK_SPEED } from './entity';
 
 /** A police unit that pursues a target position. */
 export interface Police {
@@ -25,6 +31,9 @@ export const POLICE_SPEED_PER_STAR = 18;
 /** Patrol cars top out at the player car's maximum speed, so a clean getaway is
  * possible but a slow or cornered driver gets run down. */
 export const POLICE_CAR_MAX_SPEED = DEFAULT_CAR_TUNING.maxSpeed;
+/** Officers on foot never run faster than the player can, so a fleeing player is
+ * never simply outpaced on foot (they can be cornered, but not outrun). */
+export const POLICE_FOOT_MAX_SPEED = WALK_SPEED;
 
 /** Pursuit speed scales with the wanted level, so higher heat means faster cops. */
 export function policeSpeedForStars(starCount: number, base = POLICE_BASE_SPEED): number {
@@ -32,12 +41,13 @@ export function policeSpeedForStars(starCount: number, base = POLICE_BASE_SPEED)
 }
 
 /** Pursuit speed for a unit of the given kind at the current wanted level. A
- * patrol car is capped at the player car's max speed (see {@link POLICE_CAR_MAX_SPEED}). */
+ * patrol car is capped at the player car's max speed; an officer on foot is
+ * capped at the player's own walking speed (see the MAX_SPEED constants). */
 export function policeSpeedFor(kind: 'foot' | 'car', starCount: number): number {
   if (kind === 'car') {
     return Math.min(POLICE_CAR_MAX_SPEED, policeSpeedForStars(starCount, POLICE_CAR_BASE_SPEED));
   }
-  return policeSpeedForStars(starCount, POLICE_BASE_SPEED);
+  return Math.min(POLICE_FOOT_MAX_SPEED, policeSpeedForStars(starCount, POLICE_BASE_SPEED));
 }
 
 /**
@@ -69,19 +79,10 @@ export function hasCaught(police: Police, target: Vec2): boolean {
   return distance(police.pos, target) <= police.radius;
 }
 
-/** The cardinal direction nearest to a heading (radians). */
-function nearestCardinal(heading: number): Vec2 {
-  const c = Math.cos(heading);
-  const s = Math.sin(heading);
-  return Math.abs(c) >= Math.abs(s) ? vec2(Math.sign(c) || 1, 0) : vec2(0, Math.sign(s) || 1);
-}
-
 /**
- * Advance a patrol car one step, chasing `target` along the road grid. The car
- * drives forward in its current cardinal direction; on entering a new tile it
- * turns onto whichever open road heads most directly toward the target (and
- * reverses at a dead end), snapping to lane centres so it never cuts through a
- * building. Pure: returns a new unit.
+ * Advance a patrol car one step, chasing `target` along the road grid via the
+ * shared {@link stepRoadVehicle} model (it follows lanes toward the target and
+ * never cuts through buildings). Pure: returns a new unit.
  */
 export function stepPoliceCar(
   police: Police,
@@ -90,27 +91,11 @@ export function stepPoliceCar(
   dt: number,
   speed = POLICE_CAR_BASE_SPEED,
 ): Police {
-  const spec = city.spec;
-  let dir = nearestCardinal(police.heading);
-
-  const before = tileCoord(spec, police.pos);
-  let pos = add(police.pos, scale(dir, speed * dt));
-  const after = tileCoord(spec, pos);
-
-  if (after.tx !== before.tx || after.ty !== before.ty) {
-    // Decide turns from the tile we are entering, or the current one if that is
-    // off the road network.
-    const tile = roadAt(city, after.tx, after.ty) ? after : before;
-    const options = openDirections(city, tile.tx, tile.ty);
-    const center = tileCenter(spec, tile.tx, tile.ty);
-    const toTarget = sub(target, center);
-    if (options.length > 0) {
-      dir = options.reduce((best, d) => (dot(d, toTarget) > dot(best, toTarget) ? d : best), options[0]);
-    } else {
-      dir = vec2(-dir.x, -dir.y); // dead end: turn back
-    }
-    pos = center; // pivot cleanly on the lane centre
-  }
-
-  return { ...police, pos, heading: angle(dir) };
+  const v: RoadVehicle = {
+    pos: police.pos,
+    heading: police.heading,
+    dir: nearestCardinal(police.heading),
+  };
+  const next = stepRoadVehicle(v, city, dt, speed, seekChooser(target));
+  return { ...police, pos: next.pos, heading: next.heading };
 }

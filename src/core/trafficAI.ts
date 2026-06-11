@@ -1,6 +1,16 @@
-import { type Vec2, vec2, add, sub, scale, dot, angle } from './vector';
-import { type City, type CitySpec, tileCenter } from './city';
+import { type Vec2, sub, dot } from './vector';
+import { type City } from './city';
 import type { Car } from './vehicle';
+import {
+  type RoadVehicle,
+  roadAt,
+  wanderChooser,
+  stepRoadVehicle,
+} from './roadVehicle';
+
+// Re-exported so existing callers keep importing the road-grid helpers from
+// here; they now live in the shared roadVehicle module.
+export { CARDINALS, tileCoord, roadAt, openDirections } from './roadVehicle';
 
 /** A simple NPC driver that keeps a car moving along the road grid. */
 export interface TrafficAI {
@@ -20,45 +30,10 @@ export const YIELD_DISTANCE = 70;
 /** Half-width (px) of the lane an NPC car watches for obstacles. */
 export const YIELD_LANE_HALF = 26;
 
-/** The four cardinal travel directions. */
-export const CARDINALS: readonly Vec2[] = [
-  vec2(1, 0),
-  vec2(-1, 0),
-  vec2(0, 1),
-  vec2(0, -1),
-];
-
-/** Tile coordinate containing a pixel position. */
-export function tileCoord(spec: CitySpec, pos: Vec2): { tx: number; ty: number } {
-  return { tx: Math.floor(pos.x / spec.tile), ty: Math.floor(pos.y / spec.tile) };
-}
-
-function inBounds(spec: CitySpec, tx: number, ty: number): boolean {
-  return tx >= 0 && ty >= 0 && tx < spec.cols && ty < spec.rows;
-}
-
-/** Whether a tile exists on the map and is a road lane. */
-export function roadAt(city: City, tx: number, ty: number): boolean {
-  return inBounds(city.spec, tx, ty) && city.isRoad(tx, ty);
-}
-
 /** Whether a road tile is an intersection (a road row crossing a road column). */
 export function isIntersection(city: City, tx: number, ty: number): boolean {
   const { block } = city.spec;
   return roadAt(city, tx, ty) && tx % block === 0 && ty % block === 0;
-}
-
-function isOpposite(a: Vec2, b: Vec2): boolean {
-  return a.x === -b.x && a.y === -b.y;
-}
-
-function isSame(a: Vec2, b: Vec2): boolean {
-  return a.x === b.x && a.y === b.y;
-}
-
-/** Cardinal directions from a tile that lead onto another road tile. */
-export function openDirections(city: City, tx: number, ty: number): Vec2[] {
-  return CARDINALS.filter((d) => roadAt(city, tx + d.x, ty + d.y));
 }
 
 /**
@@ -84,11 +59,9 @@ export function obstacleAhead(
 }
 
 /**
- * Advance an NPC-driven car one step along the road grid. The car drives
- * forward at `speed`; when it crosses into a new tile it may turn onto a
- * crossing road (and must turn if the road ahead ends), snapping to the tile
- * centre so it stays in its lane and never drives into a building. Pure:
- * returns a new car and driver state.
+ * Advance an NPC-driven car one step along the road grid, cruising and turning
+ * at intersections via the shared {@link stepRoadVehicle} model. Pure: returns a
+ * new car and driver state.
  */
 export function stepTraffic(
   car: Car,
@@ -98,35 +71,10 @@ export function stepTraffic(
   speed = TRAFFIC_SPEED,
   rng: () => number = Math.random,
 ): { car: Car; ai: TrafficAI } {
-  const spec = city.spec;
-  let dir = ai.dir;
-
-  const before = tileCoord(spec, car.pos);
-  let pos = add(car.pos, scale(dir, speed * dt));
-  const after = tileCoord(spec, pos);
-
-  if (after.tx !== before.tx || after.ty !== before.ty) {
-    if (!roadAt(city, after.tx, after.ty)) {
-      // Would leave the road network: stay on the current tile and turn away.
-      const perpendicular = openDirections(city, before.tx, before.ty).filter(
-        (d) => !isSame(d, dir) && !isOpposite(d, dir),
-      );
-      dir =
-        perpendicular.length > 0
-          ? (perpendicular[Math.floor(rng() * perpendicular.length)] ?? dir)
-          : vec2(-dir.x, -dir.y); // nowhere to turn: head back
-      pos = tileCenter(spec, before.tx, before.ty);
-    } else {
-      // Entered a new road tile: maybe turn onto a crossing road.
-      const turns = openDirections(city, after.tx, after.ty).filter(
-        (d) => !isSame(d, dir) && !isOpposite(d, dir),
-      );
-      if (turns.length > 0 && rng() < TRAFFIC_TURN_CHANCE) {
-        dir = turns[Math.floor(rng() * turns.length)] ?? dir;
-        pos = tileCenter(spec, after.tx, after.ty); // pivot cleanly on the lane centre
-      }
-    }
-  }
-
-  return { car: { ...car, pos, heading: angle(dir), speed }, ai: { ...ai, dir } };
+  const v: RoadVehicle = { pos: car.pos, heading: car.heading, dir: ai.dir };
+  const next = stepRoadVehicle(v, city, dt, speed, wanderChooser(rng, TRAFFIC_TURN_CHANCE));
+  return {
+    car: { ...car, pos: next.pos, heading: next.heading, speed },
+    ai: { ...ai, dir: next.dir },
+  };
 }

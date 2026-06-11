@@ -2,7 +2,24 @@
     "chat.tools.terminal.autoApprove": {
         "git remote": true,
         "npm install": true,
-        "Test-Path": true
+        "Test-Path": true,
+        "npx vitest": true,
+        "/^node tmp/shot\\.mjs tmp/baseline-day\\.png 2000$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^node tmp/probe-restart\\.mjs$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^node tmp/probe-restart2\\.mjs$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^node tmp/probe-keys\\.mjs$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
     },
     "cSpell.words": [
         "cooldown",
