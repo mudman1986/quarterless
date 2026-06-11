@@ -15,6 +15,8 @@ export interface PedestrianContext {
   threats: readonly Vec2[];
   /** Map extent used when choosing a new wander target. */
   bounds: { width: number; height: number };
+  /** Preferred walkway nodes; when present, wandering stays close to sidewalks. */
+  waypoints?: readonly Vec2[];
 }
 
 export const PED_WALK_SPEED = 32;
@@ -23,6 +25,7 @@ export const PED_FLEE_SPEED = 90;
 export const PANIC_RADIUS = 95;
 /** Distance at which a wander target counts as reached. */
 export const ARRIVE_RADIUS = 6;
+const LOCAL_WAYPOINT_RADIUS = 280;
 
 function nearestThreat(p: Vec2, threats: readonly Vec2[]): Vec2 | null {
   let best: Vec2 | null = null;
@@ -35,6 +38,17 @@ function nearestThreat(p: Vec2, threats: readonly Vec2[]): Vec2 | null {
     }
   }
   return best;
+}
+
+function pickWaypoint(pos: Vec2, ctx: PedestrianContext, rng: () => number): Vec2 {
+  const options = ctx.waypoints?.filter((p) => distance(p, pos) <= LOCAL_WAYPOINT_RADIUS && distance(p, pos) > ARRIVE_RADIUS);
+  if (options && options.length > 0) {
+    return options[Math.floor(rng() * options.length)] ?? options[0];
+  }
+  if (ctx.waypoints && ctx.waypoints.length > 0) {
+    return ctx.waypoints[Math.floor(rng() * ctx.waypoints.length)] ?? ctx.waypoints[0];
+  }
+  return vec2(rng() * ctx.bounds.width, rng() * ctx.bounds.height);
 }
 
 /**
@@ -64,7 +78,7 @@ export function stepPedestrian(
 
   let target = ped.target;
   if (distance(ped.pos, target) <= ARRIVE_RADIUS) {
-    target = vec2(rng() * ctx.bounds.width, rng() * ctx.bounds.height);
+    target = pickWaypoint(ped.pos, ctx, rng);
   }
 
   const toTarget = sub(target, ped.pos);

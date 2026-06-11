@@ -10,6 +10,10 @@ export interface Police {
   radius: number;
   /** Whether this unit is an officer on foot or a patrol car. */
   kind: 'foot' | 'car';
+  /** Optional cooldown before the unit can fire again. */
+  cooldown?: number;
+  /** Whether the patrol car is actively using sirens/lights. */
+  alert?: boolean;
 }
 
 /** Base pursuit speed (px/s) of an officer on foot at one wanted star. */

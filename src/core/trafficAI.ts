@@ -6,6 +6,10 @@ import type { Car } from './vehicle';
 export interface TrafficAI {
   /** Unit cardinal direction the car is currently travelling. */
   dir: Vec2;
+  /** Seconds spent waiting behind an obstacle. */
+  wait?: number;
+  /** Cosmetic/behavioural flavour. */
+  style?: 'civilian' | 'ambulance';
 }
 
 /** Cruising speed (px/s) of NPC traffic. */
@@ -53,6 +57,13 @@ export function openDirections(city: City, tx: number, ty: number): Vec2[] {
   return CARDINALS.filter((d) => roadAt(city, tx + d.x, ty + d.y));
 }
 
+/** Pick a perpendicular route for a waiting driver trying to go around a blocker. */
+export function chooseDetour(city: City, tx: number, ty: number, dir: Vec2, rng: () => number): Vec2 {
+  const options = openDirections(city, tx, ty).filter((d) => !isSame(d, dir) && !isOpposite(d, dir));
+  if (options.length > 0) return options[Math.floor(rng() * options.length)] ?? options[0];
+  return vec2(-dir.x, -dir.y);
+}
+
 /**
  * Whether any obstacle lies in the car's path: ahead of it (along `dir`) within
  * `ahead` px and no more than `laneHalf` px to either side. NPC traffic brakes
@@ -70,7 +81,7 @@ export function obstacleAhead(
     const rel = sub(o, carPos);
     const forward = dot(rel, dir);
     if (forward <= 0 || forward > ahead) return false;
-    const lateral = Math.abs(rel.x * dir.y - rel.y * dir.x); // |rel x dir|, dir is unit
+    const lateral = Math.abs(rel.x * dir.y - rel.y * dir.x);
     return lateral <= laneHalf;
   });
 }
@@ -99,26 +110,21 @@ export function stepTraffic(
 
   if (after.tx !== before.tx || after.ty !== before.ty) {
     if (!roadAt(city, after.tx, after.ty)) {
-      // Would leave the road network: stay on the current tile and turn away.
       const perpendicular = openDirections(city, before.tx, before.ty).filter(
         (d) => !isSame(d, dir) && !isOpposite(d, dir),
       );
-      dir =
-        perpendicular.length > 0
-          ? (perpendicular[Math.floor(rng() * perpendicular.length)] ?? dir)
-          : vec2(-dir.x, -dir.y); // nowhere to turn: head back
+      dir = perpendicular.length > 0 ? (perpendicular[Math.floor(rng() * perpendicular.length)] ?? dir) : vec2(-dir.x, -dir.y);
       pos = tileCenter(spec, before.tx, before.ty);
     } else {
-      // Entered a new road tile: maybe turn onto a crossing road.
       const turns = openDirections(city, after.tx, after.ty).filter(
         (d) => !isSame(d, dir) && !isOpposite(d, dir),
       );
       if (turns.length > 0 && rng() < TRAFFIC_TURN_CHANCE) {
         dir = turns[Math.floor(rng() * turns.length)] ?? dir;
-        pos = tileCenter(spec, after.tx, after.ty); // pivot cleanly on the lane centre
+        pos = tileCenter(spec, after.tx, after.ty);
       }
     }
   }
 
-  return { car: { ...car, pos, heading: angle(dir), speed }, ai: { dir } };
+  return { car: { ...car, pos, heading: angle(dir), speed }, ai: { ...ai, dir } };
 }

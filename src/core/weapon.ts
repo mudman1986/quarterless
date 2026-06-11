@@ -7,6 +7,7 @@ export interface Bullet {
   /** Remaining lifetime in seconds. */
   life: number;
   damage: number;
+  owner: 'player' | 'police';
 }
 
 /** A weapon with a fire rate, ammo, and projectile parameters. */
@@ -71,7 +72,7 @@ export interface FireResult {
  * weapon and a bullet if a shot was produced (null when on cooldown or empty).
  * Pure.
  */
-export function fire(w: Weapon, origin: Vec2, heading: number): FireResult {
+export function fire(w: Weapon, origin: Vec2, heading: number, owner: Bullet['owner'] = 'player'): FireResult {
   if (!canFire(w)) return { weapon: w, bullet: null };
   return {
     weapon: { ...w, heat: w.cooldown, ammo: w.ammo - 1 },
@@ -80,6 +81,7 @@ export function fire(w: Weapon, origin: Vec2, heading: number): FireResult {
       velocity: fromAngle(heading, w.bulletSpeed),
       life: w.bulletLife,
       damage: w.damage,
+      owner,
     },
   };
 }

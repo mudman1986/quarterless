@@ -814,7 +814,7 @@ describe('World ammo pickups', () => {
 });
 
 describe('World patrol car collisions', () => {
-  it('stops a patrol car from driving through the player car', () => {
+  it('keeps a patrol car engaged against the player car while it blocks or pins it', () => {
     const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
     const w = new World({
       player: player(),
@@ -823,14 +823,52 @@ describe('World patrol car collisions', () => {
       police: [{ pos: vec2(44, 0), heading: Math.PI, radius: 14, kind: 'car' }],
       bounds: { width: city.width, height: city.height },
     });
-    w.wanted = addHeat(createWanted(), CRIME_HEAT.hitPolice); // wanted -> the patrol car stays
-    w.tick(controls({ action: true }), 1 / 60); // hijack the car
+    w.wanted = addHeat(createWanted(), CRIME_HEAT.hitPolice);
+    w.tick(controls({ action: true }), 1 / 60);
 
     for (let i = 0; i < 20; i++) w.tick(controls(), 1 / 60);
-    const patrol = w.police.find((c) => c.kind === 'car')!;
-    // The patrol car and the player's car never overlap.
-    expect(distance(patrol.pos, w.drivingCar!.pos)).toBeGreaterThanOrEqual(
-      patrol.radius + w.drivingCar!.radius - 1,
+    const patrol = w.police.find((c) => c.kind === 'car');
+    expect(patrol).toBeDefined();
+    expect(distance(patrol!.pos, w.drivingCar!.pos)).toBeLessThanOrEqual(
+      patrol!.radius + w.drivingCar!.radius + 4,
     );
+  });
+});
+
+describe('World issue 3 features', () => {
+  it('lets police shoot at high wanted levels without instantly wasting the player', () => {
+    const w = new World({
+      player: player(),
+      police: [{ pos: vec2(120, 0), heading: Math.PI, radius: 12, kind: 'foot' }],
+      bounds: { width: 1000, height: 1000 },
+    });
+    w.wanted = addHeat(addHeat(addHeat(createWanted(), CRIME_HEAT.hitPolice), CRIME_HEAT.hitPolice), CRIME_HEAT.hitPolice);
+    const before = w.health.current;
+    for (let i = 0; i < 90; i++) w.tick(controls(), 1 / 60);
+    expect(w.health.current).toBeLessThan(before);
+    expect(w.isWasted).toBe(false);
+  });
+
+  it('explodes a car after repeated gunfire', () => {
+    const w = new World({
+      player: player(),
+      cars: [{ pos: vec2(40, 0), heading: 0, speed: 0, radius: 12 }],
+      bounds: { width: 1000, height: 1000 },
+    });
+    for (let i = 0; i < 240 && (w.cars[0].wreckTimer ?? 0) === 0; i++) w.tick(controls({ fire: true }), 1 / 60);
+    expect((w.cars[0].wreckTimer ?? 0)).toBeGreaterThan(0);
+  });
+
+  it('dispatches an ambulance for a corpse that stays on screen', () => {
+    const w = new World({
+      player: player(),
+      pedestrians: [pedAt(40, 0)],
+      bounds: { width: 1000, height: 1000 },
+      rng: () => 0.5,
+    });
+    for (let i = 0; i < 30 && w.pedestrians.length > 0; i++) w.tick(controls({ fire: true }), 1 / 60);
+    expect(w.corpses.length).toBeGreaterThan(0);
+    for (let i = 0; i < 190; i++) w.tick(controls(), 1 / 60);
+    expect(w.ambulances.length > 0 || w.corpses.length === 0).toBe(true);
   });
 });

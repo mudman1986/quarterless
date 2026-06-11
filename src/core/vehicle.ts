@@ -12,6 +12,14 @@ export interface Car {
   speed: number;
   /** Collision radius. */
   radius: number;
+  /** Optional hit points used for shootable/exploding cars. */
+  hp?: number;
+  /** Seconds of explosion/wreck state remaining. */
+  wreckTimer?: number;
+  /** Whether the car is meant to stay parked until someone takes it. */
+  parked?: boolean;
+  /** Cosmetic subtype used by the renderer. */
+  kind?: 'civilian' | 'ambulance';
 }
 
 export interface CarTuning {

@@ -8,8 +8,8 @@
 export class Sound {
   private ctx: AudioContext | null = null;
   private available = true;
+  private lastSirenAt = 0;
 
-  /** Lazily create (and resume) the audio context, or null if unavailable. */
   private context(): AudioContext | null {
     if (!this.available) return null;
     try {
@@ -26,17 +26,16 @@ export class Sound {
     }
   }
 
-  /** Unlock audio in response to a user gesture (browsers require this). */
   resume(): void {
     this.context();
   }
 
-  /** Play a single decaying tone. */
   private blip(
     frequency: number,
     duration: number,
     type: OscillatorType = 'square',
     gain = 0.05,
+    whenOffset = 0,
   ): void {
     const ctx = this.context();
     if (!ctx) return;
@@ -48,7 +47,7 @@ export class Sound {
       osc.connect(amp);
       amp.connect(ctx.destination);
 
-      const now = ctx.currentTime;
+      const now = ctx.currentTime + whenOffset;
       amp.gain.setValueAtTime(gain, now);
       amp.gain.exponentialRampToValueAtTime(0.0001, now + duration);
       osc.start(now);
@@ -58,25 +57,35 @@ export class Sound {
     }
   }
 
-  /** A short, dry shot. */
   shot(): void {
     this.blip(220, 0.08, 'square', 0.035);
   }
 
-  /** A low thud for an elimination. */
   hit(): void {
     this.blip(130, 0.14, 'sawtooth', 0.05);
   }
 
-  /** A descending tone for being busted or wasted. */
   fail(): void {
     this.blip(180, 0.25, 'sine', 0.06);
-    this.blip(90, 0.4, 'sine', 0.06);
+    this.blip(90, 0.4, 'sine', 0.06, 0.04);
   }
 
-  /** A bright two-note flourish for completing a mission. */
   fanfare(): void {
     this.blip(523, 0.12, 'triangle', 0.05);
-    this.blip(784, 0.18, 'triangle', 0.05);
+    this.blip(784, 0.18, 'triangle', 0.05, 0.12);
+  }
+
+  explosion(): void {
+    this.blip(80, 0.3, 'sawtooth', 0.08);
+    this.blip(42, 0.5, 'triangle', 0.08, 0.04);
+  }
+
+  siren(): void {
+    const ctx = this.context();
+    if (!ctx) return;
+    if (ctx.currentTime - this.lastSirenAt < 0.55) return;
+    this.lastSirenAt = ctx.currentTime;
+    this.blip(660, 0.16, 'square', 0.025);
+    this.blip(880, 0.16, 'square', 0.025, 0.18);
   }
 }
