@@ -123,7 +123,7 @@ export class CityScene extends Phaser.Scene {
   private prevMissionComplete = false;
   private prevMissionId: string | null = null;
   private prevObjective = '';
-  private prevWrecks = 0;
+  private explodingCars = new Set<number>();
   private announceRemaining = 0;
   private pauseKey?: Phaser.Input.Keyboard.Key;
   private newGameKey?: Phaser.Input.Keyboard.Key;
@@ -687,8 +687,16 @@ export class CityScene extends Phaser.Scene {
     if (w.score.best > this.savedBest) this.savedBest = saveHighScore(this.store, w.score.best);
     if (w.bullets.length > this.prevBullets) this.sfx.shot();
     if (w.kills > this.prevKills) this.sfx.hit();
-    const wrecks = w.cars.filter((car) => (car.wreckTimer ?? 0) > 0).length;
-    if (wrecks > this.prevWrecks) this.sfx.explosion();
+    w.cars.forEach((car, i) => {
+      const wrecked = (car.wreckTimer ?? 0) > 0;
+      if (wrecked && !this.explodingCars.has(i)) {
+        this.explodingCars.add(i);
+        this.sfx.explosion();
+        this.showExplosion(car.pos);
+      } else if (!wrecked) {
+        this.explodingCars.delete(i);
+      }
+    });
     if (w.police.some((cop) => cop.kind === 'car' && cop.alert)) this.sfx.siren();
     if (w.status !== 'playing' && this.prevStatus === 'playing') this.sfx.fail();
 
@@ -710,12 +718,27 @@ export class CityScene extends Phaser.Scene {
     this.prevMissionComplete = w.missionComplete;
     this.prevMissionId = missionId;
     this.prevObjective = objective;
-    this.prevWrecks = wrecks;
   }
 
   private showBanner(text: string): void {
     this.banner.setText(text).setVisible(true);
     this.announceRemaining = ANNOUNCE_SECONDS;
+  }
+
+  private showExplosion(pos: Vec2): void {
+    const flash = this.add.circle(pos.x, pos.y, 10, 0xfbbf24, 0.95).setDepth(8);
+    const ring = this.add.circle(pos.x, pos.y, 18, 0xf97316, 0.5).setStrokeStyle(4, 0xfde68a, 0.85).setDepth(8);
+    this.tweens.add({
+      targets: [flash, ring],
+      scale: 2.6,
+      alpha: 0,
+      duration: 260,
+      ease: 'Cubic.Out',
+      onComplete: () => {
+        flash.destroy();
+        ring.destroy();
+      },
+    });
   }
 
   private syncSprites(): void {
