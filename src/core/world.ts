@@ -1,5 +1,5 @@
 import { type Vec2, vec2, add, distance, fromAngle } from './vector';
-import { type Rect, resolveCircleRects, circleIntersectsRect } from './collision';
+import { type Rect, resolveCircleRects, resolveCircleCircles, circleIntersectsRect } from './collision';
 import { wrap } from './math';
 import {
   type Car,
@@ -40,6 +40,7 @@ import {
   type Mission,
   type Objective,
   type MissionBaseline,
+  createMission,
   currentObjective,
   updateMission,
   isComplete,
@@ -84,6 +85,8 @@ export interface WorldOptions {
   missions?: Mission[];
   /** Ammo pickups scattered around the map. */
   ammoPickups?: AmmoPickup[];
+  /** Whether the mission list should reshuffle and restart forever. */
+  loopMissions?: boolean;
   /** RNG injected for deterministic pedestrian wandering in tests. */
   rng?: () => number;
 }
@@ -106,6 +109,15 @@ export const SCORE_PER_PEDESTRIAN = 50;
 export const SCORE_PER_POLICE = 150;
 /** How close the player must be to an ammo pickup to collect it. */
 export const AMMO_PICKUP_RADIUS = 22;
+
+function resetMission(mission: Mission): Mission {
+  return createMission({
+    id: mission.id,
+    title: mission.title,
+    objectives: mission.objectives,
+    reward: mission.reward,
+  });
+}
 
 /**
  * Authoritative game simulation. Holds all entities and advances them with a
@@ -154,6 +166,8 @@ export class World {
   private objectiveBaseline: MissionBaseline = { kills: 0, collected: 0, elapsed: 0 };
   /** Seconds elapsed in the current run (drives survive objectives). */
   private elapsed = 0;
+  private readonly loopMissions: boolean;
+  private readonly missionPool: readonly Mission[];
 
   constructor(opts: WorldOptions) {
     this.player = opts.player;
@@ -173,7 +187,12 @@ export class World {
     this.weapon = opts.weapon ?? createPistol();
     this.score = createScore(opts.bestScore ?? 0);
     const missions = opts.missions ?? (opts.mission ? [opts.mission] : []);
-    this.campaign = missions.length > 0 ? createCampaign(missions) : null;
+    this.loopMissions = opts.loopMissions ?? false;
+    this.missionPool = missions.map(resetMission);
+    this.campaign =
+      missions.length > 0
+        ? createCampaign(this.loopMissions ? this.shuffleMissions(this.missionPool) : this.missionPool.slice())
+        : null;
     this.ammoPickups = opts.ammoPickups ?? [];
   }
 
@@ -226,6 +245,26 @@ export class World {
     return this.campaign ? isCampaignComplete(this.campaign) : false;
   }
 
+  /** Human-readable progress for the current non-positional objective, or empty. */
+  get missionProgress(): string {
+    const obj = this.missionObjective;
+    if (!obj) return '';
+    switch (obj.kind) {
+      case 'reach':
+        return '';
+      case 'eliminate':
+        return `${Math.min(obj.count, this.kills - this.objectiveBaseline.kills)}/${obj.count}`;
+      case 'collect':
+        return `${Math.min(obj.count, this.collected - this.objectiveBaseline.collected)}/${obj.count}`;
+      case 'survive': {
+        const elapsed = Math.max(0, this.elapsed - this.objectiveBaseline.elapsed);
+        return `${Math.min(obj.seconds, Math.floor(elapsed))}/${obj.seconds}s`;
+      }
+      case 'wanted':
+        return `${Math.min(obj.stars, this.wantedStars)}/${obj.stars}★`;
+    }
+  }
+
   /** Advance the simulation by `dt` seconds. */
   tick(c: Controls, dt: number): void {
     if (this.status !== 'playing') {
@@ -259,9 +298,11 @@ export class World {
 
   private updateOnFoot(c: Controls, dt: number, actionPressed: boolean): void {
     const moved = walk(this.player, c, dt);
+    const wrapped = this.wrapPos(moved.pos);
+    const walls = resolveCircleRects(wrapped, moved.radius, this.walls);
     this.player = {
       ...moved,
-      pos: this.wrapPos(resolveCircleRects(moved.pos, moved.radius, this.walls)),
+      pos: resolveCircleCircles(walls, moved.radius, this.blockingCars()),
     };
 
     if (actionPressed) {
@@ -293,6 +334,11 @@ export class World {
     const obstacles = this.pedestrians.map((p) => p.pos);
     if (!this.isDriving) obstacles.push(this.player.pos);
     return obstacles;
+  }
+
+  /** Cars moving slowly enough to behave like solid obstacles to people on foot. */
+  private blockingCars() {
+    return this.cars.filter((car) => Math.abs(car.speed) < RUN_OVER_SPEED);
   }
 
   /** Push any overlapping cars apart so they collide instead of passing through. */
@@ -385,7 +431,8 @@ export class World {
         continue; // pedestrian is run over and removed
       }
       const stepped = stepPedestrian(ped, { threats, bounds: this.bounds }, dt, this.rng);
-      const pos = resolveCircleRects(stepped.pos, stepped.radius, this.walls);
+      const walls = resolveCircleRects(stepped.pos, stepped.radius, this.walls);
+      const pos = resolveCircleCircles(walls, stepped.radius, this.blockingCars());
       const blocked = pos.x !== stepped.pos.x || pos.y !== stepped.pos.y;
       // A wandering pedestrian that walks into a building turns around (picks a
       // new target) rather than grinding against the wall.
@@ -487,12 +534,27 @@ export class World {
       this.score = award(this.score, advanced.reward);
       this.objectiveBaseline = this.baselineNow(); // the next mission counts from here
     }
-    this.campaign = updateCampaign(this.campaign, advanced);
+    const campaign = updateCampaign(this.campaign, advanced);
+    if (this.loopMissions && isCampaignComplete(campaign) && this.missionPool.length > 0) {
+      this.campaign = createCampaign(this.shuffleMissions(this.missionPool));
+      this.objectiveBaseline = this.baselineNow();
+      return;
+    }
+    this.campaign = campaign;
   }
 
   /** Snapshot the progress counters for measuring the next objective. */
   private baselineNow(): MissionBaseline {
     return { kills: this.kills, collected: this.collected, elapsed: this.elapsed };
+  }
+
+  private shuffleMissions(source: readonly Mission[]): Mission[] {
+    const deck = source.map(resetMission);
+    for (let i = deck.length - 1; i > 0; i--) {
+      const j = Math.floor(this.rng() * (i + 1));
+      [deck[i], deck[j]] = [deck[j], deck[i]];
+    }
+    return deck;
   }
 
   private updateWantedAndPolice(dt: number): void {

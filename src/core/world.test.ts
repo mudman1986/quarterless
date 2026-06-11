@@ -49,6 +49,12 @@ describe('World on foot', () => {
     // The wall starts at x=20; player radius 8 means it can reach at most x=12.
     expect(w.player.pos.x).toBeLessThanOrEqual(12 + 1e-6);
   });
+
+  it('blocks the player from walking through a parked car', () => {
+    const w = new World({ player: player(), cars: [carAt(22, 0)] });
+    for (let i = 0; i < 120; i++) w.tick(controls({ right: true }), 1 / 60);
+    expect(distance(w.player.pos, w.cars[0].pos)).toBeGreaterThanOrEqual(w.player.radius + w.cars[0].radius - 1e-6);
+  });
 });
 
 describe('World entering and exiting a car', () => {
@@ -160,6 +166,27 @@ describe('World pedestrians', () => {
     for (let i = 0; i < 60; i++) w.tick(controls(), 1 / 60);
     // Having hit the wall, it abandoned the unreachable original target.
     expect(w.pedestrians[0].target).not.toEqual(vec2(300, 100));
+  });
+
+  it('does not let a pedestrian walk through a parked car', () => {
+    const ped: ReturnType<typeof pedAt> = {
+      pos: vec2(100, 100),
+      heading: 0,
+      radius: 7,
+      state: 'wander',
+      target: vec2(300, 100),
+    };
+    const w = new World({
+      player: player(),
+      pedestrians: [ped],
+      cars: [carAt(120, 100)],
+      bounds: { width: 1000, height: 1000 },
+      rng: () => 0.5,
+    });
+    for (let i = 0; i < 120; i++) w.tick(controls(), 1 / 60);
+    expect(distance(w.pedestrians[0].pos, w.cars[0].pos)).toBeGreaterThanOrEqual(
+      w.pedestrians[0].radius + w.cars[0].radius - 1e-6,
+    );
   });
 
   it('runs over a pedestrian when driving fast into it, raising the wanted level', () => {
@@ -455,6 +482,17 @@ describe('World road deaths', () => {
     expect(w.isWasted).toBe(false);
   });
 
+  it('does not waste the player for walking into a stopped car that already braked', () => {
+    const w = new World({
+      player: player(),
+      cars: [{ pos: vec2(22, 0), heading: 0, speed: 0, radius: 12 }],
+      bounds: { width: 4000, height: 4000 },
+    });
+    for (let i = 0; i < 120; i++) w.tick(controls({ right: true }), 1 / 60);
+    expect(w.isWasted).toBe(false);
+    expect(w.health.current).toBe(w.health.max);
+  });
+
   it('respawns the player at the start after being run over', () => {
     const w = new World({
       player: { pos: vec2(100, 100), angle: 0, radius: 8 },
@@ -614,6 +652,28 @@ describe('World mission', () => {
     expect(w.score.current).toBe(500 + SCORE_PER_PEDESTRIAN);
   });
 
+  it('reports takedown progress on eliminate objectives', () => {
+    const w = new World({
+      player: player(),
+      pedestrians: [pedAt(40, 0)],
+      bounds: { width: 1000, height: 1000 },
+      rng: () => 0.5,
+      mission: createMission({
+        id: 'm1',
+        title: 'Cleanup',
+        objectives: [
+          { kind: 'reach', description: 'Get to the spot', target: vec2(0, 0), radius: 10 },
+          { kind: 'eliminate', description: 'Eliminate 1 target', count: 1 },
+        ],
+      }),
+    });
+
+    w.tick(controls(), 1 / 60);
+    expect(w.missionProgress).toBe('0/1');
+    for (let i = 0; i < 30 && !w.missionComplete; i++) w.tick(controls({ fire: true }), 1 / 60);
+    expect(w.missionComplete).toBe(true);
+  });
+
   it('rolls through a multi-mission campaign one mission at a time', () => {
     const w = new World({
       player: player(), // at (0,0)
@@ -644,6 +704,38 @@ describe('World mission', () => {
     for (let i = 0; i < 300 && !w.missionComplete; i++) w.tick(controls({ right: true }), 1 / 60);
     expect(w.missionComplete).toBe(true);
     expect(w.mission).toBeNull();
+    expect(w.score.current).toBe(100 + 300);
+  });
+
+  it('loops a mission deck instead of ending the game when configured', () => {
+    const rolls = [0.999, 0];
+    const rng = (): number => rolls.shift() ?? 0;
+    const w = new World({
+      player: player(),
+      bounds: { width: 1000, height: 1000 },
+      loopMissions: true,
+      rng,
+      missions: [
+        createMission({
+          id: 'm1',
+          title: 'First',
+          objectives: [{ kind: 'reach', description: 'A', target: vec2(0, 0), radius: 10 }],
+          reward: 100,
+        }),
+        createMission({
+          id: 'm2',
+          title: 'Second',
+          objectives: [{ kind: 'reach', description: 'B', target: vec2(0, 0), radius: 10 }],
+          reward: 300,
+        }),
+      ],
+    });
+
+    w.tick(controls(), 1 / 60);
+    expect(w.mission?.id).toBe('m2');
+    w.tick(controls(), 1 / 60);
+    expect(w.missionComplete).toBe(false);
+    expect(w.mission?.id).toBe('m2');
     expect(w.score.current).toBe(100 + 300);
   });
 

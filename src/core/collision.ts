@@ -54,3 +54,28 @@ export function resolveCircleRect(pos: Vec2, radius: number, r: Rect): Vec2 {
 export function resolveCircleRects(pos: Vec2, radius: number, rects: readonly Rect[]): Vec2 {
   return rects.reduce((p, r) => resolveCircleRect(p, radius, r), pos);
 }
+
+/** A circular obstacle. */
+export interface Circle {
+  readonly pos: Vec2;
+  readonly radius: number;
+}
+
+/**
+ * Push a circle out of another circle if they overlap. Returns the corrected
+ * centre position, unchanged when there is no overlap.
+ */
+export function resolveCircleCircle(pos: Vec2, radius: number, other: Circle): Vec2 {
+  const delta = sub(pos, other.pos);
+  const dist = length(delta);
+  const gap = radius + other.radius;
+  if (dist >= gap) return pos;
+
+  if (dist === 0) return add(pos, vec2(gap, 0));
+  return add(pos, scale(normalize(delta), gap - dist));
+}
+
+/** Resolve a circle against many circular obstacles in sequence. */
+export function resolveCircleCircles(pos: Vec2, radius: number, circles: readonly Circle[]): Vec2 {
+  return circles.reduce((p, c) => resolveCircleCircle(p, radius, c), pos);
+}

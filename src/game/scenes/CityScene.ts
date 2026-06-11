@@ -142,6 +142,7 @@ export class CityScene extends Phaser.Scene {
       walls: [...this.city.buildings],
       bestScore: this.savedBest,
       missions: this.buildCampaign(),
+      loopMissions: true,
     });
 
     this.drawCity();
@@ -217,7 +218,7 @@ export class CityScene extends Phaser.Scene {
     return pickups;
   }
 
-  /** A short campaign of escalating, varied missions across the city. */
+  /** A larger mission pool that the world reshuffles and loops forever. */
   private buildCampaign(): Mission[] {
     const { spec } = this.city;
     const b = spec.block;
@@ -232,7 +233,7 @@ export class CityScene extends Phaser.Scene {
             target: tileCenter(spec, b * 3, b * 2),
             radius: 56,
           },
-          { kind: 'eliminate', description: 'Take out 3 targets', count: 3 },
+          { kind: 'eliminate', description: 'Eliminate 3 targets (pedestrians or police)', count: 3 },
         ],
         reward: 1000,
       }),
@@ -265,8 +266,45 @@ export class CityScene extends Phaser.Scene {
       createMission({
         id: 'mostwanted',
         title: 'Most Wanted',
-        objectives: [{ kind: 'eliminate', description: 'Cause chaos: 8 takedowns', count: 8 }],
+        objectives: [{ kind: 'eliminate', description: 'Eliminate 8 targets (pedestrians or police)', count: 8 }],
         reward: 5000,
+      }),
+      createMission({
+        id: 'shakedown',
+        title: 'Shakedown',
+        objectives: [
+          {
+            kind: 'reach',
+            description: 'Reach the shakedown point',
+            target: tileCenter(spec, b * 8, b * 3),
+            radius: 56,
+          },
+          { kind: 'collect', description: 'Collect 2 ammo crates on the way out', count: 2 },
+        ],
+        reward: 1800,
+      }),
+      createMission({
+        id: 'heatcheck',
+        title: 'Heat Check',
+        objectives: [
+          { kind: 'wanted', description: 'Reach a 2-star wanted level', stars: 2 },
+          { kind: 'survive', description: 'Stay alive for 15s', seconds: 15 },
+        ],
+        reward: 2400,
+      }),
+      createMission({
+        id: 'cleanup',
+        title: 'Cleanup Crew',
+        objectives: [
+          { kind: 'eliminate', description: 'Eliminate 4 targets (pedestrians or police)', count: 4 },
+          {
+            kind: 'reach',
+            description: 'Drive back to the safehouse',
+            target: tileCenter(spec, b * 2, b * 8),
+            radius: 56,
+          },
+        ],
+        reward: 3200,
       }),
     ];
   }
@@ -583,6 +621,7 @@ export class CityScene extends Phaser.Scene {
     if (this.world.status !== 'playing') {
       const title = this.world.isWasted ? 'WASTED' : 'BUSTED';
       this.bustedText
+        .setPosition(this.scale.width / 2, this.scale.height / 2)
         .setVisible(true)
         .setText(`${title}\n\nRespawning in ${this.world.respawnIn}s\nPress Enter to continue`);
     } else {
@@ -602,7 +641,7 @@ export class CityScene extends Phaser.Scene {
     const mission = w.missionComplete
       ? 'ALL MISSIONS COMPLETE'
       : w.mission
-        ? `▶ ${w.mission.title}: ${w.missionObjective?.description ?? ''}`
+        ? `▶ ${w.mission.title}: ${w.missionObjective?.description ?? ''}${w.missionProgress ? ` (${w.missionProgress})` : ''}`
         : '';
 
     const ammo =

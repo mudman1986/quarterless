@@ -1,6 +1,7 @@
 import { type Vec2, vec2, add, sub, scale, normalize, length, distance, dot, angle } from './vector';
 import { type City, tileCenter } from './city';
 import { tileCoord, roadAt, openDirections } from './trafficAI';
+import { DEFAULT_CAR_TUNING } from './vehicle';
 
 /** A police unit that pursues a target position. */
 export interface Police {
@@ -17,6 +18,8 @@ export const POLICE_BASE_SPEED = 110;
 export const POLICE_CAR_BASE_SPEED = 200;
 /** Extra pursuit speed per additional wanted star. */
 export const POLICE_SPEED_PER_STAR = 18;
+/** Patrol cars should never outrun the player's own top speed. */
+export const POLICE_CAR_MAX_SPEED = DEFAULT_CAR_TUNING.maxSpeed;
 
 /** Pursuit speed scales with the wanted level, so higher heat means faster cops. */
 export function policeSpeedForStars(starCount: number, base = POLICE_BASE_SPEED): number {
@@ -26,7 +29,8 @@ export function policeSpeedForStars(starCount: number, base = POLICE_BASE_SPEED)
 /** Pursuit speed for a unit of the given kind at the current wanted level. */
 export function policeSpeedFor(kind: 'foot' | 'car', starCount: number): number {
   const base = kind === 'car' ? POLICE_CAR_BASE_SPEED : POLICE_BASE_SPEED;
-  return policeSpeedForStars(starCount, base);
+  const speed = policeSpeedForStars(starCount, base);
+  return kind === 'car' ? Math.min(speed, POLICE_CAR_MAX_SPEED) : speed;
 }
 
 /**

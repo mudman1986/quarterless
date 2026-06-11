@@ -6,6 +6,7 @@ import {
   policeSpeedForStars,
   policeSpeedFor,
   POLICE_BASE_SPEED,
+  POLICE_CAR_MAX_SPEED,
   type Police,
 } from './policeAI';
 import { buildCity, tileCenter, type City } from './city';
@@ -37,6 +38,10 @@ describe('policeSpeedFor', () => {
   it('scales both kinds up with the wanted level', () => {
     expect(policeSpeedFor('foot', 4)).toBeGreaterThan(policeSpeedFor('foot', 1));
     expect(policeSpeedFor('car', 4)).toBeGreaterThan(policeSpeedFor('car', 1));
+  });
+
+  it('caps patrol cars at the player car top speed', () => {
+    expect(policeSpeedFor('car', 99)).toBe(POLICE_CAR_MAX_SPEED);
   });
 });
 
