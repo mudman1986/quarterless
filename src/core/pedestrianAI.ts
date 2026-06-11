@@ -1,4 +1,5 @@
 import { type Vec2, vec2, add, sub, scale, normalize, length, distance, angle, fromAngle } from './vector';
+import { type Rect, randomPointInRect } from './collision';
 
 /** Wandering pedestrian that flees from nearby threats (e.g. the player's car). */
 export interface Pedestrian {
@@ -15,6 +16,8 @@ export interface PedestrianContext {
   threats: readonly Vec2[];
   /** Map extent used when choosing a new wander target. */
   bounds: { width: number; height: number };
+  /** Sidewalk strips a wandering pedestrian keeps to (omit for free roaming). */
+  sidewalks?: readonly Rect[];
 }
 
 export const PED_WALK_SPEED = 32;
@@ -23,6 +26,22 @@ export const PED_FLEE_SPEED = 90;
 export const PANIC_RADIUS = 95;
 /** Distance at which a wander target counts as reached. */
 export const ARRIVE_RADIUS = 6;
+/** A wandering pedestrian only hops to a sidewalk within this distance, so it
+ * strolls along the pavement rather than beelining across town. */
+export const SIDEWALK_HOP = 220;
+
+/** Pick the next wander target: a nearby sidewalk point if sidewalks are given,
+ * otherwise a free point anywhere in bounds. Pure (uses the injected RNG). */
+export function wanderTarget(ctx: PedestrianContext, near: Vec2, rng: () => number): Vec2 {
+  const walks = ctx.sidewalks;
+  if (!walks || walks.length === 0) {
+    return vec2(rng() * ctx.bounds.width, rng() * ctx.bounds.height);
+  }
+  const nearby = walks.filter((s) => distance(near, vec2(s.x + s.w / 2, s.y + s.h / 2)) <= SIDEWALK_HOP);
+  const pool = nearby.length > 0 ? nearby : walks;
+  const pick = pool[Math.floor(rng() * pool.length)] ?? pool[0];
+  return randomPointInRect(pick, rng);
+}
 
 function nearestThreat(p: Vec2, threats: readonly Vec2[]): Vec2 | null {
   let best: Vec2 | null = null;
@@ -64,7 +83,7 @@ export function stepPedestrian(
 
   let target = ped.target;
   if (distance(ped.pos, target) <= ARRIVE_RADIUS) {
-    target = vec2(rng() * ctx.bounds.width, rng() * ctx.bounds.height);
+    target = wanderTarget(ctx, ped.pos, rng);
   }
 
   const toTarget = sub(target, ped.pos);

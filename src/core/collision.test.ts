@@ -2,8 +2,11 @@ import { describe, it, expect } from 'vitest';
 import {
   closestPointOnRect,
   circleIntersectsRect,
+  pointInRect,
   resolveCircleRect,
   resolveCircleRects,
+  resolveCircleCircle,
+  resolveCircleCircles,
   rect,
 } from './collision';
 import { vec2, distance } from './vector';
@@ -18,6 +21,22 @@ describe('closestPointOnRect', () => {
   it('clamps a point outside the rect to the nearest edge', () => {
     expect(closestPointOnRect(vec2(-20, 25), box)).toEqual({ x: 0, y: 25 });
     expect(closestPointOnRect(vec2(200, 200), box)).toEqual({ x: 100, y: 50 });
+  });
+});
+
+describe('pointInRect', () => {
+  it('is true for a point inside the rect', () => {
+    expect(pointInRect(vec2(10, 10), box)).toBe(true);
+  });
+
+  it('is false for a point outside the rect', () => {
+    expect(pointInRect(vec2(-1, 10), box)).toBe(false);
+    expect(pointInRect(vec2(10, 60), box)).toBe(false);
+  });
+
+  it('counts the boundary as inside', () => {
+    expect(pointInRect(vec2(0, 0), box)).toBe(true);
+    expect(pointInRect(vec2(100, 50), box)).toBe(true);
   });
 });
 
@@ -58,5 +77,45 @@ describe('resolveCircleRects', () => {
     const resolved = resolveCircleRects(vec2(18, 10), 6, walls);
     expect(distance(resolved, vec2(18, 10))).toBeGreaterThan(0);
     expect(circleIntersectsRect(resolved, 6, walls[0])).toBe(false);
+  });
+});
+
+describe('resolveCircleCircle', () => {
+  it('leaves a circle clear of the obstacle untouched', () => {
+    const out = resolveCircleCircle(vec2(50, 0), 8, { pos: vec2(0, 0), radius: 12 });
+    expect(out).toEqual({ x: 50, y: 0 });
+  });
+
+  it('treats just-touching circles as resolved (no push)', () => {
+    // distance 20 == radius 8 + obstacle radius 12: they only touch.
+    const out = resolveCircleCircle(vec2(20, 0), 8, { pos: vec2(0, 0), radius: 12 });
+    expect(out).toEqual({ x: 20, y: 0 });
+  });
+
+  it('pushes an overlapping circle out until the two just touch', () => {
+    const obstacle = { pos: vec2(0, 0), radius: 12 };
+    const out = resolveCircleCircle(vec2(10, 0), 8, obstacle);
+    // Ejected along +x to exactly radius (8) + obstacle radius (12) = 20.
+    expect(out.x).toBeCloseTo(20);
+    expect(out.y).toBeCloseTo(0);
+    expect(distance(out, obstacle.pos)).toBeCloseTo(20);
+  });
+
+  it('ejects a concentric circle along +x by the combined radius', () => {
+    const out = resolveCircleCircle(vec2(0, 0), 8, { pos: vec2(0, 0), radius: 12 });
+    expect(out).toEqual({ x: 20, y: 0 });
+  });
+});
+
+describe('resolveCircleCircles', () => {
+  it('resolves against every obstacle in turn', () => {
+    const cars = [
+      { pos: vec2(0, 0), radius: 12 },
+      { pos: vec2(80, 0), radius: 12 },
+    ];
+    // Overlapping the first car; after resolution it must be clear of both.
+    const out = resolveCircleCircles(vec2(8, 0), 8, cars);
+    expect(distance(out, cars[0].pos)).toBeGreaterThanOrEqual(20 - 1e-6);
+    expect(distance(out, cars[1].pos)).toBeGreaterThanOrEqual(20 - 1e-6);
   });
 });

@@ -79,4 +79,17 @@ export class Sound {
     this.blip(523, 0.12, 'triangle', 0.05);
     this.blip(784, 0.18, 'triangle', 0.05);
   }
+
+  /** A low, noisy boom for a car explosion. */
+  explosion(): void {
+    this.blip(90, 0.35, 'sawtooth', 0.08);
+    this.blip(55, 0.5, 'square', 0.06);
+  }
+
+  /** One wail of a police siren (two alternating tones). Call repeatedly while
+   * a chase is on to get a continuous effect. */
+  siren(): void {
+    this.blip(740, 0.18, 'sine', 0.03);
+    this.blip(580, 0.18, 'sine', 0.03);
+  }
 }

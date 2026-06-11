@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildCity, tileCenter, boundaryWalls, DEFAULT_CITY } from './city';
-import { rect, circleIntersectsRect } from './collision';
+import { rect, circleIntersectsRect, pointInRect, randomPointInRect } from './collision';
 import { vec2 } from './vector';
 
 describe('buildCity', () => {
@@ -55,6 +55,100 @@ describe('tileCenter', () => {
   });
 });
 
+describe('buildCity with a river', () => {
+  // Road columns at 0,5,10,15; with bridgeEvery 2 the bridges are at 0 and 10,
+  // while the crossing roads at 5 and 15 dead-end at the water.
+  const spec = {
+    cols: 20,
+    rows: 20,
+    tile: 64,
+    block: 5,
+    rivers: [{ orientation: 'horizontal' as const, start: 11, span: 3, bridgeEvery: 2 }],
+  };
+  const city = buildCity(spec);
+
+  it('marks band tiles as water except at the bridges', () => {
+    expect(city.isWater(2, 12)).toBe(true); // building-interior tile in the band
+    expect(city.isWater(5, 12)).toBe(true); // a non-bridge crossing road = water
+    expect(city.isWater(0, 12)).toBe(false); // bridge column 0
+    expect(city.isWater(10, 12)).toBe(false); // bridge column 10
+    expect(city.isWater(2, 5)).toBe(false); // outside the band entirely
+  });
+
+  it('keeps bridges drivable and water off-road', () => {
+    expect(city.isBridge(0, 12)).toBe(true);
+    expect(city.isBridge(10, 12)).toBe(true);
+    expect(city.isBridge(5, 12)).toBe(false);
+    expect(city.isRoad(0, 12)).toBe(true); // bridge is a road
+    expect(city.isRoad(5, 12)).toBe(false); // water is not
+    expect(city.isRoad(2, 12)).toBe(false); // water interior is not
+    expect(city.isRoad(0, 5)).toBe(true); // a normal road outside the band
+  });
+
+  it('produces water rectangles confined to the band rows', () => {
+    expect(city.water.length).toBeGreaterThan(0);
+    const river = spec.rivers[0];
+    const yTop = river.start * spec.tile;
+    const yBottom = (river.start + river.span) * spec.tile;
+    for (const w of city.water) {
+      expect(w.y).toBeGreaterThanOrEqual(yTop);
+      expect(w.y + w.h).toBeLessThanOrEqual(yBottom);
+    }
+  });
+
+  it('lines every bridge with two side rails', () => {
+    // Two bridges (columns 0 and 10), two rails each.
+    expect(city.fences).toHaveLength(4);
+  });
+
+  it('removes buildings from the water band', () => {
+    const river = spec.rivers[0];
+    const yTop = river.start * spec.tile;
+    const yBottom = (river.start + river.span) * spec.tile;
+    const overlapsBand = city.buildings.some((b) => b.y < yBottom && b.y + b.h > yTop);
+    expect(overlapsBand).toBe(false);
+  });
+
+  it('leaves a plain city with no water or fences', () => {
+    const plain = buildCity({ cols: 20, rows: 20, tile: 64, block: 5 });
+    expect(plain.water).toHaveLength(0);
+    expect(plain.fences).toHaveLength(0);
+    expect(plain.isWater(2, 12)).toBe(false);
+    expect(plain.isBridge(0, 12)).toBe(false);
+  });
+});
+
+describe('buildCity with a vertical river', () => {
+  // A vertical band of columns crossed by horizontal roads (rows 0,5,10,15);
+  // bridgeEvery 2 bridges rows 0 and 10.
+  const spec = {
+    cols: 20,
+    rows: 20,
+    tile: 64,
+    block: 5,
+    rivers: [{ orientation: 'vertical' as const, start: 11, span: 3, bridgeEvery: 2 }],
+  };
+  const city = buildCity(spec);
+
+  it('marks band columns as water except at the bridges', () => {
+    expect(city.isWater(12, 2)).toBe(true); // interior column in the band
+    expect(city.isWater(12, 5)).toBe(true); // a non-bridge crossing road
+    expect(city.isWater(12, 0)).toBe(false); // bridge row 0
+    expect(city.isBridge(12, 10)).toBe(true);
+  });
+
+  it('confines water rectangles to the band columns and rails every bridge', () => {
+    const river = spec.rivers[0];
+    const xLeft = river.start * spec.tile;
+    const xRight = (river.start + river.span) * spec.tile;
+    for (const w of city.water) {
+      expect(w.x).toBeGreaterThanOrEqual(xLeft);
+      expect(w.x + w.w).toBeLessThanOrEqual(xRight);
+    }
+    expect(city.fences).toHaveLength(4); // two bridges, two rails each
+  });
+});
+
 describe('boundaryWalls', () => {
   it('surrounds the map on all four sides', () => {
     const city = buildCity(DEFAULT_CITY);
@@ -66,5 +160,63 @@ describe('boundaryWalls', () => {
     const walls = boundaryWalls(city);
     const justOutsideRight = vec2(city.width + 10, city.height / 2);
     expect(walls.some((w) => circleIntersectsRect(justOutsideRight, 8, w))).toBe(true);
+  });
+});
+
+describe('sidewalks, crosswalks and parking', () => {
+  const city = buildCity({ cols: 20, rows: 20, tile: 64, block: 5, margin: 18 });
+
+  it('rings every building with sidewalk strips', () => {
+    expect(city.sidewalks.length).toBe(city.buildings.length * 4);
+    // A sidewalk strip never sits inside the building it hugs.
+    const b = city.buildings[0];
+    for (const s of city.sidewalks) {
+      const insideBuilding =
+        s.x >= b.x && s.x + s.w <= b.x + b.w && s.y >= b.y && s.y + s.h <= b.y + b.h;
+      expect(insideBuilding).toBe(false);
+    }
+  });
+
+  it('places a crosswalk on each intersection tile', () => {
+    expect(city.crosswalks.length).toBeGreaterThan(0);
+    // Every crosswalk sits on a road intersection (both coords on a block edge).
+    for (const cw of city.crosswalks) {
+      const tx = Math.round(cw.x / city.spec.tile);
+      const ty = Math.round(cw.y / city.spec.tile);
+      expect(tx % city.spec.block).toBe(0);
+      expect(ty % city.spec.block).toBe(0);
+    }
+  });
+
+  it('places parking bays that are not inside any building', () => {
+    expect(city.parkingSpots.length).toBeGreaterThan(0);
+    for (const spot of city.parkingSpots) {
+      const inBuilding = city.buildings.some((b) => pointInRect(spot.pos, b));
+      expect(inBuilding).toBe(false);
+    }
+  });
+
+  it('keeps parking bays out of the water', () => {
+    const withRiver = buildCity({
+      cols: 20,
+      rows: 20,
+      tile: 64,
+      block: 5,
+      rivers: [{ orientation: 'horizontal', start: 11, span: 3 }],
+    });
+    for (const spot of withRiver.parkingSpots) {
+      const tx = Math.floor(spot.pos.x / withRiver.spec.tile);
+      const ty = Math.floor(spot.pos.y / withRiver.spec.tile);
+      expect(withRiver.isWater(tx, ty)).toBe(false);
+    }
+  });
+});
+
+describe('randomPointInRect', () => {
+  it('returns a point inside the rect', () => {
+    const r = rect(10, 20, 30, 40);
+    expect(randomPointInRect(r, () => 0.5)).toEqual(vec2(25, 40));
+    const p = randomPointInRect(r, () => 0.99);
+    expect(pointInRect(p, r)).toBe(true);
   });
 });

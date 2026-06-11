@@ -13,6 +13,7 @@ import { buildCity, tileCenter } from './city';
 import { controls } from './types';
 import { addHeat, createWanted, CRIME_HEAT } from './wantedLevel';
 import { createMission } from './mission';
+import { createTrafficLights, LIGHT_GREEN } from './trafficLight';
 import { vec2, distance } from './vector';
 
 const player = (): OnFootActor => ({ pos: vec2(0, 0), angle: 0, radius: 8 });
@@ -413,6 +414,74 @@ describe('World car collisions', () => {
   });
 });
 
+describe('World actor-car collision', () => {
+  it('blocks the player from walking through a parked car and never wastes them', () => {
+    const w = new World({
+      player: player(), // (0,0), radius 8
+      cars: [carAt(40, 0)], // parked (speed 0), radius 12
+      bounds: { width: 4000, height: 4000 },
+    });
+    for (let i = 0; i < 240; i++) {
+      w.tick(controls({ right: true }), 1 / 60); // keep shoving east into the car
+      expect(w.isWasted).toBe(false); // a stopped car is never lethal
+    }
+    // Centre at x=40, radii 8+12=20: the player can press up to x=20 but no further.
+    expect(w.player.pos.x).toBeLessThanOrEqual(20 + 1e-6);
+    expect(distance(w.player.pos, w.cars[0].pos)).toBeGreaterThanOrEqual(20 - 1e-6);
+  });
+
+  it('does not waste a player who walks into an NPC car that braked for them', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    // NPC heads east along road row 4; the player stands east of it and walks
+    // west into its path. The car brakes, the player cannot tunnel past it, so
+    // it never lurches forward and runs them down.
+    const npc: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 };
+    const w = new World({
+      player: { pos: tileCenter(city.spec, 4, 4), angle: 0, radius: 8 },
+      cars: [npc],
+      city,
+      carDrivers: [{ dir: vec2(1, 0) }],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9, // never turn at intersections
+    });
+    for (let i = 0; i < 120; i++) {
+      w.tick(controls({ left: true }), 1 / 60);
+      expect(w.isWasted).toBe(false);
+      // The player never tunnels into the car (which is what caused the lurch).
+      expect(distance(w.player.pos, w.cars[0].pos)).toBeGreaterThanOrEqual(
+        w.player.radius + w.cars[0].radius - 1,
+      );
+    }
+  });
+
+  it('stops a pedestrian from walking through a parked car', () => {
+    const ped: Pedestrian = {
+      pos: vec2(100, 100),
+      heading: 0,
+      radius: 7,
+      state: 'wander',
+      target: vec2(300, 100), // straight through the car
+    };
+    const w = new World({
+      player: player(),
+      cars: [carAt(180, 100)], // parked across the pedestrian's path
+      pedestrians: [ped],
+      bounds: { width: 1000, height: 1000 },
+      rng: () => 0.5,
+    });
+    for (let i = 0; i < 600; i++) {
+      w.tick(controls(), 1 / 60);
+      if (w.pedestrians.length === 0) break; // (it never gets run over: car is parked)
+      const p = w.pedestrians[0];
+      // Its centre may approach but never enters the car's body.
+      expect(distance(p.pos, w.cars[0].pos)).toBeGreaterThanOrEqual(
+        p.radius + w.cars[0].radius - 1,
+      );
+    }
+    expect(w.pedestrians).toHaveLength(1); // a parked car never kills it
+  });
+});
+
 describe('World NPC yielding', () => {
   const miniCity = () => buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
 
@@ -431,6 +500,139 @@ describe('World NPC yielding', () => {
     for (let i = 0; i < 120; i++) w.tick(controls(), 1 / 60);
     expect(w.isWasted).toBe(false); // the person was not run down
     expect(w.cars[0].pos.x).toBeLessThan(standing.x - 10); // the car stopped short
+  });
+});
+
+describe('World traffic rerouting and lights', () => {
+  const miniCity = () => buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+
+  it('reroutes an NPC car around someone who blocks the road too long', () => {
+    const city = miniCity();
+    const standing = tileCenter(city.spec, 2, 4); // in the lane, east of the car
+    const npc: Car = { pos: tileCenter(city.spec, 0, 4), heading: 0, speed: 0, radius: 12 };
+    const w = new World({
+      player: { pos: standing, angle: 0, radius: 8 },
+      cars: [npc],
+      city,
+      carDrivers: [{ dir: vec2(1, 0) }],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9, // never voluntarily turn at intersections
+    });
+
+    // Drive up, get blocked, then keep waiting past the reroute timer.
+    for (let i = 0; i < 360; i++) w.tick(controls(), 1 / 60);
+    expect(w.isWasted).toBe(false); // it never ran the blocker over
+    // Having given up waiting, it turned back the way it came (now west of them).
+    expect(w.cars[0].pos.x).toBeLessThan(standing.x - 10);
+  });
+
+  it('stops an NPC car at a red light instead of crossing the intersection', () => {
+    const city = miniCity();
+    // Southbound car approaching the intersection at (4,4); horizontal has the
+    // green, so this car's (vertical) light is red.
+    const npc: Car = { pos: tileCenter(city.spec, 4, 2), heading: Math.PI / 2, speed: 0, radius: 12 };
+    const w = new World({
+      player: player(), // far away at the origin
+      cars: [npc],
+      city,
+      carDrivers: [{ dir: vec2(0, 1) }],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+    w.lights = createTrafficLights(0); // horizontal green for the next LIGHT_GREEN secs
+
+    const intersectionY = tileCenter(city.spec, 4, 4).y - city.spec.tile / 2; // top edge
+    const ticks = Math.floor((LIGHT_GREEN - 1) * 60); // stay within the red phase
+    for (let i = 0; i < ticks; i++) {
+      w.tick(controls(), 1 / 60);
+      expect(w.cars[0].pos.y).toBeLessThan(intersectionY); // never entered the box
+    }
+  });
+});
+
+describe('World living world', () => {
+  const miniCity = () => buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+
+  it('lets a pedestrian get into a parked car and drive away', () => {
+    const city = miniCity();
+    const parked: Car = { pos: tileCenter(city.spec, 0, 4), heading: Math.PI / 2, speed: 0, radius: 12 };
+    const start = { ...parked.pos };
+    const beside: Pedestrian = {
+      pos: vec2(parked.pos.x + 18, parked.pos.y),
+      heading: 0,
+      radius: 7,
+      state: 'wander',
+      target: vec2(parked.pos.x + 18, parked.pos.y),
+    };
+    const w = new World({
+      player: player(),
+      cars: [parked],
+      city,
+      carDrivers: [null],
+      pedestrians: [beside],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0, // the pedestrian always decides to drive, taking the first open road
+    });
+
+    for (let i = 0; i < 120; i++) w.tick(controls(), 1 / 60);
+    expect(w.pedestrians).toHaveLength(0); // the pedestrian is now the driver
+    expect(distance(w.cars[0].pos, start)).toBeGreaterThan(20); // and drove off
+  });
+
+  it('leaves a corpse where a pedestrian is shot', () => {
+    const w = new World({
+      player: player(), // origin, facing +x
+      pedestrians: [pedAt(40, 0)],
+      bounds: { width: 1000, height: 1000 },
+      rng: () => 0.5,
+    });
+    for (let i = 0; i < 30 && w.pedestrians.length > 0; i++) w.tick(controls({ fire: true }), 1 / 60);
+    expect(w.pedestrians).toHaveLength(0);
+    expect(w.corpses).toHaveLength(1);
+  });
+
+  it('clears a corpse left out of frame and respawns a pedestrian', () => {
+    const w = new World({
+      player: player(),
+      pedestrians: [pedAt(40, 0)],
+      viewRadius: 20, // the body ends up outside the (tiny) view
+      bounds: { width: 1000, height: 1000 },
+      rng: () => 0.5,
+    });
+    for (let i = 0; i < 30 && w.pedestrians.length > 0; i++) w.tick(controls({ fire: true }), 1 / 60);
+    expect(w.corpses).toHaveLength(1);
+
+    for (let i = 0; i < 11 * 60; i++) w.tick(controls(), 1 / 60); // wait out the 10s
+    expect(w.corpses).toHaveLength(0); // cleared while off-screen
+    expect(w.pedestrians.length).toBeGreaterThanOrEqual(1); // a replacement appeared
+  });
+
+  it('sends an ambulance to collect a body that stays on screen', () => {
+    const city = miniCity();
+    const spot = tileCenter(city.spec, 2, 4); // on road row 4
+    const victim = pedAt(spot.x, spot.y);
+    const runner: Car = { pos: vec2(spot.x - 10, spot.y), heading: 0, speed: 100, radius: 12 };
+    const w = new World({
+      player: player(),
+      cars: [runner],
+      city,
+      carDrivers: [null],
+      pedestrians: [victim],
+      viewRadius: 4000, // the whole map is "in frame"
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+
+    w.tick(controls(), 1 / 60); // the NPC car runs the pedestrian down
+    expect(w.corpses.length).toBeGreaterThanOrEqual(1);
+
+    let dispatched = false;
+    for (let i = 0; i < 3000 && w.corpses.length > 0; i++) {
+      w.tick(controls(), 1 / 60);
+      if (w.ambulance) dispatched = true;
+    }
+    expect(dispatched).toBe(true); // an ambulance was sent
+    expect(w.corpses).toHaveLength(0); // and it took the body away
   });
 });
 
@@ -482,6 +684,40 @@ describe('World road deaths', () => {
     expect(w.wantedStars).toBe(0); // but the player earns no heat for it
     expect(w.kills).toBe(0); // and gets no credit or score
     expect(w.score.current).toBe(0);
+  });
+});
+
+describe('World water', () => {
+  it('wastes the player who walks into the water', () => {
+    const w = new World({
+      player: player(), // (0,0)
+      water: [rect(40, -50, 80, 200)],
+      bounds: { width: 4000, height: 4000 },
+    });
+    for (let i = 0; i < 240 && !w.isWasted; i++) w.tick(controls({ right: true }), 1 / 60);
+    expect(w.isWasted).toBe(true);
+  });
+
+  it('keeps the player safe on a bridge between two stretches of water', () => {
+    const w = new World({
+      player: { pos: vec2(70, 50), angle: 0, radius: 8 }, // on the dry gap
+      water: [rect(0, -50, 60, 200), rect(80, -50, 60, 200)],
+      bounds: { width: 4000, height: 4000 },
+    });
+    for (let i = 0; i < 120; i++) w.tick(controls(), 1 / 60);
+    expect(w.isWasted).toBe(false);
+  });
+
+  it('drowns a car driven off into the water', () => {
+    const w = new World({
+      player: player(),
+      cars: [carAt(20, 0)],
+      water: [rect(220, -80, 400, 200)],
+      bounds: { width: 4000, height: 4000 },
+    });
+    w.tick(controls({ action: true }), 1 / 60); // hijack the car
+    for (let i = 0; i < 300 && !w.isWasted; i++) w.tick(controls({ up: true }), 1 / 60);
+    expect(w.isWasted).toBe(true);
   });
 });
 
@@ -585,6 +821,106 @@ describe('World health', () => {
   });
 });
 
+describe('World police shooting', () => {
+  it('does not shoot at a low wanted level', () => {
+    const w = new World({
+      player: player(),
+      police: [{ pos: vec2(200, 0), heading: Math.PI, radius: 12, kind: 'foot' }],
+      bounds: { width: 4000, height: 4000 },
+    });
+    w.wanted = addHeat(createWanted(), 250); // 2 stars: below the shooting threshold
+    for (let i = 0; i < 10; i++) w.tick(controls(), 1 / 60);
+    expect(w.policeBullets).toHaveLength(0);
+  });
+
+  it('opens fire above two stars and wounds the player', () => {
+    const w = new World({
+      player: player(), // on foot at the origin
+      police: [{ pos: vec2(180, 0), heading: Math.PI, radius: 12, kind: 'foot' }],
+      bounds: { width: 4000, height: 4000 },
+    });
+    w.wanted = addHeat(createWanted(), 500); // 5 stars: officers shoot
+    w.tick(controls(), 1 / 60);
+    expect(w.policeBullets.length).toBeGreaterThanOrEqual(1); // fired on sight
+
+    const full = w.health.current;
+    for (let i = 0; i < 24 && !w.isWasted; i++) w.tick(controls(), 1 / 60);
+    expect(w.health.current).toBeLessThan(full); // a bullet connected
+  });
+});
+
+describe('World patrol car arrest', () => {
+  it('drops an officer to bust a player it has pinned in a stopped car', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    const w = new World({
+      player: player(),
+      cars: [carAt(20, 0)],
+      city,
+      police: [{ pos: vec2(46, 0), heading: Math.PI, radius: 14, kind: 'car' }],
+      bounds: { width: city.width, height: city.height },
+    });
+    w.wanted = addHeat(createWanted(), CRIME_HEAT.hitPolice); // wanted, so the cop stays
+    w.tick(controls({ action: true }), 1 / 60); // hijack the car, then sit still
+
+    let footAppeared = false;
+    for (let i = 0; i < 300 && !w.isBusted; i++) {
+      w.tick(controls(), 1 / 60);
+      if (w.police.some((c) => c.kind === 'foot')) footAppeared = true;
+    }
+    expect(footAppeared).toBe(true); // an officer got out of the patrol car
+    expect(w.isBusted).toBe(true); // and made the arrest
+  });
+});
+
+describe('World car explosions', () => {
+  it('destroys a car after enough shots, leaving a wreck and a blast', () => {
+    const w = new World({
+      player: player(), // origin, facing +x
+      cars: [carAt(140, 0)], // far enough that the blast does not reach the player
+      bounds: { width: 4000, height: 4000 },
+    });
+    for (let i = 0; i < 180 && !w.wreckedCars[0]; i++) w.tick(controls({ fire: true }), 1 / 60);
+    expect(w.wreckedCars[0]).toBe(true);
+    expect(w.explosionsTriggered).toBeGreaterThanOrEqual(1);
+    expect(w.isWasted).toBe(false); // the player was clear of the blast
+    expect(w.wantedStars).toBeGreaterThanOrEqual(1); // blowing up a car is a crime
+  });
+
+  it('chains the blast to a nearby car', () => {
+    const w = new World({
+      player: player(),
+      cars: [carAt(140, 0), carAt(184, 0)], // the second sits inside the first's blast
+      bounds: { width: 4000, height: 4000 },
+    });
+    for (let i = 0; i < 180 && !w.wreckedCars[0]; i++) w.tick(controls({ fire: true }), 1 / 60);
+    expect(w.wreckedCars[0]).toBe(true);
+    expect(w.wreckedCars[1]).toBe(true); // detonated by the chain reaction
+  });
+
+  it('does not let the player drive a wrecked car', () => {
+    const w = new World({
+      player: { pos: vec2(120, 0), angle: 0, radius: 8 },
+      cars: [carAt(140, 0)],
+      bounds: { width: 4000, height: 4000 },
+    });
+    for (let i = 0; i < 180 && !w.wreckedCars[0]; i++) w.tick(controls({ fire: true }), 1 / 60);
+    expect(w.wreckedCars[0]).toBe(true);
+    w.tick(controls({ action: true }), 1 / 60); // try to get in
+    expect(w.isDriving).toBe(false);
+  });
+
+  it('wounds the player caught in the blast of a car they shoot', () => {
+    const w = new World({
+      player: player(), // origin, within blast range of the car
+      cars: [carAt(60, 0)],
+      bounds: { width: 4000, height: 4000 },
+    });
+    for (let i = 0; i < 180 && !w.wreckedCars[0]; i++) w.tick(controls({ fire: true }), 1 / 60);
+    expect(w.wreckedCars[0]).toBe(true);
+    expect(w.health.current).toBeLessThan(PLAYER_MAX_HEALTH); // singed by the explosion
+  });
+});
+
 describe('World mission', () => {
   it('tracks a reach-then-eliminate mission and banks the reward', () => {
     const w = new World({
@@ -645,6 +981,60 @@ describe('World mission', () => {
     expect(w.missionComplete).toBe(true);
     expect(w.mission).toBeNull();
     expect(w.score.current).toBe(100 + 300);
+  });
+
+  it('loops endlessly through a pool of campaigns, never reporting complete', () => {
+    const w = new World({
+      player: player(), // at (0,0)
+      bounds: { width: 1000, height: 1000 },
+      rng: () => 0.5,
+      campaigns: [
+        [
+          createMission({
+            id: 'a1',
+            title: 'Contract A',
+            objectives: [{ kind: 'reach', description: 'A', target: vec2(0, 0), radius: 10 }],
+            reward: 100,
+          }),
+        ],
+        [
+          createMission({
+            id: 'b1',
+            title: 'Contract B',
+            objectives: [{ kind: 'reach', description: 'B', target: vec2(0, 0), radius: 10 }],
+            reward: 200,
+          }),
+        ],
+      ],
+    });
+
+    // Standing on the target completes whichever campaign is active; a fresh one
+    // immediately takes over, so the game never declares "all complete".
+    expect(w.mission).not.toBeNull();
+    for (let i = 0; i < 10; i++) w.tick(controls(), 1 / 60);
+    expect(w.missionComplete).toBe(false); // endless: always another contract
+    expect(w.mission).not.toBeNull();
+    expect(w.score.current).toBeGreaterThan(0); // rewards keep banking as it loops
+  });
+
+  it('reports numeric progress for an eliminate objective', () => {
+    const w = new World({
+      player: player(),
+      pedestrians: [pedAt(40, 0), pedAt(-40, 0)],
+      bounds: { width: 1000, height: 1000 },
+      rng: () => 0.5,
+      mission: createMission({
+        id: 'spree',
+        title: 'Spree',
+        objectives: [{ kind: 'eliminate', description: 'Take down 2', count: 2 }],
+        reward: 300,
+      }),
+    });
+    expect(w.missionProgress).toEqual({ current: 0, goal: 2 });
+    for (let i = 0; i < 30 && (w.missionProgress?.current ?? 0) < 1; i++) {
+      w.tick(controls({ fire: true }), 1 / 60);
+    }
+    expect(w.missionProgress?.current).toBeGreaterThanOrEqual(1);
   });
 
   it('completes a survive objective after enough time passes', () => {

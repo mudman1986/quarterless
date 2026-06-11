@@ -4,6 +4,8 @@ import {
   currentObjective,
   updateMission,
   isComplete,
+  objectiveProgress,
+  resetMission,
   type Objective,
   type MissionContext,
   type MissionBaseline,
@@ -137,5 +139,43 @@ describe('updateMission — purity and idempotence', () => {
     m = updateMission(m, ctx({ playerPos: vec2(100, 0), kills: 2 }), base());
     const done = updateMission(m, ctx({ playerPos: vec2(0, 0), kills: 99 }), base());
     expect(done).toEqual(m);
+  });
+});
+
+describe('objectiveProgress', () => {
+  it('reports null for a reach objective (shown by a marker)', () => {
+    const obj: Objective = { kind: 'reach', description: 'Go', target: vec2(0, 0), radius: 10 };
+    expect(objectiveProgress(obj, ctx(), base())).toBeNull();
+  });
+
+  it('counts eliminations relative to the objective baseline', () => {
+    const obj: Objective = { kind: 'eliminate', description: 'Take out 8', count: 8 };
+    expect(objectiveProgress(obj, ctx({ kills: 5 }), { kills: 2, collected: 0, elapsed: 0 })).toEqual(
+      { current: 3, goal: 8 },
+    );
+  });
+
+  it('clamps progress to the goal and never goes negative', () => {
+    const obj: Objective = { kind: 'collect', description: 'Grab 3', count: 3 };
+    expect(objectiveProgress(obj, ctx({ collected: 99 }), base())).toEqual({ current: 3, goal: 3 });
+  });
+
+  it('reports survive progress in whole seconds and wanted progress in stars', () => {
+    const survive: Objective = { kind: 'survive', description: 'Last 30s', seconds: 30 };
+    expect(objectiveProgress(survive, ctx({ elapsed: 12.7 }), base())).toEqual({ current: 12, goal: 30 });
+    const wanted: Objective = { kind: 'wanted', description: '3 stars', stars: 3 };
+    expect(objectiveProgress(wanted, ctx({ wantedStars: 2 }), base())).toEqual({ current: 2, goal: 3 });
+  });
+});
+
+describe('resetMission', () => {
+  it('rewinds a finished mission to its first objective', () => {
+    let m = updateMission(mission(), ctx({ playerPos: vec2(100, 0) }), base());
+    m = updateMission(m, ctx({ playerPos: vec2(100, 0), kills: 2 }), base());
+    expect(isComplete(m)).toBe(true);
+    const fresh = resetMission(m);
+    expect(fresh.currentIndex).toBe(0);
+    expect(fresh.status).toBe('active');
+    expect(currentObjective(fresh)?.kind).toBe('reach');
   });
 });

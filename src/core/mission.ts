@@ -1,4 +1,5 @@
 import { type Vec2, distance } from './vector';
+import { clamp } from './math';
 
 /** Reach a position within `radius`. */
 export interface ReachObjective {
@@ -138,4 +139,46 @@ export function updateMission(m: Mission, ctx: MissionContext, baseline: Mission
 
 export function isComplete(m: Mission): boolean {
   return m.status === 'completed';
+}
+
+/** A completed/total tally for showing objective progress on the HUD. */
+export interface ObjectiveProgress {
+  current: number;
+  goal: number;
+}
+
+/**
+ * Numeric progress toward an objective, for HUD feedback (e.g. "3/8"). A
+ * 'reach' objective has no count (it is shown by a map marker instead), so it
+ * reports null. Pure.
+ */
+export function objectiveProgress(
+  obj: Objective,
+  ctx: MissionContext,
+  base: MissionBaseline,
+): ObjectiveProgress | null {
+  switch (obj.kind) {
+    case 'reach':
+      return null;
+    case 'eliminate':
+      return { current: clamp(ctx.kills - base.kills, 0, obj.count), goal: obj.count };
+    case 'collect':
+      return { current: clamp(ctx.collected - base.collected, 0, obj.count), goal: obj.count };
+    case 'survive':
+      return {
+        current: clamp(Math.floor(ctx.elapsed - base.elapsed), 0, obj.seconds),
+        goal: obj.seconds,
+      };
+    case 'wanted':
+      return { current: clamp(ctx.wantedStars, 0, obj.stars), goal: obj.stars };
+  }
+}
+
+/** A fresh copy of a mission reset to its first objective. Pure. */
+export function resetMission(m: Mission): Mission {
+  return {
+    ...m,
+    currentIndex: 0,
+    status: m.objectives.length === 0 ? 'completed' : 'active',
+  };
 }

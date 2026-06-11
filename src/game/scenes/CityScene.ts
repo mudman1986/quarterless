@@ -12,6 +12,7 @@ import type { Pedestrian } from '../../core/pedestrianAI';
 import type { TrafficAI } from '../../core/trafficAI';
 import type { AmmoPickup } from '../../core/weapon';
 import { vec2, type Vec2 } from '../../core/vector';
+import { greenAxis } from '../../core/trafficLight';
 import { KeyboardInput } from '../input/KeyboardInput';
 import { Sound } from '../audio/Sound';
 import { createGameTextures, TEX } from '../art/textures';
@@ -27,10 +28,23 @@ const COLORS = {
   bullet: 0xfde047,
   marker: 0x22d3ee,
   ammo: 0xfacc15,
+  // Water & bridges.
+  water: 0x1d4e6f,
+  waterEdge: 0x123a52,
+  bridge: 0x3a3a42,
+  bridgeEdge: 0x18181b,
+  fence: 0xa8a29e,
+  // Streets.
+  sidewalk: 0x6b7280,
+  crosswalk: 0xd1d5db,
+  lightGreen: 0x22c55e,
+  lightRed: 0xef4444,
+  parkingLine: 0xca8a04,
   // Minimap.
   mmBg: 0x0b0f17,
   mmRoad: 0x334155,
   mmBuilding: 0x1e293b,
+  mmWater: 0x1d4e6f,
   mmPlayer: 0x39ff14,
   mmPolice: 0x3b82f6,
   mmTarget: 0x22d3ee,
@@ -55,23 +69,38 @@ function safeStorage(): KeyValueStore {
 }
 
 /**
- * A roomy city: 60x60 tiles, with buildings inset from the roads (`margin`) so
- * there is comfortable driving space along every street.
+ * A roomy city: 70x70 tiles, with buildings inset from the roads (`margin`) so
+ * there is comfortable driving space along every street. A wide river cuts
+ * across the middle, crossed by bridges on every other road.
  */
-const CITY_SPEC = { cols: 60, rows: 60, tile: 64, block: 5, margin: 18 };
+const CITY_SPEC = {
+  cols: 70,
+  rows: 70,
+  tile: 64,
+  block: 5,
+  margin: 18,
+  rivers: [{ orientation: 'horizontal' as const, start: 31, span: 4, bridgeEvery: 2 }],
+};
 const FIXED_STEP = 1 / 60;
 const MAX_SUBSTEPS = 5;
 const PLAYER_SIZE = 14;
 const PED_SIZE = 10;
-/** Car body width (px), used to offset parked cars to the kerb. */
-const CAR_WIDTH = 18;
 /** A focus jump larger than this (px) means the player wrapped a map edge:
  * snap the camera there rather than panning smoothly across the whole city. */
 const WRAP_SNAP_DISTANCE = 256;
+/** World units kept visible across the viewport's smaller side. The camera zoom
+ * is derived from this so a consistent slice of the city shows on any screen
+ * (phones, tablets, desktops), keeping the player centred and on-screen. */
+const VIEW_SPAN = 760;
+/** Clamp the derived zoom so it never becomes extreme on unusual displays. */
+const MIN_ZOOM = 0.6;
+const MAX_ZOOM = 2.5;
 /** On-screen size of the square minimap. */
 const MINIMAP_SIZE = 168;
 /** Seconds a mission announcement banner stays on screen. */
 const ANNOUNCE_SECONDS = 3.2;
+/** Length in seconds of a full day/night cycle. */
+const DAY_LENGTH = 150;
 
 /**
  * Renders the core `World` simulation with Phaser. The scene owns no game
@@ -88,8 +117,15 @@ export class CityScene extends Phaser.Scene {
   private pedSprites: Phaser.GameObjects.Image[] = [];
   private policeSprites: Phaser.GameObjects.Image[] = [];
   private bulletSprites: Phaser.GameObjects.Rectangle[] = [];
+  private policeBulletSprites: Phaser.GameObjects.Rectangle[] = [];
   private ammoSprites: { sprite: Phaser.GameObjects.Image; pickup: AmmoPickup }[] = [];
   private missionMarker!: Phaser.GameObjects.Arc;
+  private explosionGfx!: Phaser.GameObjects.Graphics;
+  private lightsGfx!: Phaser.GameObjects.Graphics;
+  private corpseGfx!: Phaser.GameObjects.Graphics;
+  private ambulanceSprite!: Phaser.GameObjects.Rectangle;
+  /** Centre of every intersection, for drawing the traffic lights. */
+  private intersectionCenters: Vec2[] = [];
   private focusPoint!: Phaser.GameObjects.Rectangle;
   private hud!: Phaser.GameObjects.Text;
   private bustedText!: Phaser.GameObjects.Text;
@@ -100,6 +136,12 @@ export class CityScene extends Phaser.Scene {
   private minimapDots!: Phaser.GameObjects.Graphics;
 
   private accumulator = 0;
+
+  /** Pause / menu state. */
+  private paused = false;
+  private pauseKey!: Phaser.Input.Keyboard.Key;
+  private newGameKey!: Phaser.Input.Keyboard.Key;
+  private pauseMenu!: Phaser.GameObjects.Text;
 
   /** High-score persistence. */
   private store: KeyValueStore = safeStorage();
@@ -115,16 +157,44 @@ export class CityScene extends Phaser.Scene {
   private prevMissionComplete = false;
   private prevMissionId: string | null = null;
   private prevObjective = '';
+  private prevExplosions = 0;
+  /** Seconds until the next siren wail while a chase is on. */
+  private sirenTimer = 0;
   /** Seconds left to show the announcement banner. */
   private announceRemaining = 0;
+  /** Elapsed time driving the day/night cycle, and its dimming overlay. */
+  private timeOfDay = 0;
+  private dayNightOverlay!: Phaser.GameObjects.Rectangle;
 
   constructor() {
     super('City');
   }
 
   create(): void {
+    // Reset per-run state so a new game (scene.restart) starts clean: the lazily
+    // built sprite pools must not keep references to the previous run's objects.
+    this.carSprites = [];
+    this.pedSprites = [];
+    this.policeSprites = [];
+    this.bulletSprites = [];
+    this.policeBulletSprites = [];
+    this.ammoSprites = [];
+    this.accumulator = 0;
+    this.sirenTimer = 0;
+    this.timeOfDay = 0;
+    this.prevBullets = 0;
+    this.prevKills = 0;
+    this.prevExplosions = 0;
+    this.prevStatus = 'playing';
+    this.prevMissionComplete = false;
+    this.prevMissionId = null;
+    this.prevObjective = '';
+
     this.city = buildCity(CITY_SPEC);
     createGameTextures(this);
+    this.intersectionCenters = this.city.crosswalks.map((cw) =>
+      vec2(cw.x + cw.w / 2, cw.y + cw.h / 2),
+    );
     const spawn = tileCenter(this.city.spec, this.city.spec.block, this.city.spec.block);
 
     const traffic = this.spawnTraffic();
@@ -139,9 +209,11 @@ export class CityScene extends Phaser.Scene {
       policeSpawns: this.policeSpawnPoints(),
       ammoPickups: this.spawnAmmoPickups(),
       bounds: { width: this.city.width, height: this.city.height },
-      walls: [...this.city.buildings],
+      walls: [...this.city.buildings, ...this.city.fences],
+      water: this.city.water,
+      sidewalks: this.city.sidewalks,
       bestScore: this.savedBest,
-      missions: this.buildCampaign(),
+      campaigns: this.buildCampaigns(),
     });
 
     this.drawCity();
@@ -151,27 +223,29 @@ export class CityScene extends Phaser.Scene {
     this.createMinimap();
 
     this.input_ = new KeyboardInput(this.input.keyboard!);
+    // Menu keys: P pauses/resumes, N starts a fresh game.
+    const kb = this.input.keyboard!;
+    this.pauseKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.P);
+    this.newGameKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.N);
+    this.paused = false;
     // Browsers block audio until a user gesture: unlock on the first key press.
     this.input.keyboard?.once('keydown', () => this.sfx.resume());
   }
 
-  /** A lively mix of cars parked along the kerbs and cars driven by NPC traffic. */
+  /** A lively mix of cars parked in the marked bays and cars driven by NPC traffic. */
   private spawnTraffic(): { cars: Car[]; drivers: (TrafficAI | null)[] } {
     const { spec } = this.city;
-    const { block, cols, rows, tile } = spec;
+    const { block, cols } = spec;
     const cars: Car[] = [];
     const drivers: (TrafficAI | null)[] = [];
-    const curb = tile / 2 - CAR_WIDTH / 2 - 4; // offset from the lane centre to the kerb
 
-    // Parked cars hug the kerbs of the vertical roads, pointing along the lane.
-    for (let tx = block; tx < cols; tx += block * 2) {
-      for (let ty = 1; ty < rows - 1; ty += block) {
-        const c = tileCenter(spec, tx, ty);
-        const side = (tx / block + ty) % 2 === 0 ? 1 : -1; // alternate kerbs
-        cars.push({ pos: vec2(c.x + side * curb, c.y), heading: Math.PI / 2, speed: 0, radius: 14 });
-        drivers.push(null);
-      }
-    }
+    // Parked cars sit in a subset of the kerbside parking bays (keeps the
+    // streets — and the collision workload — sensible).
+    this.city.parkingSpots.forEach((spot, i) => {
+      if (i % 3 !== 0) return;
+      cars.push({ pos: spot.pos, heading: spot.heading, speed: 0, radius: 14 });
+      drivers.push(null);
+    });
 
     // NPC cars cruise the lane centres, one per vertical road, heading up or down.
     // They start clear of the player's spawn tile.
@@ -179,23 +253,23 @@ export class CityScene extends Phaser.Scene {
     for (let tx = block; tx < cols; tx += block) {
       const dir = n % 2 === 0 ? vec2(0, 1) : vec2(0, -1);
       const start = tileCenter(spec, tx, block * 2);
-      cars.push({ pos: start, heading: Math.atan2(dir.y, dir.x), speed: 0, radius: 14 });
-      drivers.push({ dir });
+      if (!this.city.isWater(tx, block * 2)) {
+        cars.push({ pos: start, heading: Math.atan2(dir.y, dir.x), speed: 0, radius: 14 });
+        drivers.push({ dir });
+      }
       n++;
     }
     return { cars, drivers };
   }
 
-  /** Scatter pedestrians along the road grid. */
+  /** Scatter pedestrians along the sidewalks so they start off the road. */
   private spawnPedestrians(): Pedestrian[] {
-    const { spec } = this.city;
     const peds: Pedestrian[] = [];
-    for (let tx = spec.block; tx < spec.cols; tx += spec.block) {
-      for (let ty = 2; ty < spec.rows; ty += spec.block + 2) {
-        const pos = tileCenter(spec, tx, ty);
-        peds.push({ pos, heading: 0, radius: PED_SIZE / 2, state: 'wander', target: pos });
-      }
-    }
+    this.city.sidewalks.forEach((s, i) => {
+      if (i % 12 !== 0) return; // a manageable scattering across the city
+      const pos = vec2(s.x + s.w / 2, s.y + s.h / 2);
+      peds.push({ pos, heading: 0, radius: PED_SIZE / 2, state: 'wander', target: pos });
+    });
     return peds;
   }
 
@@ -211,28 +285,32 @@ export class CityScene extends Phaser.Scene {
     const pickups: AmmoPickup[] = [];
     for (let tx = spec.block * 2; tx < spec.cols; tx += spec.block * 3) {
       for (let ty = spec.block * 2; ty < spec.rows; ty += spec.block * 3) {
+        if (this.city.isWater(tx, ty)) continue; // no crates in the river
         pickups.push({ pos: tileCenter(spec, tx, ty), amount: 18 });
       }
     }
     return pickups;
   }
 
-  /** A short campaign of escalating, varied missions across the city. */
-  private buildCampaign(): Mission[] {
+  /** A pool of short campaigns. When one is finished a random other begins, so
+   * the action never stops. Objective text spells out exactly what to do. */
+  private buildCampaigns(): Mission[][] {
     const { spec } = this.city;
     const b = spec.block;
-    return [
+    const reach = (tx: number, ty: number, description: string) => ({
+      kind: 'reach' as const,
+      description,
+      target: tileCenter(spec, tx, ty),
+      radius: 56,
+    });
+
+    const makeName: Mission[] = [
       createMission({
         id: 'intro',
         title: 'Make a Name',
         objectives: [
-          {
-            kind: 'reach',
-            description: 'Reach the marked junction (F to shoot)',
-            target: tileCenter(spec, b * 3, b * 2),
-            radius: 56,
-          },
-          { kind: 'eliminate', description: 'Take out 3 targets', count: 3 },
+          reach(b * 3, b * 2, 'Drive to the marked junction (yellow ring)'),
+          { kind: 'eliminate', description: 'Take down 3 targets — press F to shoot', count: 3 },
         ],
         reward: 1000,
       }),
@@ -240,35 +318,57 @@ export class CityScene extends Phaser.Scene {
         id: 'supply',
         title: 'Tooled Up',
         objectives: [
-          { kind: 'collect', description: 'Grab 2 ammo crates', count: 2 },
-          {
-            kind: 'reach',
-            description: 'Deliver to the lockup',
-            target: tileCenter(spec, b * 6, b * 7),
-            radius: 56,
-          },
+          { kind: 'collect', description: 'Grab 2 ammo crates (drive or walk over them)', count: 2 },
+          reach(b * 6, b * 3, 'Deliver to the lockup (yellow ring)'),
         ],
         reward: 1500,
       }),
+    ];
+
+    const heat: Mission[] = [
       createMission({
         id: 'rampage',
         title: 'Send a Message',
-        objectives: [{ kind: 'wanted', description: 'Reach a 3-star wanted level', stars: 3 }],
+        objectives: [
+          { kind: 'wanted', description: 'Cause chaos until you hit a 3-star wanted level', stars: 3 },
+        ],
         reward: 2000,
       }),
       createMission({
         id: 'laylow',
         title: 'Lay Low',
-        objectives: [{ kind: 'survive', description: 'Evade the law for 30s', seconds: 30 }],
+        objectives: [
+          { kind: 'survive', description: 'Shake the cops — stay alive 30s while wanted', seconds: 30 },
+        ],
         reward: 3000,
       }),
+    ];
+
+    const mostWanted: Mission[] = [
       createMission({
-        id: 'mostwanted',
-        title: 'Most Wanted',
-        objectives: [{ kind: 'eliminate', description: 'Cause chaos: 8 takedowns', count: 8 }],
+        id: 'takedown',
+        title: 'Takedown',
+        objectives: [
+          {
+            kind: 'eliminate',
+            description: 'Take down 6 targets — run them over or shoot (F)',
+            count: 6,
+          },
+        ],
+        reward: 4000,
+      }),
+      createMission({
+        id: 'getaway',
+        title: 'Getaway',
+        objectives: [
+          reach(b * 9, b * 9, 'Reach the safehouse across town (yellow ring)'),
+          { kind: 'survive', description: 'Lie low for 20s', seconds: 20 },
+        ],
         reward: 5000,
       }),
     ];
+
+    return [makeName, heat, mostWanted];
   }
 
   private drawCity(): void {
@@ -286,6 +386,11 @@ export class CityScene extends Phaser.Scene {
       const y = ty * spec.tile + spec.tile / 2;
       lines.lineBetween(0, y, width, y);
     }
+
+    // Water and bridges cover the road/markings where the river cuts across.
+    this.drawTerrain();
+    // Sidewalks, crosswalks, and parking bays.
+    this.drawStreets();
 
     // Buildings with rooftops and lit windows for a denser city look.
     const g = this.add.graphics();
@@ -311,6 +416,67 @@ export class CityScene extends Phaser.Scene {
     });
   }
 
+  /** Draw the river water, the bridge decks crossing it, and the bridge rails. */
+  private drawTerrain(): void {
+    if (this.city.water.length === 0) return;
+    const { tile } = this.city.spec;
+
+    // Water bodies.
+    const w = this.add.graphics().setDepth(1);
+    for (const body of this.city.water) {
+      w.fillStyle(COLORS.water, 1);
+      w.fillRect(body.x, body.y, body.w, body.h);
+      w.lineStyle(2, COLORS.waterEdge, 1);
+      w.strokeRect(body.x, body.y, body.w, body.h);
+    }
+
+    // Bridge decks: a solid plank covering each bridge tile so it reads as a
+    // crossing over the water rather than part of the river.
+    const decks = this.add.graphics().setDepth(2);
+    const { cols, rows } = this.city.spec;
+    decks.fillStyle(COLORS.bridge, 1);
+    for (let tx = 0; tx < cols; tx++) {
+      for (let ty = 0; ty < rows; ty++) {
+        if (this.city.isBridge(tx, ty)) {
+          decks.fillRect(tx * tile, ty * tile, tile, tile);
+        }
+      }
+    }
+
+    // Bridge side rails (also solid wall collision in the World).
+    const rails = this.add.graphics().setDepth(3);
+    rails.fillStyle(COLORS.fence, 1);
+    for (const f of this.city.fences) {
+      rails.fillRect(f.x, f.y, f.w, f.h);
+    }
+  }
+
+  /** Draw sidewalks, crosswalk stripes, and parking bay outlines. */
+  private drawStreets(): void {
+    const tile = this.city.spec.tile;
+    const g = this.add.graphics().setDepth(0);
+
+    // Sidewalks: pale strips hugging the buildings.
+    g.fillStyle(COLORS.sidewalk, 1);
+    for (const s of this.city.sidewalks) g.fillRect(s.x, s.y, s.w, s.h);
+
+    // Crosswalks: a band of zebra stripes across each intersection tile.
+    const stripes = 4;
+    const stripeW = tile / (stripes * 2);
+    g.fillStyle(COLORS.crosswalk, 0.8);
+    for (const cw of this.city.crosswalks) {
+      for (let k = 0; k < stripes; k++) {
+        g.fillRect(cw.x + k * stripeW * 2 + stripeW / 2, cw.y + 3, stripeW, tile - 6);
+      }
+    }
+
+    // Parking bays: thin outlined rectangles at each kerbside spot.
+    g.lineStyle(1.5, COLORS.parkingLine, 0.7);
+    for (const spot of this.city.parkingSpots) {
+      g.strokeRect(spot.pos.x - 9, spot.pos.y - 16, 18, 32);
+    }
+  }
+
   private createEntitySprites(): void {
     // A pulsing ring marking the current 'reach' objective.
     this.missionMarker = this.add
@@ -334,6 +500,15 @@ export class CityScene extends Phaser.Scene {
 
     const p = this.world.player;
     this.playerSprite = this.add.image(p.pos.x, p.pos.y, TEX.player).setDepth(10).setRotation(p.angle);
+
+    // A graphics layer for drawing explosion blasts above everything else.
+    this.explosionGfx = this.add.graphics().setDepth(11);
+    // Traffic-light indicators sit above the road but below entities.
+    this.lightsGfx = this.add.graphics().setDepth(7);
+    // Corpses and their blood puddles sit just above the road, below the living.
+    this.corpseGfx = this.add.graphics().setDepth(4);
+    // The ambulance: a white emergency vehicle, hidden until dispatched.
+    this.ambulanceSprite = this.add.rectangle(0, 0, 30, 16, 0xf8fafc).setDepth(6).setVisible(false);
   }
 
   /** Reconcile the bullet sprite pool with the live bullets. */
@@ -352,6 +527,74 @@ export class CityScene extends Phaser.Scene {
     for (let i = this.world.bullets.length; i < this.bulletSprites.length; i++) {
       this.bulletSprites[i].setVisible(false);
     }
+
+    // Police return fire is drawn in a separate, red-tinted pool.
+    this.world.policeBullets.forEach((b, i) => {
+      let sprite = this.policeBulletSprites[i];
+      if (!sprite) {
+        sprite = this.add.rectangle(b.pos.x, b.pos.y, 7, 3, 0xf87171).setDepth(8);
+        this.policeBulletSprites[i] = sprite;
+      }
+      sprite
+        .setVisible(true)
+        .setPosition(b.pos.x, b.pos.y)
+        .setRotation(Math.atan2(b.velocity.y, b.velocity.x));
+    });
+    for (let i = this.world.policeBullets.length; i < this.policeBulletSprites.length; i++) {
+      this.policeBulletSprites[i].setVisible(false);
+    }
+  }
+
+  /** Draw each active explosion as an expanding, fading blast. */
+  private syncExplosions(): void {
+    const g = this.explosionGfx;
+    g.clear();
+    for (const e of this.world.explosions) {
+      const t = e.age / e.life; // 0 -> 1 over the blast's life
+      const r = e.radius * (0.4 + 0.6 * t);
+      g.fillStyle(0xfacc15, (1 - t) * 0.5); // yellow flash
+      g.fillCircle(e.pos.x, e.pos.y, r);
+      g.fillStyle(0xf97316, (1 - t) * 0.6); // orange core
+      g.fillCircle(e.pos.x, e.pos.y, r * 0.6);
+    }
+  }
+
+  /** Draw the traffic lights: a green/red bar for each travel axis at every
+   * intersection, reflecting the current shared light phase. */
+  private syncLights(): void {
+    const axis = greenAxis(this.world.lights);
+    const g = this.lightsGfx;
+    g.clear();
+    const ew = axis === 'horizontal' ? COLORS.lightGreen : COLORS.lightRed;
+    const ns = axis === 'vertical' ? COLORS.lightGreen : COLORS.lightRed;
+    for (const c of this.intersectionCenters) {
+      g.fillStyle(ew, 1);
+      g.fillRect(c.x - 7, c.y - 1.5, 14, 3); // east-west indicator
+      g.fillStyle(ns, 1);
+      g.fillRect(c.x - 1.5, c.y - 7, 3, 14); // north-south indicator
+    }
+  }
+
+  /** Draw each corpse as a body lying in a pool of blood. */
+  private syncCorpses(): void {
+    const g = this.corpseGfx;
+    g.clear();
+    for (const c of this.world.corpses) {
+      g.fillStyle(0x7f1d1d, 0.55); // blood puddle
+      g.fillEllipse(c.pos.x, c.pos.y, 28, 18);
+      g.fillStyle(0x27272a, 1); // the body
+      g.fillCircle(c.pos.x, c.pos.y, 5);
+    }
+  }
+
+  /** Show the ambulance when one is active, tracking its position and heading. */
+  private syncAmbulance(): void {
+    const amb = this.world.ambulance;
+    if (amb) {
+      this.ambulanceSprite.setVisible(true).setPosition(amb.pos.x, amb.pos.y).setRotation(amb.heading);
+    } else {
+      this.ambulanceSprite.setVisible(false);
+    }
   }
 
   private setupCamera(): void {
@@ -359,6 +602,34 @@ export class CityScene extends Phaser.Scene {
     this.focusPoint = this.add.rectangle(f.x, f.y, 1, 1, 0x000000, 0);
     this.cameras.main.setBounds(0, 0, this.city.width, this.city.height);
     this.cameras.main.startFollow(this.focusPoint, true, 0.15, 0.15);
+    this.applyZoom();
+    // Re-fit when the viewport changes — window resize, device rotation, or
+    // mobile Safari showing/hiding its toolbars (the iPad "car off-screen" bug).
+    this.scale.on('resize', this.onResize, this);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.scale.off('resize', this.onResize, this);
+    });
+  }
+
+  /** Fit the camera zoom to the current viewport so the player stays centred and
+   * a consistent amount of the city is visible on every device. */
+  private applyZoom(): void {
+    const { width, height } = this.scale.gameSize;
+    const span = Math.min(width, height);
+    if (span <= 0) return;
+    const zoom = Phaser.Math.Clamp(span / VIEW_SPAN, MIN_ZOOM, MAX_ZOOM);
+    this.cameras.main.setZoom(zoom);
+    this.cameras.main.centerOn(this.world.focus.x, this.world.focus.y);
+  }
+
+  /** Handle a viewport resize: refit the zoom and recentre screen-space UI. */
+  private onResize(): void {
+    this.applyZoom();
+    const { width, height } = this.scale.gameSize;
+    this.bustedText?.setPosition(width / 2, height / 2);
+    this.banner?.setPosition(width / 2, 84);
+    this.pauseMenu?.setPosition(width / 2, height / 2);
+    this.dayNightOverlay?.setPosition(width / 2, height / 2).setSize(width * 3, height * 3);
   }
 
   private createHud(): void {
@@ -401,6 +672,33 @@ export class CityScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(1500)
       .setVisible(false);
+
+    // The pause menu overlay (shown while paused).
+    this.pauseMenu = this.add
+      .text(
+        this.scale.width / 2,
+        this.scale.height / 2,
+        'PAUSED\n\nP — Resume\nN — New Game',
+        {
+          fontFamily: 'monospace',
+          fontSize: '28px',
+          color: '#e5e7eb',
+          align: 'center',
+          backgroundColor: '#000000d0',
+          padding: { x: 28, y: 22 },
+        },
+      )
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(2500)
+      .setVisible(false);
+
+    // A full-screen dimming overlay for the day/night cycle. Oversized and
+    // centred so it covers the viewport at any camera zoom; depth below the HUD.
+    this.dayNightOverlay = this.add
+      .rectangle(this.scale.width / 2, this.scale.height / 2, this.scale.width * 3, this.scale.height * 3, 0x0a0f24, 0)
+      .setScrollFactor(0)
+      .setDepth(900);
   }
 
   /** Build the corner minimap: a static city backdrop plus a live dot overlay. */
@@ -412,6 +710,15 @@ export class CityScene extends Phaser.Scene {
     g.fillStyle(COLORS.mmBuilding, 1);
     for (const b of this.city.buildings) {
       g.fillRect(b.x * scale, b.y * scale, Math.max(1, b.w * scale), Math.max(1, b.h * scale));
+    }
+    g.fillStyle(COLORS.mmWater, 1);
+    for (const water of this.city.water) {
+      g.fillRect(
+        water.x * scale,
+        water.y * scale,
+        Math.max(1, water.w * scale),
+        Math.max(1, water.h * scale),
+      );
     }
     g.generateTexture('minimap-bg', MINIMAP_SIZE, MINIMAP_SIZE);
     g.destroy();
@@ -456,6 +763,15 @@ export class CityScene extends Phaser.Scene {
   }
 
   update(_time: number, deltaMs: number): void {
+    // New game from scratch, available at any time.
+    if (Phaser.Input.Keyboard.JustDown(this.newGameKey)) {
+      this.startNewGame();
+      return;
+    }
+    // Toggle pause; while paused the simulation is frozen.
+    if (Phaser.Input.Keyboard.JustDown(this.pauseKey)) this.togglePause();
+    if (this.paused) return;
+
     const controls = this.input_.read();
     const dt = deltaMs / 1000;
 
@@ -470,6 +786,8 @@ export class CityScene extends Phaser.Scene {
     this.syncSprites();
     this.syncMinimap();
     this.handleEvents();
+    this.updateSiren(dt);
+    this.updateDayNight(dt);
 
     // Count down the announcement banner.
     if (this.announceRemaining > 0) {
@@ -477,6 +795,42 @@ export class CityScene extends Phaser.Scene {
       this.banner.setPosition(this.scale.width / 2, 84);
       if (this.announceRemaining <= 0) this.banner.setVisible(false);
     }
+  }
+
+  /** Advance the day/night cycle and dim the world toward midnight. */
+  private updateDayNight(dt: number): void {
+    this.timeOfDay += dt;
+    const phase = (this.timeOfDay % DAY_LENGTH) / DAY_LENGTH; // 0..1 across a day
+    const darkness = (1 - Math.cos(phase * Math.PI * 2)) / 2; // 0 at noon → 1 at midnight
+    this.dayNightOverlay
+      .setPosition(this.scale.width / 2, this.scale.height / 2)
+      .setFillStyle(0x0a0f24, darkness * 0.6);
+  }
+
+  /** Wail the siren on a steady cadence whenever a chase is on. */
+  private updateSiren(dt: number): void {
+    if (this.world.status !== 'playing' || this.world.police.length === 0) {
+      this.sirenTimer = 0;
+      return;
+    }
+    this.sirenTimer -= dt;
+    if (this.sirenTimer <= 0) {
+      this.sfx.siren();
+      this.sirenTimer = 0.42; // matches the two-tone wail length
+    }
+  }
+
+  /** Freeze or resume the simulation and show/hide the pause menu. */
+  private togglePause(): void {
+    this.paused = !this.paused;
+    const { width, height } = this.scale.gameSize;
+    this.pauseMenu.setPosition(width / 2, height / 2).setVisible(this.paused);
+  }
+
+  /** Restart the scene, beginning a brand-new game (the high score persists). */
+  private startNewGame(): void {
+    this.paused = false;
+    this.scene.restart();
   }
 
   /** Persist the high score, play sounds, and announce mission changes. */
@@ -490,6 +844,7 @@ export class CityScene extends Phaser.Scene {
 
     if (w.bullets.length > this.prevBullets) this.sfx.shot();
     if (w.kills > this.prevKills) this.sfx.hit();
+    if (w.explosionsTriggered > this.prevExplosions) this.sfx.explosion();
     if (w.status !== 'playing' && this.prevStatus === 'playing') this.sfx.fail();
 
     const missionId = w.mission?.id ?? null;
@@ -511,6 +866,7 @@ export class CityScene extends Phaser.Scene {
     this.prevMissionComplete = w.missionComplete;
     this.prevMissionId = missionId;
     this.prevObjective = objective;
+    this.prevExplosions = w.explosionsTriggered;
   }
 
   /** Flash a banner message for a few seconds. */
@@ -521,7 +877,14 @@ export class CityScene extends Phaser.Scene {
 
   private syncSprites(): void {
     this.world.cars.forEach((car, i) => {
-      this.carSprites[i]
+      const sprite = this.carSprites[i];
+      if (this.world.wreckedCars[i]) {
+        // A destroyed car is a charred, static wreck.
+        sprite.setTexture(TEX.npcCar).setTint(0x3a3a3a).setPosition(car.pos.x, car.pos.y).setRotation(car.heading);
+        return;
+      }
+      sprite
+        .clearTint()
         .setTexture(i === this.world.drivingCarIndex ? TEX.playerCar : TEX.npcCar)
         .setPosition(car.pos.x, car.pos.y)
         .setRotation(car.heading);
@@ -539,7 +902,10 @@ export class CityScene extends Phaser.Scene {
       sprite.setVisible(this.world.ammoPickups.includes(pickup));
     }
 
-    // Police spawn dynamically and arrive on foot or in patrol cars.
+    // Police spawn dynamically and arrive on foot or in patrol cars. While a
+    // chase is on, their lights flash red/blue.
+    const flashBlue = Math.floor(this.time.now / 200) % 2 === 0;
+    const lightTint = flashBlue ? 0x60a5fa : 0xf87171;
     this.world.police.forEach((cop, i) => {
       let sprite = this.policeSprites[i];
       if (!sprite) {
@@ -549,6 +915,7 @@ export class CityScene extends Phaser.Scene {
       sprite
         .setTexture(cop.kind === 'car' ? TEX.policeCar : TEX.policeFoot)
         .setVisible(true)
+        .setTint(lightTint)
         .setPosition(cop.pos.x, cop.pos.y)
         .setRotation(cop.heading);
     });
@@ -557,6 +924,10 @@ export class CityScene extends Phaser.Scene {
     }
 
     this.syncBullets();
+    this.syncExplosions();
+    this.syncLights();
+    this.syncCorpses();
+    this.syncAmbulance();
 
     // Mission marker: show the ring only while a 'reach' objective is active.
     const objective = this.world.missionObjective;
@@ -590,6 +961,12 @@ export class CityScene extends Phaser.Scene {
     }
   }
 
+  /** A "(done/goal)" tag for the current objective, or '' for reach/none. */
+  private progressText(): string {
+    const p = this.world.missionProgress;
+    return p ? `  (${p.current}/${p.goal})` : '';
+  }
+
   /** Build the multi-line HUD: wanted, health, money, weapon, mission, controls. */
   private hudText(): string {
     const w = this.world;
@@ -602,7 +979,7 @@ export class CityScene extends Phaser.Scene {
     const mission = w.missionComplete
       ? 'ALL MISSIONS COMPLETE'
       : w.mission
-        ? `▶ ${w.mission.title}: ${w.missionObjective?.description ?? ''}`
+        ? `▶ ${w.mission.title}: ${w.missionObjective?.description ?? ''}${this.progressText()}`
         : '';
 
     const ammo =
@@ -611,8 +988,8 @@ export class CityScene extends Phaser.Scene {
         : `Pistol ${w.weapon.ammo}`;
 
     const status = w.isDriving
-      ? `DRIVING ${speed}  ·  WASD steer · Space exit · F shoot`
-      : 'ON FOOT  ·  WASD move · Space car · F shoot';
+      ? `DRIVING ${speed}  ·  WASD steer · Space exit · F shoot · P pause`
+      : 'ON FOOT  ·  WASD move · Space car · F shoot · P pause';
 
     return [`WANTED ${stars}    HP ${hp}`, `${money}    ${ammo}`, mission, status]
       .filter(Boolean)

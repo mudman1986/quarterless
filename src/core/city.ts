@@ -1,6 +1,26 @@
 import { type Rect, rect } from './collision';
 import { type Vec2, vec2 } from './vector';
 
+/**
+ * A band of water cutting across the map. A horizontal river spans a range of
+ * rows (crossed by vertical roads); a vertical river spans a range of columns
+ * (crossed by horizontal roads). Crossing roads become bridges at a regular
+ * interval; the rest of the band is impassable water.
+ */
+export interface RiverSpec {
+  orientation: 'horizontal' | 'vertical';
+  /** First tile row (horizontal) or column (vertical) of the water band. */
+  start: number;
+  /** Thickness of the band in tiles. */
+  span: number;
+  /**
+   * A crossing road carries a bridge when its lane index is a multiple of this.
+   * 1 (the default) bridges every crossing road; 2 bridges every other one, so
+   * the river is a real barrier the player must navigate around.
+   */
+  bridgeEvery?: number;
+}
+
 /** Grid description of a block-based city. */
 export interface CitySpec {
   /** Number of tiles across. */
@@ -16,6 +36,8 @@ export interface CitySpec {
    * space along the roads. Optional; defaults to 0 (buildings meet the road).
    */
   margin?: number;
+  /** Rivers of water cutting across the map, crossed by bridges. */
+  rivers?: RiverSpec[];
 }
 
 export interface City {
@@ -26,38 +48,222 @@ export interface City {
   height: number;
   /** One merged rectangle per building block (for rendering and collision). */
   buildings: Rect[];
-  /** Whether the given tile coordinate is a road lane. */
+  /** Lethal water rectangles (for rendering and drowning checks). */
+  water: Rect[];
+  /** Thin rails along the sides of every bridge (added to wall collision). */
+  fences: Rect[];
+  /** Sidewalk strips hugging the buildings (pedestrians wander along these). */
+  sidewalks: Rect[];
+  /** Crossing zones at intersections (rendering + where peds cross). */
+  crosswalks: Rect[];
+  /** Parking bays beside the kerbs where parked cars sit. */
+  parkingSpots: ParkingSpot[];
+  /** Whether the given tile coordinate is a drivable road lane (incl. bridges). */
   isRoad(tx: number, ty: number): boolean;
+  /** Whether the given tile coordinate is lethal water. */
+  isWater(tx: number, ty: number): boolean;
+  /** Whether the given tile coordinate is a bridge crossing the water. */
+  isBridge(tx: number, ty: number): boolean;
+}
+
+/** A kerbside parking bay: where a parked car sits and which way it points. */
+export interface ParkingSpot {
+  pos: Vec2;
+  heading: number;
 }
 
 export const DEFAULT_CITY: CitySpec = { cols: 25, rows: 25, tile: 64, block: 5 };
 
+/** Thickness in pixels of the rails lining each bridge. */
+const FENCE = 5;
+/** Width in pixels of the sidewalk strip around each building. */
+const SIDEWALK_WIDTH = 12;
+/** Place a parking bay every Nth tile along a road beside buildings. */
+const PARKING_EVERY = 2;
+
+interface TileRect {
+  tx: number;
+  ty: number;
+  tw: number;
+  th: number;
+}
+
+/** Remove a river band's rows (horizontal) or columns (vertical) from a tile
+ * rect, returning the 0–2 pieces left over. Pure. */
+function subtractBand(r: TileRect, river: RiverSpec): TileRect[] {
+  const bStart = river.start;
+  const bEnd = river.start + river.span;
+  if (river.orientation === 'horizontal') {
+    const top = r.ty;
+    const bottom = r.ty + r.th;
+    if (bEnd <= top || bStart >= bottom) return [r];
+    const pieces: TileRect[] = [];
+    if (top < bStart) pieces.push({ tx: r.tx, ty: top, tw: r.tw, th: bStart - top });
+    if (bEnd < bottom) pieces.push({ tx: r.tx, ty: bEnd, tw: r.tw, th: bottom - bEnd });
+    return pieces;
+  }
+  const left = r.tx;
+  const right = r.tx + r.tw;
+  if (bEnd <= left || bStart >= right) return [r];
+  const pieces: TileRect[] = [];
+  if (left < bStart) pieces.push({ tx: left, ty: r.ty, tw: bStart - left, th: r.th });
+  if (bEnd < right) pieces.push({ tx: bEnd, ty: r.ty, tw: right - bEnd, th: r.th });
+  return pieces;
+}
+
 /**
  * Build a city: roads run along every `block`-th row and column, and the
- * interior of each block is a single rectangular building.
+ * interior of each block is a single rectangular building. Any rivers carve a
+ * band of water across the map, removing the buildings there and leaving
+ * bridges (with side rails) where crossing roads continue across the water.
  */
 export function buildCity(spec: CitySpec = DEFAULT_CITY): City {
   const { cols, rows, tile, block } = spec;
   const margin = spec.margin ?? 0;
-  const isRoad = (tx: number, ty: number): boolean => tx % block === 0 || ty % block === 0;
+  const rivers = spec.rivers ?? [];
 
-  const buildings: Rect[] = [];
+  const isRoadLane = (tx: number, ty: number): boolean => tx % block === 0 || ty % block === 0;
+  const inBand = (river: RiverSpec, tx: number, ty: number): boolean => {
+    const idx = river.orientation === 'horizontal' ? ty : tx;
+    return idx >= river.start && idx < river.start + river.span;
+  };
+  const isBridgeFor = (river: RiverSpec, tx: number, ty: number): boolean => {
+    const every = river.bridgeEvery ?? 1;
+    // A horizontal river is crossed by vertical roads (column `tx`); a vertical
+    // river by horizontal roads (row `ty`).
+    const lane = river.orientation === 'horizontal' ? tx : ty;
+    return lane % block === 0 && (lane / block) % every === 0;
+  };
+
+  const isBridge = (tx: number, ty: number): boolean =>
+    rivers.some((r) => inBand(r, tx, ty) && isBridgeFor(r, tx, ty));
+  const isWater = (tx: number, ty: number): boolean =>
+    rivers.some((r) => inBand(r, tx, ty)) && !isBridge(tx, ty);
+  const isRoad = (tx: number, ty: number): boolean => isRoadLane(tx, ty) && !isWater(tx, ty);
+
+  // Building blocks, then carve the rivers out of them.
+  let tileRects: TileRect[] = [];
   for (let bx = 0; bx * block < cols; bx++) {
     for (let by = 0; by * block < rows; by++) {
-      const x0 = bx * block + 1;
-      const y0 = by * block + 1;
-      const w = Math.min((bx + 1) * block, cols) - x0;
-      const h = Math.min((by + 1) * block, rows) - y0;
-      if (w > 0 && h > 0) {
-        // Inset by `margin` so the building does not butt right up to the road.
-        buildings.push(
-          rect(x0 * tile + margin, y0 * tile + margin, w * tile - 2 * margin, h * tile - 2 * margin),
-        );
+      const tx = bx * block + 1;
+      const ty = by * block + 1;
+      const tw = Math.min((bx + 1) * block, cols) - tx;
+      const th = Math.min((by + 1) * block, rows) - ty;
+      if (tw > 0 && th > 0) tileRects.push({ tx, ty, tw, th });
+    }
+  }
+  for (const river of rivers) tileRects = tileRects.flatMap((r) => subtractBand(r, river));
+
+  const buildings = tileRects
+    .map((r) =>
+      rect(r.tx * tile + margin, r.ty * tile + margin, r.tw * tile - 2 * margin, r.th * tile - 2 * margin),
+    )
+    .filter((b) => b.w > 0 && b.h > 0);
+
+  // Water rectangles (band segments between bridges) and the bridge side rails.
+  const water: Rect[] = [];
+  const fences: Rect[] = [];
+  for (const river of rivers) {
+    const horizontal = river.orientation === 'horizontal';
+    const acrossCount = horizontal ? cols : rows;
+    const bandPx = river.start * tile;
+    const bandSpanPx = river.span * tile;
+
+    // Walk the cross-axis, emitting a water rect for each run between bridges.
+    let runStart = 0;
+    for (let i = 0; i <= acrossCount; i++) {
+      const bridge = i < acrossCount && (horizontal ? isBridge(i, river.start) : isBridge(river.start, i));
+      if (bridge || i === acrossCount) {
+        if (i > runStart) {
+          const segPx = runStart * tile;
+          const segSpanPx = (i - runStart) * tile;
+          water.push(
+            horizontal
+              ? rect(segPx, bandPx, segSpanPx, bandSpanPx)
+              : rect(bandPx, segPx, bandSpanPx, segSpanPx),
+          );
+        }
+        if (bridge) {
+          // Rails on both water-facing edges of this one-tile-wide bridge.
+          const edge0 = i * tile;
+          const edge1 = (i + 1) * tile;
+          if (horizontal) {
+            fences.push(rect(edge0, bandPx, FENCE, bandSpanPx));
+            fences.push(rect(edge1 - FENCE, bandPx, FENCE, bandSpanPx));
+          } else {
+            fences.push(rect(bandPx, edge0, bandSpanPx, FENCE));
+            fences.push(rect(bandPx, edge1 - FENCE, bandSpanPx, FENCE));
+          }
+        }
+        runStart = i + 1;
       }
     }
   }
 
-  return { spec, width: cols * tile, height: rows * tile, buildings, isRoad };
+  return {
+    spec,
+    width: cols * tile,
+    height: rows * tile,
+    buildings,
+    water,
+    fences,
+    sidewalks: buildSidewalks(buildings),
+    crosswalks: buildCrosswalks(spec, isRoad, isWater),
+    parkingSpots: buildParkingSpots(spec, isWater),
+    isRoad,
+    isWater,
+    isBridge,
+  };
+}
+
+/** A sidewalk ring hugging the outside of every building. */
+function buildSidewalks(buildings: readonly Rect[]): Rect[] {
+  const s = SIDEWALK_WIDTH;
+  const strips: Rect[] = [];
+  for (const b of buildings) {
+    strips.push(rect(b.x - s, b.y - s, b.w + 2 * s, s)); // top
+    strips.push(rect(b.x - s, b.y + b.h, b.w + 2 * s, s)); // bottom
+    strips.push(rect(b.x - s, b.y, s, b.h)); // left
+    strips.push(rect(b.x + b.w, b.y, s, b.h)); // right
+  }
+  return strips;
+}
+
+/** A crossing zone on every (dry) intersection tile. */
+function buildCrosswalks(
+  spec: CitySpec,
+  isRoad: (tx: number, ty: number) => boolean,
+  isWater: (tx: number, ty: number) => boolean,
+): Rect[] {
+  const { cols, rows, tile, block } = spec;
+  const zones: Rect[] = [];
+  for (let tx = 0; tx < cols; tx += block) {
+    for (let ty = 0; ty < rows; ty += block) {
+      if (isRoad(tx, ty) && !isWater(tx, ty)) zones.push(rect(tx * tile, ty * tile, tile, tile));
+    }
+  }
+  return zones;
+}
+
+/** Parking bays at the kerb of vertical roads, beside the buildings. */
+function buildParkingSpots(
+  spec: CitySpec,
+  isWater: (tx: number, ty: number) => boolean,
+): ParkingSpot[] {
+  const { cols, rows, tile, block } = spec;
+  const curb = tile / 2 - 11; // offset from the lane centre toward the kerb
+  const spots: ParkingSpot[] = [];
+  for (let tx = block; tx < cols; tx += block) {
+    for (let ty = 1; ty < rows - 1; ty++) {
+      if (ty % block === 0) continue; // skip intersections
+      if (ty % PARKING_EVERY !== 0) continue; // leave gaps between bays
+      if (isWater(tx, ty) || isWater(tx + 1, ty)) continue; // not over the river
+      if (tx + 1 >= cols) continue; // needs a building on the kerb side
+      const c = tileCenter(spec, tx, ty);
+      spots.push({ pos: vec2(c.x + curb, c.y), heading: Math.PI / 2 });
+    }
+  }
+  return spots;
 }
 
 /** Pixel centre of a tile. */

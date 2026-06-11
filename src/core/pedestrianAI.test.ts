@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   stepPedestrian,
+  wanderTarget,
   PANIC_RADIUS,
   ARRIVE_RADIUS,
   PED_WALK_SPEED,
@@ -9,6 +10,7 @@ import {
   type PedestrianContext,
 } from './pedestrianAI';
 import { DEFAULT_CAR_TUNING } from './vehicle';
+import { rect, pointInRect } from './collision';
 import { vec2, distance } from './vector';
 
 const ped = (overrides: Partial<Pedestrian> = {}): Pedestrian => ({
@@ -79,5 +81,34 @@ describe('stepPedestrian wandering', () => {
     const next = stepPedestrian(p, ctx(), 0.1, () => 0.5);
     // RNG 0.5 over 1000x1000 bounds → target near the map centre.
     expect(next.target).toEqual(vec2(500, 500));
+  });
+});
+
+describe('pedestrians keep to sidewalks', () => {
+  // Two sidewalk strips: one beside the ped, one far away.
+  const near = rect(120, 96, 40, 12);
+  const far = rect(800, 800, 40, 12);
+  const sidewalkCtx: PedestrianContext = {
+    threats: [],
+    bounds: { width: 1000, height: 1000 },
+    sidewalks: [near, far],
+  };
+
+  it('picks a nearby sidewalk point as the next wander target', () => {
+    const target = wanderTarget(sidewalkCtx, vec2(100, 100), () => 0.5);
+    expect(pointInRect(target, near)).toBe(true); // chose the close strip, not the far one
+  });
+
+  it('sends a wandering pedestrian onto a sidewalk on arrival', () => {
+    const p = ped({ pos: vec2(100, 100), target: vec2(100 + ARRIVE_RADIUS / 2, 100) });
+    const next = stepPedestrian(p, sidewalkCtx, 0.1, () => 0.5);
+    expect(pointInRect(next.target, near)).toBe(true);
+  });
+
+  it('still lets a frightened pedestrian flee off the sidewalk', () => {
+    const threat = vec2(110, 100); // right on top, inside the panic radius
+    const next = stepPedestrian(ped(), { ...sidewalkCtx, threats: [threat] }, 0.1);
+    expect(next.state).toBe('flee'); // panic overrides staying on the pavement
+    expect(distance(next.pos, threat)).toBeGreaterThan(0);
   });
 });

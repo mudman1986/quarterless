@@ -1,10 +1,9 @@
 name: Deploy
 
 on:
+  workflow_dispatch:
   push:
-    branches: [main]
   pull_request:
-    branches: [main]
 
 # Least-privilege default; the deploy job opts into more below.
 permissions:
@@ -60,12 +59,10 @@ jobs:
           if-no-files-found: ignore
 
   # ---------------------------------------------------------------------------
-  # Deploy to GitHub Pages. Runs only after `test` passes and only for pushes
-  # to main (not pull requests).
+  # Deploy to GitHub Pages. Runs only after `test` passes.
   # ---------------------------------------------------------------------------
   deploy:
     needs: test
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read

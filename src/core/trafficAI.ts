@@ -6,6 +6,8 @@ import type { Car } from './vehicle';
 export interface TrafficAI {
   /** Unit cardinal direction the car is currently travelling. */
   dir: Vec2;
+  /** Seconds the car has been blocked by an obstacle (drives a reroute). */
+  blocked?: number;
 }
 
 /** Cruising speed (px/s) of NPC traffic. */
@@ -38,6 +40,12 @@ function inBounds(spec: CitySpec, tx: number, ty: number): boolean {
 /** Whether a tile exists on the map and is a road lane. */
 export function roadAt(city: City, tx: number, ty: number): boolean {
   return inBounds(city.spec, tx, ty) && city.isRoad(tx, ty);
+}
+
+/** Whether a road tile is an intersection (a road row crossing a road column). */
+export function isIntersection(city: City, tx: number, ty: number): boolean {
+  const { block } = city.spec;
+  return roadAt(city, tx, ty) && tx % block === 0 && ty % block === 0;
 }
 
 function isOpposite(a: Vec2, b: Vec2): boolean {
@@ -120,5 +128,5 @@ export function stepTraffic(
     }
   }
 
-  return { car: { ...car, pos, heading: angle(dir), speed }, ai: { dir } };
+  return { car: { ...car, pos, heading: angle(dir), speed }, ai: { ...ai, dir } };
 }

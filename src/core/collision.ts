@@ -23,6 +23,16 @@ export function circleIntersectsRect(pos: Vec2, radius: number, r: Rect): boolea
   return length(sub(pos, closestPointOnRect(pos, r))) < radius;
 }
 
+/** Whether a point lies on or inside a rect (edges count as inside). */
+export function pointInRect(p: Vec2, r: Rect): boolean {
+  return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+}
+
+/** A uniformly random point inside a rect, using the injected RNG. Pure. */
+export function randomPointInRect(r: Rect, rng: () => number): Vec2 {
+  return vec2(r.x + rng() * r.w, r.y + rng() * r.h);
+}
+
 /**
  * Push a circle out of a rect along the shortest axis if they overlap.
  * Returns the corrected centre position (unchanged when there is no overlap).
@@ -53,4 +63,35 @@ export function resolveCircleRect(pos: Vec2, radius: number, r: Rect): Vec2 {
 /** Resolve a circle against many rects in sequence. */
 export function resolveCircleRects(pos: Vec2, radius: number, rects: readonly Rect[]): Vec2 {
   return rects.reduce((p, r) => resolveCircleRect(p, radius, r), pos);
+}
+
+/** A circular obstacle (e.g. a car) used for circle-vs-circle resolution. */
+export interface Circle {
+  readonly pos: Vec2;
+  readonly radius: number;
+}
+
+/**
+ * Push a moving circle out of a static circle obstacle if they overlap. The
+ * moving circle is ejected along the line joining the centres until the two
+ * just touch. When the centres coincide it is pushed along +x by an arbitrary
+ * but stable direction. Pure: returns the corrected centre position (unchanged
+ * when there is no overlap).
+ */
+export function resolveCircleCircle(pos: Vec2, radius: number, obstacle: Circle): Vec2 {
+  const delta = sub(pos, obstacle.pos);
+  const dist = length(delta);
+  const minDist = radius + obstacle.radius;
+  if (dist >= minDist) return pos;
+  if (dist === 0) return vec2(obstacle.pos.x + minDist, obstacle.pos.y);
+  return add(pos, scale(normalize(delta), minDist - dist));
+}
+
+/** Resolve a moving circle against many circle obstacles in sequence. */
+export function resolveCircleCircles(
+  pos: Vec2,
+  radius: number,
+  obstacles: readonly Circle[],
+): Vec2 {
+  return obstacles.reduce((p, o) => resolveCircleCircle(p, radius, o), pos);
 }
