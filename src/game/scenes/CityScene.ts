@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { buildCity, tileCenter, type City, type Crosswalk } from '../../core/city';
+import { bridgeBarriers, buildCity, edgeRoadSpawnPoints, tileCenter, type City, type Crosswalk } from '../../core/city';
 import { World } from '../../core/world';
 import { createMission, type Mission } from '../../core/mission';
 import {
@@ -164,7 +164,7 @@ export class CityScene extends Phaser.Scene {
       policeSpawns: this.policeSpawnPoints(),
       ammoPickups: this.spawnAmmoPickups(),
       bounds: { width: this.city.width, height: this.city.height },
-      walls: [...this.city.buildings],
+      walls: [...this.city.buildings, ...bridgeBarriers(this.city)],
       bestScore: this.savedBest,
       missions: this.buildCampaign(),
       loopMissions: true,
@@ -187,6 +187,7 @@ export class CityScene extends Phaser.Scene {
     });
 
     for (let tx = spec.block; tx < spec.cols; tx += spec.block) {
+      if (!this.city.isRoad(tx, spec.block * 2)) continue;
       const dir = tx % (spec.block * 2) === 0 ? vec2(0, 1) : vec2(0, -1);
       const start = tileCenter(spec, tx, spec.block * 2);
       cars.push({ pos: start, heading: Math.atan2(dir.y, dir.x), speed: 0, radius: 14 });
@@ -206,15 +207,7 @@ export class CityScene extends Phaser.Scene {
   }
 
   private policeSpawnPoints(): Vec2[] {
-    const { width, height } = this.city;
-    return [
-      vec2(40, 40),
-      vec2(width - 40, 40),
-      vec2(40, height - 40),
-      vec2(width - 40, height - 40),
-      vec2(width / 2, 40),
-      vec2(width / 2, height - 40),
-    ];
+    return edgeRoadSpawnPoints(this.city);
   }
 
   private spawnAmmoPickups(): AmmoPickup[] {
@@ -354,9 +347,6 @@ export class CityScene extends Phaser.Scene {
     g.fillStyle(COLORS.bridge, 1);
     this.city.bridges.forEach((b) => g.fillRect(b.x, b.y, b.w, b.h));
 
-    g.fillStyle(COLORS.sidewalk, 0.7);
-    this.city.sidewalks.forEach((s) => g.fillRect(s.x, s.y, s.w, s.h));
-
     g.lineStyle(2, COLORS.roadLine, 0.55);
     for (let tx = 0; tx <= spec.cols; tx += spec.block) {
       const x = tx * spec.tile + spec.tile / 2;
@@ -366,11 +356,6 @@ export class CityScene extends Phaser.Scene {
       const y = ty * spec.tile + spec.tile / 2;
       g.lineBetween(0, y, width, y);
     }
-
-    g.fillStyle(COLORS.crosswalk, 0.85);
-    this.city.crosswalks.forEach((crosswalk, i) => {
-      this.drawCrosswalk(g, crosswalk, i);
-    });
 
     g.lineStyle(2, COLORS.parking, 0.5);
     this.city.parkingSpots.forEach((spot) => {
@@ -394,6 +379,20 @@ export class CityScene extends Phaser.Scene {
           g.fillRect(wx, wy, 8, 8);
         }
       }
+    });
+
+    g.fillStyle(COLORS.sidewalk, 0.8);
+    this.city.sidewalks.forEach((s) => g.fillRect(s.x, s.y, s.w, s.h));
+
+    g.fillStyle(COLORS.crosswalk, 0.9);
+    this.city.crosswalks.forEach((crosswalk, i) => {
+      this.drawCrosswalk(g, crosswalk, i);
+    });
+
+    g.lineStyle(2, 0xcbd5e1, 0.9);
+    this.city.bridges.forEach((bridge) => {
+      g.lineBetween(bridge.x, bridge.y + 6, bridge.x + bridge.w, bridge.y + 6);
+      g.lineBetween(bridge.x, bridge.y + bridge.h - 6, bridge.x + bridge.w, bridge.y + bridge.h - 6);
     });
   }
 

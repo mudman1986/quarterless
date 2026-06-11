@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildCity, tileCenter, boundaryWalls, DEFAULT_CITY } from './city';
+import { buildCity, tileCenter, boundaryWalls, bridgeBarriers, edgeRoadSpawnPoints, DEFAULT_CITY } from './city';
 import { rect, circleIntersectsRect } from './collision';
 import { vec2 } from './vector';
 
@@ -48,6 +48,19 @@ describe('buildCity with a road margin', () => {
   });
 });
 
+describe('buildCity with a river', () => {
+  const city = buildCity({ cols: 16, rows: 16, tile: 64, block: 4, river: { startCol: 8, width: 2 } });
+
+  it('blocks vertical road columns that pass through open water', () => {
+    expect(city.isRoad(8, 1)).toBe(false);
+    expect(city.isRoad(8, 4)).toBe(true);
+  });
+
+  it('keeps parking spots out of the river', () => {
+    expect(city.parkingSpots.every((spot) => !city.water.some((water) => circleIntersectsRect(spot.pos, 14, water)))).toBe(true);
+  });
+});
+
 describe('tileCenter', () => {
   it('returns the centre pixel of a tile', () => {
     expect(tileCenter(DEFAULT_CITY, 0, 0)).toEqual(vec2(32, 32));
@@ -66,5 +79,21 @@ describe('boundaryWalls', () => {
     const walls = boundaryWalls(city);
     const justOutsideRight = vec2(city.width + 10, city.height / 2);
     expect(walls.some((w) => circleIntersectsRect(justOutsideRight, 8, w))).toBe(true);
+  });
+});
+
+describe('edgeRoadSpawnPoints', () => {
+  it('returns road-aligned spawn points around the city edge', () => {
+    const city = buildCity({ cols: 16, rows: 16, tile: 64, block: 4, river: { startCol: 8, width: 2 } });
+    const points = edgeRoadSpawnPoints(city);
+    expect(points.length).toBeGreaterThan(0);
+    expect(points.every((point) => city.isRoad(Math.floor(point.x / city.spec.tile), Math.floor(point.y / city.spec.tile)))).toBe(true);
+  });
+});
+
+describe('bridgeBarriers', () => {
+  it('adds a fence line along each side of every bridge', () => {
+    const city = buildCity({ cols: 16, rows: 16, tile: 64, block: 4, river: { startCol: 8, width: 2 } });
+    expect(bridgeBarriers(city)).toHaveLength(city.bridges.length * 2);
   });
 });

@@ -20,7 +20,7 @@ import {
   chooseDetour,
   tileCoord,
 } from './trafficAI';
-import type { City } from './city';
+import { type City, edgeRoadSpawnPoints } from './city';
 import {
   type WantedState,
   createWanted,
@@ -73,6 +73,7 @@ export interface Ambulance {
   id: number;
   car: Car;
   targetCorpseId: number | null;
+  departTarget: Vec2 | null;
 }
 
 export interface WorldOptions {
@@ -307,6 +308,12 @@ export class World {
     else this.updateOnFoot(c, dt, actionPressed);
     this.updateTraffic(dt);
     this.resolveCarCollisions();
+    this.checkWaterCrash();
+    if (this.status !== 'playing') {
+      this.prevAction = c.action;
+      this.prevConfirm = c.confirm;
+      return;
+    }
     this.updatePedestrians(dt);
     this.spawnCivilianDrivers(dt);
     this.checkRoadKill();
@@ -537,6 +544,15 @@ export class World {
     }
   }
 
+  private checkWaterCrash(): void {
+    const car = this.drivingCar;
+    if (!car || !this.city) return;
+    if (!this.city.water.some((water) => circleIntersectsRect(car.pos, car.radius, water))) return;
+    this.cars[this.drivingCarIndex!] = { ...car, speed: 0 };
+    this.status = 'wasted';
+    this.bustedTimer = RESPAWN_DELAY;
+  }
+
   private updateWeapon(c: Controls, dt: number): void {
     this.weapon = cool(this.weapon, dt);
     if (!c.fire) return;
@@ -671,28 +687,62 @@ export class World {
     });
 
     this.ambulances = this.ambulances.filter((ambulance) => {
-      if (ambulance.targetCorpseId === null) return false;
-      const corpse = this.corpses.find((c) => c.id === ambulance.targetCorpseId);
-      if (!corpse) return false;
-      const heading = targetAngle(ambulance.car.pos, corpse.pos);
-      const nextPos = add(ambulance.car.pos, fromAngle(heading, AMBULANCE_SPEED * dt));
-      ambulance.car = { ...ambulance.car, pos: nextPos, heading, speed: AMBULANCE_SPEED, kind: 'ambulance', parked: false };
-      if (distance(nextPos, corpse.pos) <= 26) {
-        this.corpses = this.corpses.filter((c) => c.id !== corpse.id);
-        return false;
+      const corpse = ambulance.targetCorpseId === null ? null : this.corpses.find((c) => c.id === ambulance.targetCorpseId);
+      if (!corpse && ambulance.targetCorpseId !== null) {
+        ambulance.targetCorpseId = null;
+        ambulance.departTarget = this.selectAmbulanceRoadPoint(ambulance.car.pos, false);
       }
-      return true;
+
+      const target = corpse?.pos ?? ambulance.departTarget;
+      if (!target) return false;
+
+      ambulance.car = this.stepAmbulanceCar(ambulance.car, target, dt);
+      if (corpse && distance(ambulance.car.pos, corpse.pos) <= 26) {
+        this.corpses = this.corpses.filter((c) => c.id !== corpse.id);
+        ambulance.targetCorpseId = null;
+        ambulance.departTarget = this.selectAmbulanceRoadPoint(corpse.pos, false);
+        return true;
+      }
+      return ambulance.targetCorpseId !== null || distance(ambulance.car.pos, target) > 20;
     });
   }
 
   private dispatchAmbulance(targetCorpseId: number, pos: Vec2): void {
     if (this.ambulances.some((a) => a.targetCorpseId === targetCorpseId)) return;
-    const spawn = vec2(Math.min(this.bounds.width - 32, pos.x + 180), Math.max(32, pos.y - 180));
+    const spawn = this.selectAmbulanceRoadPoint(pos, true) ?? vec2(Math.min(this.bounds.width - 32, pos.x + 180), Math.max(32, pos.y - 180));
     this.ambulances.push({
       id: this.nextAmbulanceId++,
       targetCorpseId,
+      departTarget: null,
       car: { pos: spawn, heading: targetAngle(spawn, pos), speed: AMBULANCE_SPEED, radius: 14, kind: 'ambulance', hp: CAR_MAX_HP },
     });
+  }
+
+  private stepAmbulanceCar(car: Car, target: Vec2, dt: number): Car {
+    if (this.city) {
+      const stepped = stepPoliceCar(
+        { pos: car.pos, heading: car.heading, radius: car.radius, kind: 'car' },
+        target,
+        this.city,
+        dt,
+        AMBULANCE_SPEED,
+      );
+      return { ...car, pos: stepped.pos, heading: stepped.heading, speed: AMBULANCE_SPEED, kind: 'ambulance', parked: false };
+    }
+    const heading = targetAngle(car.pos, target);
+    const pos = add(car.pos, fromAngle(heading, AMBULANCE_SPEED * dt));
+    return { ...car, pos, heading, speed: AMBULANCE_SPEED, kind: 'ambulance', parked: false };
+  }
+
+  private selectAmbulanceRoadPoint(target: Vec2, nearest: boolean): Vec2 | null {
+    if (!this.city) return null;
+    const points = edgeRoadSpawnPoints(this.city);
+    if (points.length === 0) return null;
+    return points.reduce((best, point) => {
+      const score = distance(point, target);
+      const bestScore = distance(best, target);
+      return nearest ? (score < bestScore ? point : best) : score > bestScore ? point : best;
+    }, points[0]);
   }
 
   private updateMissionProgress(): void {

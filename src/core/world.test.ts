@@ -8,7 +8,7 @@ import {
 import { type OnFootActor } from './entity';
 import { type Car } from './vehicle';
 import { type Pedestrian } from './pedestrianAI';
-import { rect } from './collision';
+import { rect, circleIntersectsRect } from './collision';
 import { buildCity, tileCenter } from './city';
 import { controls } from './types';
 import { addHeat, createWanted, CRIME_HEAT } from './wantedLevel';
@@ -870,5 +870,45 @@ describe('World issue 3 features', () => {
     expect(w.corpses.length).toBeGreaterThan(0);
     for (let i = 0; i < 190; i++) w.tick(controls(), 1 / 60);
     expect(w.ambulances.length > 0 || w.corpses.length === 0).toBe(true);
+  });
+
+  it('keeps an ambulance around long enough to drive away after a pickup', () => {
+    const city = buildCity({ cols: 20, rows: 20, tile: 64, block: 4, margin: 16, river: { startCol: 9, width: 2 } });
+    const start = tileCenter(city.spec, 4, 4);
+    const w = new World({
+      player: { pos: start, angle: 0, radius: 8 },
+      pedestrians: [pedAt(start.x + 40, start.y)],
+      city,
+      walls: city.buildings,
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.5,
+    });
+    for (let i = 0; i < 30 && w.pedestrians.length > 0; i++) w.tick(controls({ fire: true }), 1 / 60);
+    expect(w.corpses.length).toBeGreaterThan(0);
+
+    for (let i = 0; i < 600 && w.corpses.length > 0; i++) w.tick(controls(), 1 / 60);
+    expect(w.corpses).toHaveLength(0);
+    expect(w.ambulances.length).toBeGreaterThan(0);
+    expect(city.buildings.some((building) => circleIntersectsRect(w.ambulances[0].car.pos, w.ambulances[0].car.radius, building))).toBe(
+      false,
+    );
+    expect(city.water.some((water) => circleIntersectsRect(w.ambulances[0].car.pos, w.ambulances[0].car.radius, water))).toBe(false);
+
+    for (let i = 0; i < 1200 && w.ambulances.length > 0; i++) w.tick(controls(), 1 / 60);
+    expect(w.ambulances).toHaveLength(0);
+  });
+
+  it('wastes the player for driving into the river', () => {
+    const city = buildCity({ cols: 16, rows: 16, tile: 64, block: 4, river: { startCol: 8, width: 2 } });
+    const car = { pos: tileCenter(city.spec, 8, 1), heading: 0, speed: 0, radius: 12 };
+    const w = new World({
+      player: { pos: vec2(car.pos.x - 8, car.pos.y), angle: 0, radius: 8 },
+      cars: [car],
+      city,
+      walls: city.buildings,
+      bounds: { width: city.width, height: city.height },
+    });
+    w.tick(controls({ action: true }), 1 / 60);
+    expect(w.isWasted).toBe(true);
   });
 });

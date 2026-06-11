@@ -69,6 +69,10 @@ export interface City {
 export const DEFAULT_CITY: CitySpec = { cols: 25, rows: 25, tile: 64, block: 5 };
 const DEFAULT_LIGHT_CYCLE = 8;
 
+function isRiverColumn(spec: CitySpec, tx: number): boolean {
+  return !!spec.river && tx >= spec.river.startCol && tx < spec.river.startCol + spec.river.width;
+}
+
 function pushUniqueNode(nodes: Vec2[], pos: Vec2): void {
   if (nodes.some((n) => n.x === pos.x && n.y === pos.y)) return;
   nodes.push(pos);
@@ -82,7 +86,11 @@ export function buildCity(spec: CitySpec = DEFAULT_CITY): City {
   const { cols, rows, tile, block } = spec;
   const margin = spec.margin ?? 0;
   const sidewalkWidth = Math.max(10, Math.min(tile / 5, Math.max(12, margin * 0.75 || 14)));
-  const isRoad = (tx: number, ty: number): boolean => tx % block === 0 || ty % block === 0;
+  const isRoad = (tx: number, ty: number): boolean => {
+    if (tx % block !== 0 && ty % block !== 0) return false;
+    if (!isRiverColumn(spec, tx)) return true;
+    return ty % block === 0;
+  };
 
   const buildings: Rect[] = [];
   const sidewalks: Rect[] = [];
@@ -122,6 +130,7 @@ export function buildCity(spec: CitySpec = DEFAULT_CITY): City {
   const parkingSpots: ParkingSpot[] = [];
   const laneHalf = tile / 2;
   for (let tx = 0; tx < cols; tx += block) {
+    if (isRiverColumn(spec, tx)) continue;
     for (let ty = 0; ty < rows; ty += block) {
       const center = tileCenter(spec, tx, ty);
       crosswalks.push(
@@ -146,6 +155,7 @@ export function buildCity(spec: CitySpec = DEFAULT_CITY): City {
 
   const curb = tile / 2 - 13;
   for (let tx = block; tx < cols; tx += block) {
+    if (isRiverColumn(spec, tx)) continue;
     for (let ty = 1; ty < rows - 1; ty += block) {
       const c = tileCenter(spec, tx, ty);
       const side = (tx / block + ty) % 2 === 0 ? 1 : -1;
@@ -204,4 +214,28 @@ export function boundaryWalls(city: City, thickness = 64): Rect[] {
     rect(-thickness, 0, thickness, height),
     rect(width, 0, thickness, height),
   ];
+}
+
+export function edgeRoadSpawnPoints(city: City): Vec2[] {
+  const { spec } = city;
+  const points: Vec2[] = [];
+  const lastRoadCol = Math.floor((spec.cols - 1) / spec.block) * spec.block;
+  const lastRoadRow = Math.floor((spec.rows - 1) / spec.block) * spec.block;
+
+  for (let ty = 0; ty <= lastRoadRow; ty += spec.block) {
+    if (city.isRoad(0, ty)) pushUniqueNode(points, tileCenter(spec, 0, ty));
+    if (city.isRoad(lastRoadCol, ty)) pushUniqueNode(points, tileCenter(spec, lastRoadCol, ty));
+  }
+  for (let tx = 0; tx <= lastRoadCol; tx += spec.block) {
+    if (city.isRoad(tx, 0)) pushUniqueNode(points, tileCenter(spec, tx, 0));
+    if (city.isRoad(tx, lastRoadRow)) pushUniqueNode(points, tileCenter(spec, tx, lastRoadRow));
+  }
+  return points;
+}
+
+export function bridgeBarriers(city: City, thickness = 6): Rect[] {
+  return city.bridges.flatMap((bridge) => [
+    rect(bridge.x, bridge.y, bridge.w, thickness),
+    rect(bridge.x, bridge.y + bridge.h - thickness, bridge.w, thickness),
+  ]);
 }
