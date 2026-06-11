@@ -101,8 +101,8 @@ const MAX_ZOOM = 2.5;
 const MINIMAP_SIZE = 168;
 /** Seconds a mission announcement banner stays on screen. */
 const ANNOUNCE_SECONDS = 3.2;
-/** Length in seconds of a full day/night cycle. */
-const DAY_LENGTH = 150;
+/** Length in seconds of a full day/night cycle (30 minutes). */
+const DAY_LENGTH = 1800;
 
 /**
  * Renders the core `World` simulation with Phaser. The scene owns no game
@@ -891,7 +891,7 @@ export class CityScene extends Phaser.Scene {
     this.dayNightOverlay
       .setPosition(this.scale.width / 2, this.scale.height / 2)
       .setFillStyle(0x0a0f24, darkness * 0.45);
-    this.nightLights.setAlpha(darkness);
+    this.nightLights.setAlpha(darkness * 0.5);
     this.nightAura
       .setPosition(this.scale.width / 2, this.scale.height / 2)
       .setAlpha(darkness * 0.8);
