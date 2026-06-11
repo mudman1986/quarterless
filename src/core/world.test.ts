@@ -735,6 +735,8 @@ describe('World mission', () => {
     expect(w.mission?.id).toBe('m2');
     w.tick(controls(), 1 / 60);
     expect(w.missionComplete).toBe(false);
+    expect(w.mission).not.toBeNull();
+    expect(['m1', 'm2']).toContain(w.mission?.id);
     expect(w.mission?.id).toBe('m2');
     expect(w.score.current).toBe(100 + 300);
   });
