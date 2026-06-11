@@ -651,11 +651,11 @@ export class CityScene extends Phaser.Scene {
   }
 
   update(_time: number, deltaMs: number): void {
-    if (Phaser.Input.Keyboard.JustDown(this.newGameKey!)) {
+    if (this.newGameKey && Phaser.Input.Keyboard.JustDown(this.newGameKey)) {
       this.scene.restart();
       return;
     }
-    if (Phaser.Input.Keyboard.JustDown(this.pauseKey!)) this.pausedGame = !this.pausedGame;
+    if (this.pauseKey && Phaser.Input.Keyboard.JustDown(this.pauseKey)) this.pausedGame = !this.pausedGame;
 
     const controls = this.input_.read();
     const dt = deltaMs / 1000;

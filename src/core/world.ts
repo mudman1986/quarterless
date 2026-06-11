@@ -126,6 +126,7 @@ const CAR_WRECK_TIME = 8;
 const CIVILIAN_CAR_INTERVAL = 4;
 const TRAFFIC_MANEUVER_WAIT = 2.4;
 const POLICE_FIRE_STARS = 3;
+const POLICE_PIN_MIN_STARS = 3;
 const POLICE_FIRE_RANGE = 340;
 const POLICE_FIRE_COOLDOWN = 1.1;
 const POLICE_BULLET_DAMAGE = 18;
@@ -411,7 +412,7 @@ export class World {
 
   private resolvePoliceVehicleCollisions(): void {
     const idx = this.drivingCarIndex;
-    if (idx === null || this.wantedStars < 3) return;
+    if (idx === null || this.wantedStars < POLICE_PIN_MIN_STARS) return;
     let car = this.cars[idx];
     this.police = this.police.map((cop) => {
       if (cop.kind !== 'car') return cop;
@@ -664,7 +665,8 @@ export class World {
     });
 
     replacements.forEach((pos) => {
-      const target = this.city?.sidewalkNodes[Math.floor(this.rng() * (this.city.sidewalkNodes.length || 1))] ?? pos;
+      const nodes = this.city?.sidewalkNodes ?? [];
+      const target = nodes.length > 0 ? (nodes[Math.floor(this.rng() * nodes.length)] ?? pos) : pos;
       this.pedestrians.push({ pos: target, heading: 0, radius: 7, state: 'wander', target });
     });
 
@@ -781,7 +783,7 @@ export class World {
 
   private tryPolicePin(): void {
     const idx = this.drivingCarIndex;
-    if (idx === null || this.wantedStars < 3) return;
+    if (idx === null || this.wantedStars < POLICE_PIN_MIN_STARS) return;
     const playerCar = this.cars[idx];
     if (Math.abs(playerCar.speed) > BUST_SPEED) return;
     for (let i = 0; i < this.police.length; i++) {
