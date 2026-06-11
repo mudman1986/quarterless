@@ -60,8 +60,7 @@ jobs:
           if-no-files-found: ignore
 
   # ---------------------------------------------------------------------------
-  # Deploy to GitHub Pages. Runs only after `test` passes and only for pushes
-  # to main (not pull requests).
+  # Deploy to GitHub Pages. Runs only after `test` passes.
   # ---------------------------------------------------------------------------
   deploy:
     needs: test
