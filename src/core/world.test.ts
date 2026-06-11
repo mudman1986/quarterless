@@ -1052,6 +1052,31 @@ describe('World car explosions', () => {
     for (let i = 0; i < 600 && w.explosionsTriggered === 0; i++) w.tick(controls(), 1 / 60);
     expect(w.explosionsTriggered).toBeGreaterThanOrEqual(1); // rammed to destruction
     expect(w.wreckedCars.some(Boolean)).toBe(true);
+    // The player was nowhere near it, so the crash must NOT make them wanted.
+    expect(w.wantedStars).toBe(0);
+    expect(w.kills).toBe(0);
+  });
+
+  it('does not make the player wanted when two NPC cars crash and explode', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    // Two NPC cars driving head-on toward each other on the same lane.
+    const east: Car = { pos: tileCenter(city.spec, 1, 4), heading: 0, speed: 0, radius: 12 };
+    const west: Car = { pos: tileCenter(city.spec, 6, 4), heading: Math.PI, speed: 0, radius: 12 };
+    const w = new World({
+      player: player(), // far away at the origin, doing nothing
+      cars: [east, west],
+      city,
+      carDrivers: [{ dir: vec2(1, 0) }, { dir: vec2(-1, 0) }],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9, // neither turns off the lane
+    });
+    w.lights = createTrafficLights(0); // east-west green: both keep driving
+
+    for (let i = 0; i < 1200 && w.explosionsTriggered === 0; i++) w.tick(controls(), 1 / 60);
+    expect(w.explosionsTriggered).toBeGreaterThanOrEqual(1); // they crashed and blew up
+    expect(w.wantedStars).toBe(0); // the player did nothing: no heat
+    expect(w.kills).toBe(0);
+    expect(w.score.current).toBe(0);
   });
 });
 

@@ -767,8 +767,10 @@ export class World {
         const closing = Math.abs(dot(sub(velA, velB), normal));
         if (closing > CAR_RAM_THRESHOLD) {
           const dmg = (closing - CAR_RAM_THRESHOLD) * CAR_RAM_DAMAGE_SCALE;
-          this.damageCar(i, dmg);
-          this.damageCar(j, dmg);
+          // A ram is the player's doing only when their own car is the rammer:
+          // each car's damage is "by player" when the OTHER car is the player's.
+          this.damageCar(i, dmg, j === this.drivingCarIndex);
+          this.damageCar(j, dmg, i === this.drivingCarIndex);
         }
       }
     }
@@ -973,7 +975,7 @@ export class World {
           bulletHits(stepped, car.pos, car.radius),
       );
       if (carIdx !== -1) {
-        this.damageCar(carIdx, stepped.damage);
+        this.damageCar(carIdx, stepped.damage, true); // the player shot it
         continue;
       }
       surviving.push(stepped);
@@ -981,11 +983,13 @@ export class World {
     this.bullets = surviving;
   }
 
-  /** Apply damage to a car; destroy it into a wreck once its health runs out. */
-  private damageCar(idx: number, amount: number): void {
+  /** Apply damage to a car; destroy it into a wreck once its health runs out.
+   * `byPlayer` carries whether the player caused this damage, so only the player's
+   * own havoc earns them heat (NPC pile-ups do not). */
+  private damageCar(idx: number, amount: number, byPlayer: boolean): void {
     if (this.wreckedCars[idx]) return;
     this.carHealth[idx] -= amount;
-    if (this.carHealth[idx] <= 0) this.explodeCar(idx, true);
+    if (this.carHealth[idx] <= 0) this.explodeCar(idx, byPlayer);
   }
 
   /**
@@ -1028,11 +1032,12 @@ export class World {
       }
       this.applyPlayerDamage(EXPLOSION_DAMAGE);
     }
-    // Chain reaction: other cars in range detonate too.
+    // Chain reaction: other cars in range detonate too, inheriting the cause so
+    // a blast the player set off keeps crediting them (and an NPC one never does).
     this.cars.forEach((car, i) => {
       if (i === idx || this.wreckedCars[i]) return;
       if (distance(center, car.pos) <= EXPLOSION_RADIUS + car.radius) {
-        this.damageCar(i, EXPLOSION_CAR_DAMAGE);
+        this.damageCar(i, EXPLOSION_CAR_DAMAGE, byPlayer);
       }
     });
   }

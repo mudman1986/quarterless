@@ -59,6 +59,15 @@ test('wanted level resets after a new game', async ({ page }) => {
   expect((await readState(page)).stars).toBe(0); // wanted cleared after new game
 });
 
+test('the player does not become wanted just by standing still', async ({ page }) => {
+  await boot(page);
+  // Let the living city run for a while: NPC cars crash, pedestrians get run
+  // over by traffic, etc. None of it is the player's doing, so no heat.
+  await page.waitForTimeout(6000);
+  const { stars } = await readState(page);
+  expect(stars).toBe(0); // idle player is never wanted
+});
+
 test('wanted level resets when the player is busted', async ({ page }) => {
   await boot(page);
   // Make the player wanted and drop an officer on foot right on top of them.
