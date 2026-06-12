@@ -62,13 +62,19 @@ export function nearestCardinal(heading: number): Vec2 {
  */
 export type DirectionChooser = (options: readonly Vec2[], current: Vec2, center: Vec2) => Vec2;
 
-/** Chase a fixed point: take whichever open road heads most directly toward it. */
+/** Chase a fixed point: take whichever open road heads most directly toward it.
+ * A U-turn is avoided unless it is the only way out, so when the direct road is
+ * blocked (and the caller turns the vehicle back) it diverts onto a side road at
+ * the next junction instead of oscillating in place — letting it route around a
+ * stationary obstacle rather than nosing into it forever. */
 export function seekChooser(target: Vec2): DirectionChooser {
-  return (options, _current, center) => {
+  return (options, current, center) => {
     const toTarget = sub(target, center);
-    return options.reduce(
+    const forward = options.filter((d) => !isOppositeDir(d, current));
+    const choices = forward.length > 0 ? forward : options;
+    return choices.reduce(
       (best, d) => (dot(d, toTarget) > dot(best, toTarget) ? d : best),
-      options[0],
+      choices[0],
     );
   };
 }

@@ -1195,6 +1195,50 @@ describe('World tow truck', () => {
   });
 });
 
+describe('World service vehicles treat actors as solid', () => {
+  const miniCity = () => buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+
+  it('makes a dispatched vehicle brake for someone in its path and route around them', () => {
+    const city = miniCity();
+    const wreck: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 };
+    const w = new World({
+      player: { pos: tileCenter(city.spec, 0, 4), angle: 0, radius: 8 }, // stands across the lane
+      cars: [wreck],
+      city,
+      carDrivers: [null],
+      viewRadius: 4000, // the wreck stays "in frame" so a tow is dispatched
+      bounds: { width: city.width, height: city.height },
+    });
+    w.wreckedCars[0] = true;
+
+    let yielded = false;
+    for (let i = 0; i < 1200 && !w.towedCars[0]; i++) {
+      w.tick(controls(), 1 / 60);
+      if (w.tows[0]?.speed === 0) yielded = true; // braked to a halt for the player
+    }
+    expect(yielded).toBe(true); // it waited rather than driving straight through them
+    expect(w.towedCars[0]).toBe(true); // and found a way around to reach its job
+    expect(w.isWasted).toBe(false); // the blocked player was never driven over
+  });
+
+  it('runs over the player when a dispatched vehicle bears down on them', () => {
+    const city = miniCity();
+    const wreck: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 };
+    const w = new World({
+      player: { pos: tileCenter(city.spec, 0, 0), angle: 0, radius: 8 }, // on the tow's spawn corner
+      cars: [wreck],
+      city,
+      carDrivers: [null],
+      viewRadius: 4000,
+      bounds: { width: city.width, height: city.height },
+    });
+    w.wreckedCars[0] = true;
+
+    for (let i = 0; i < 400 && !w.isWasted; i++) w.tick(controls(), 1 / 60);
+    expect(w.isWasted).toBe(true); // the moving tow truck mowed the player down
+  });
+});
+
 describe('World mission', () => {
   it('tracks a reach-then-eliminate mission and banks the reward', () => {
     const w = new World({

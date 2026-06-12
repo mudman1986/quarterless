@@ -46,6 +46,21 @@ describe('seekChooser', () => {
     const options = [vec2(0, 1), vec2(1, 0), vec2(0, -1)];
     expect(choose(options, vec2(0, 1), vec2(0, 0))).toEqual(vec2(1, 0));
   });
+
+  it('diverts onto a side road rather than doubling back', () => {
+    const choose = seekChooser(vec2(-1000, 0)); // target lies straight behind
+    const options = [vec2(-1, 0), vec2(0, 1)]; // reverse (toward target) or turn
+    // Even though reversing points right at the target, it takes the side road
+    // so a blocked vehicle routes around the obstacle instead of oscillating.
+    expect(choose(options, vec2(1, 0), vec2(0, 0))).toEqual(vec2(0, 1));
+  });
+
+  it('still reverses when the way back is the only option', () => {
+    const choose = seekChooser(vec2(-1000, 0));
+    const chosen = choose([vec2(-1, 0)], vec2(1, 0), vec2(0, 0));
+    expect(chosen.x).toBe(-1); // a genuine dead end: turning back is allowed
+    expect(chosen.y).toBeCloseTo(0);
+  });
 });
 
 describe('wanderChooser', () => {

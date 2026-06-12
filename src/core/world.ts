@@ -228,6 +228,11 @@ export interface ServiceVehicle {
   carrying: boolean;
   /** Seconds since it was dispatched (it gives up after SERVICE_TIMEOUT). */
   age: number;
+  /** Speed it is actually travelling this step (0 while yielding to someone in
+   * its path); read by the road-kill check so a halted vehicle is harmless. */
+  speed: number;
+  /** Seconds it has been held up by an obstacle ahead (drives the reroute). */
+  blocked: number;
 }
 
 /** An ambulance that drives the roads to an on-screen corpse, loads it, leaves. */
@@ -495,6 +500,44 @@ export class World {
     return this.cars.filter((car) => Math.abs(car.speed) < RUN_OVER_SPEED);
   }
 
+  /** Every vehicle that can currently run an actor over — player, NPC and police
+   * cars and dispatched service vehicles (ambulances, tow trucks) alike — in one
+   * normalised list, so the road-kill rule is applied uniformly and any future
+   * vehicle type inherits it for free. `byPlayer` flags hits the player is to
+   * blame for (those earn heat and score). */
+  private hazardVehicles(): { pos: Vec2; radius: number; speed: number; byPlayer: boolean }[] {
+    const hazards: { pos: Vec2; radius: number; speed: number; byPlayer: boolean }[] = [];
+    for (let i = 0; i < this.cars.length; i++) {
+      if (this.wreckedCars[i]) continue;
+      const car = this.cars[i];
+      hazards.push({
+        pos: car.pos,
+        radius: car.radius,
+        speed: Math.abs(car.speed),
+        byPlayer: i === this.drivingCarIndex,
+      });
+    }
+    if (this.ambulance) {
+      const a = this.ambulance;
+      hazards.push({ pos: a.pos, radius: a.radius, speed: Math.abs(a.speed), byPlayer: false });
+    }
+    for (const tow of this.tows) {
+      hazards.push({ pos: tow.pos, radius: tow.radius, speed: Math.abs(tow.speed), byPlayer: false });
+    }
+    return hazards;
+  }
+
+  /** The vehicle currently running over an actor at `pos` with radius `r`, if
+   * any: one moving fast enough to be lethal whose body overlaps the actor. */
+  private runningOver(pos: Vec2, r: number): { byPlayer: boolean; speed: number } | null {
+    for (const h of this.hazardVehicles()) {
+      if (h.speed >= RUN_OVER_SPEED && distance(h.pos, pos) <= h.radius + r) {
+        return { byPlayer: h.byPlayer, speed: h.speed };
+      }
+    }
+    return null;
+  }
+
   private updateTraffic(dt: number): void {
     if (!this.city) return;
     const obstacles = this.yieldObstacles();
@@ -702,14 +745,45 @@ export class World {
       target,
       carrying: false,
       age: 0,
+      speed: 0,
+      blocked: 0,
     };
   }
 
-  /** Advance a service vehicle one step along the roads toward its target. */
-  private driveService<T extends ServiceVehicle>(v: T, dt: number, speed: number): T {
-    const rv: RoadVehicle = { pos: v.pos, heading: v.heading, dir: v.dir };
+  /**
+   * Advance a service vehicle one step along the roads toward its target. Like
+   * NPC traffic it yields to anyone in its path rather than driving through
+   * them: it brakes for a pedestrian or the player directly ahead and, if held
+   * up too long, turns around to find another way around them. The speed it
+   * actually moves is recorded so the shared road-kill check can run an actor
+   * over only when the vehicle is genuinely bearing down on them.
+   */
+  private driveService<T extends ServiceVehicle>(v: T, dt: number, fullSpeed: number): T {
+    let dir = v.dir;
+    let blocked = v.blocked;
+    let speed = fullSpeed;
+    if (obstacleAhead(v.pos, v.dir, this.yieldObstacles())) {
+      blocked += dt;
+      if (blocked >= TRAFFIC_REROUTE_WAIT) {
+        dir = vec2(-v.dir.x, -v.dir.y); // give up waiting: turn back and divert
+        blocked = 0;
+      } else {
+        speed = 0; // hold short of them
+      }
+    } else {
+      blocked = 0;
+    }
+    const rv: RoadVehicle = { pos: v.pos, heading: v.heading, dir };
     const next = stepRoadVehicle(rv, this.city!, dt, speed, seekChooser(v.target));
-    return { ...v, pos: next.pos, heading: next.heading, dir: next.dir, age: v.age + dt };
+    return {
+      ...v,
+      pos: next.pos,
+      heading: next.heading,
+      dir: next.dir,
+      age: v.age + dt,
+      speed,
+      blocked,
+    };
   }
 
   /** Whether a (carrying) service vehicle has reached the map edge it leaves by. */
@@ -842,18 +916,11 @@ export class World {
     const survivors: Pedestrian[] = [];
 
     for (const ped of this.pedestrians) {
-      // Any car moving fast enough runs the pedestrian over; only the player's
-      // own car earns them heat for it.
-      const hitter = this.cars.findIndex(
-        (car, i) =>
-          !this.wreckedCars[i] &&
-          Math.abs(car.speed) >= RUN_OVER_SPEED &&
-          distance(car.pos, ped.pos) <= car.radius + ped.radius,
-      );
-      if (hitter !== -1) {
-        if (hitter === this.drivingCarIndex) {
-          this.registerKill('pedestrian'); // the player ran them down
-        }
+      // Any vehicle moving fast enough runs the pedestrian over; only when the
+      // player is at the wheel do they earn heat for it.
+      const hit = this.runningOver(ped.pos, ped.radius);
+      if (hit) {
+        if (hit.byPlayer) this.registerKill('pedestrian'); // the player ran them down
         this.addCorpse(ped.pos); // leave a body in the road
         continue; // pedestrian is run over and removed
       }
@@ -893,17 +960,11 @@ export class World {
     return !this.city.crosswalks.some((cw) => pointInRect(pos, cw));
   }
 
-  /** Kill the player if a fast car strikes them while on foot. */
+  /** Kill the player if a fast vehicle strikes them while on foot. */
   private checkRoadKill(): void {
     if (this.status !== 'playing' || this.isDriving) return; // safe inside a car
-    const striker = this.cars.find(
-      (car, i) =>
-        !this.wreckedCars[i] &&
-        Math.abs(car.speed) >= RUN_OVER_SPEED &&
-        distance(car.pos, this.player.pos) <= car.radius + this.player.radius,
-    );
-    if (!striker) return;
-    this.applyPlayerDamage(Math.abs(striker.speed));
+    const hit = this.runningOver(this.player.pos, this.player.radius);
+    if (hit) this.applyPlayerDamage(hit.speed);
   }
 
   /** Drown the player (on foot or driving) if their centre passes over water. */
