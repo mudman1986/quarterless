@@ -205,6 +205,10 @@ export const TOW_DISPATCH_DELAY = 2.5;
 export const MAX_TOWS = 3;
 /** Seconds a dispatched service vehicle keeps trying before giving up and leaving. */
 export const SERVICE_TIMEOUT = 40;
+/** Speed (px/s) the medic / tow operator walks to and from the body or wreck. */
+export const CREW_WALK_SPEED = 55;
+/** How close the crew must get to the body/wreck (or back to their vehicle) to act. */
+export const CREW_REACH_RADIUS = 8;
 
 /** A dead pedestrian left on the ground (with a blood puddle, rendered later). */
 export interface Corpse {
@@ -215,6 +219,9 @@ export interface Corpse {
   inFrameFor: number;
 }
 
+/** The stage a dispatched service vehicle is at in its pickup sequence. */
+export type ServicePhase = 'approach' | 'collect' | 'return' | 'depart';
+
 /** Common state for a dispatched service vehicle that follows the roads. */
 export interface ServiceVehicle {
   pos: Vec2;
@@ -224,21 +231,30 @@ export interface ServiceVehicle {
   dir: Vec2;
   /** Where it is currently headed (its job, then the map edge to leave by). */
   target: Vec2;
-  /** Whether it has loaded its cargo and is driving away. */
-  carrying: boolean;
+  /** Which step of the pickup sequence it is in: driving out to the job
+   * ('approach'), parked while the crew walk out to fetch the cargo ('collect'),
+   * parked while they carry it back to the vehicle ('return'), or driving away
+   * with it ('depart'). */
+  phase: ServicePhase;
+  /** Position of the crew member while they are out of the vehicle on foot, or
+   * null when they are aboard. The vehicle stays parked whenever this is set. */
+  crew: Vec2 | null;
   /** Seconds since it was dispatched (it gives up after SERVICE_TIMEOUT). */
   age: number;
   /** Speed it is actually travelling this step (0 while yielding to someone in
-   * its path); read by the road-kill check so a halted vehicle is harmless. */
+   * its path, or while parked with the crew out); read by the road-kill check
+   * so a halted vehicle is harmless. */
   speed: number;
   /** Seconds it has been held up by an obstacle ahead (drives the reroute). */
   blocked: number;
 }
 
-/** An ambulance that drives the roads to an on-screen corpse, loads it, leaves. */
+/** An ambulance that drives to a corpse, parks, sends a medic out to fetch the
+ * body on foot, then drives it away. */
 export type Ambulance = ServiceVehicle;
 
-/** A tow truck that drives the roads to a wreck, hauls it off, and leaves. */
+/** A tow truck that drives to a wreck, parks, sends an operator out to hook it
+ * on foot, then hauls it away. Carries one car at a time. */
 export interface TowTruck extends ServiceVehicle {
   /** Index into `cars` of the wreck it was sent to collect. */
   targetCar: number;
@@ -649,7 +665,8 @@ export class World {
   }
 
   /** Dispatch and drive an ambulance to collect a body that lingers on screen.
-   * It follows the road grid (no driving through buildings). */
+   * It follows the road grid (no driving through buildings), parks beside the
+   * body and sends a medic out on foot to fetch it before driving away. */
   private updateAmbulance(dt: number): void {
     if (!this.city) return; // service vehicles need roads to drive
     if (!this.ambulance) {
@@ -657,25 +674,34 @@ export class World {
       if (!corpse) return;
       this.ambulance = this.dispatchService(corpse.pos);
     }
+    const amb = this.ambulance;
 
-    const amb = this.driveService(this.ambulance, dt, AMBULANCE_SPEED);
-    this.ambulance = amb;
-
-    if (amb.carrying) {
-      if (this.serviceArrived(amb)) this.ambulance = null; // delivered and gone
+    // Crew on foot: the medic is walking out to the body or carrying it back.
+    if (amb.crew) {
+      this.ambulance = this.stepCrew(amb, dt, () => {
+        const idx = this.corpses.findIndex(
+          (c) => distance(c.pos, amb.target) <= AMBULANCE_PICKUP_RADIUS,
+        );
+        if (idx !== -1) this.corpses.splice(idx, 1); // body loaded aboard
+      });
       return;
     }
-    if (amb.age >= SERVICE_TIMEOUT) {
+
+    // Driving — out toward the body, or away once it has been collected.
+    const driven = this.driveService(amb, dt, AMBULANCE_SPEED);
+    this.ambulance = driven;
+    if (driven.phase === 'depart') {
+      if (this.serviceArrived(driven)) this.ambulance = null; // delivered and gone
+      return;
+    }
+    if (driven.age >= SERVICE_TIMEOUT) {
       this.ambulance = null; // gave up
       return;
     }
-    const idx = this.corpses.findIndex(
-      (c) => distance(amb.pos, c.pos) <= amb.radius + AMBULANCE_PICKUP_RADIUS,
-    );
-    if (idx !== -1) {
-      this.corpses.splice(idx, 1); // body loaded aboard
-      this.ambulance = { ...amb, carrying: true, target: this.farthestCornerTile(amb.pos) };
-    } else if (!this.corpses.some((c) => distance(c.pos, amb.target) <= AMBULANCE_PICKUP_RADIUS)) {
+    if (distance(driven.pos, driven.target) <= driven.radius + AMBULANCE_PICKUP_RADIUS) {
+      // Pull up beside the body and send the medic out on foot to fetch it.
+      this.ambulance = { ...driven, phase: 'collect', crew: driven.pos, speed: 0 };
+    } else if (!this.corpses.some((c) => distance(c.pos, driven.target) <= AMBULANCE_PICKUP_RADIUS)) {
       this.ambulance = null; // the body it was sent for is already gone: give up
     }
   }
@@ -692,15 +718,24 @@ export class World {
     // Advance the trucks already on the job, reaping those that finish or give up.
     const alive: TowTruck[] = [];
     for (const prev of this.tows) {
+      // Crew on foot: the operator walks out to hook the wreck or back to the cab.
+      if (prev.crew) {
+        alive.push(
+          this.stepCrew(prev, dt, () => {
+            this.towedCars[prev.targetCar] = true; // hooked up; removed from play
+          }),
+        );
+        continue;
+      }
       const tow = this.driveService(prev, dt, TOW_SPEED);
-      if (tow.carrying) {
+      if (tow.phase === 'depart') {
         if (!this.serviceArrived(tow)) alive.push(tow); // still hauling it off-map
         continue;
       }
       if (tow.age >= SERVICE_TIMEOUT || this.towedCars[tow.targetCar]) continue; // gave up / gone
       if (distance(tow.pos, this.cars[tow.targetCar].pos) <= tow.radius + AMBULANCE_PICKUP_RADIUS) {
-        this.towedCars[tow.targetCar] = true; // hooked up; removed from play
-        alive.push({ ...tow, carrying: true, target: this.farthestCornerTile(tow.pos) });
+        // Pull up beside the wreck and send the operator out on foot to hook it.
+        alive.push({ ...tow, phase: 'collect', crew: tow.pos, speed: 0 });
       } else {
         alive.push(tow);
       }
@@ -743,7 +778,8 @@ export class World {
       radius: 14,
       dir: nearestCardinal(angle(sub(target, pos))),
       target,
-      carrying: false,
+      phase: 'approach',
+      crew: null,
       age: 0,
       speed: 0,
       blocked: 0,
@@ -786,7 +822,39 @@ export class World {
     };
   }
 
-  /** Whether a (carrying) service vehicle has reached the map edge it leaves by. */
+  /**
+   * Advance a parked service vehicle whose crew member is out on foot. They walk
+   * from the vehicle to the cargo ('collect'), and the moment they reach it
+   * `onCollect` fires so the caller can load the body / hook the wreck; then they
+   * carry it back to the vehicle ('return') and climb aboard, after which it
+   * drives off toward the map edge. The vehicle stays put (speed 0) the whole
+   * time the crew are out, so it cannot run anyone over while parked. Returns the
+   * updated vehicle.
+   */
+  private stepCrew<T extends ServiceVehicle>(v: T, dt: number, onCollect: () => void): T {
+    const step = CREW_WALK_SPEED * dt;
+    const advance = (from: Vec2, to: Vec2): Vec2 => {
+      const delta = sub(to, from);
+      const d = length(delta);
+      return d <= step ? to : add(from, scale(normalize(delta), step));
+    };
+    if (v.phase === 'collect') {
+      const crew = advance(v.crew!, v.target); // walk out to the body/wreck
+      if (distance(crew, v.target) <= CREW_REACH_RADIUS) {
+        onCollect(); // reached it: pick the body up / hook the wreck
+        return { ...v, crew, phase: 'return', speed: 0 };
+      }
+      return { ...v, crew, speed: 0 };
+    }
+    // 'return': carry it back to the vehicle, then climb in and prepare to leave.
+    const crew = advance(v.crew!, v.pos);
+    if (distance(crew, v.pos) <= CREW_REACH_RADIUS) {
+      return { ...v, crew: null, phase: 'depart', target: this.farthestCornerTile(v.pos), speed: 0 };
+    }
+    return { ...v, crew, speed: 0 };
+  }
+
+  /** Whether a (departing) service vehicle has reached the map edge it leaves by. */
   private serviceArrived(v: ServiceVehicle): boolean {
     return distance(v.pos, v.target) <= v.radius + this.city!.spec.tile;
   }

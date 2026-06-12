@@ -144,9 +144,13 @@ export class CityScene extends Phaser.Scene {
   /** The ambulance's roof light bar: two lamps that strobe blue then red. */
   private ambulanceBeaconBlue?: Phaser.GameObjects.Container;
   private ambulanceBeaconRed?: Phaser.GameObjects.Container;
+  /** The medic on foot while the ambulance is parked fetching a body. */
+  private medicSprite?: Phaser.GameObjects.Image;
   private towSprites: Phaser.GameObjects.Image[] = [];
   /** Flashing amber beacon overlaid on each tow truck (parallel to `towSprites`). */
   private towBeacons: Phaser.GameObjects.Container[] = [];
+  /** The operator on foot beside each parked tow truck (parallel to `towSprites`). */
+  private towWorkerSprites: Phaser.GameObjects.Image[] = [];
   /** The parking bays that actually hold a parked car (for drawing the markings). */
   private parkedSpots: ParkingSpot[] = [];
   /** Centre of every intersection, for drawing the traffic lights. */
@@ -696,9 +700,22 @@ export class CityScene extends Phaser.Scene {
       this.ambulanceSprite.setVisible(false);
       this.ambulanceBeaconBlue?.setVisible(false);
       this.ambulanceBeaconRed?.setVisible(false);
+      this.medicSprite?.setVisible(false);
       return;
     }
     this.ambulanceSprite.setVisible(true).setPosition(amb.pos.x, amb.pos.y).setRotation(amb.heading);
+
+    // The medic on foot, while the ambulance is parked fetching the body.
+    if (amb.crew) {
+      this.medicSprite ??= this.add.image(0, 0, TEX.medic).setDepth(6);
+      const goal = amb.phase === 'collect' ? amb.target : amb.pos;
+      this.medicSprite
+        .setVisible(true)
+        .setPosition(amb.crew.x, amb.crew.y)
+        .setRotation(Math.atan2(goal.y - amb.crew.y, goal.x - amb.crew.x));
+    } else {
+      this.medicSprite?.setVisible(false);
+    }
 
     if (!this.ambulanceBeaconBlue || !this.ambulanceBeaconRed) {
       const lamp = (tint: number, core: number): Phaser.GameObjects.Container => {
@@ -744,6 +761,22 @@ export class CityScene extends Phaser.Scene {
       }
       sprite.setVisible(true).setPosition(tow.pos.x, tow.pos.y).setRotation(tow.heading);
 
+      // The operator on foot, while the truck is parked hooking the wreck.
+      let worker = this.towWorkerSprites[i];
+      if (tow.crew) {
+        if (!worker) {
+          worker = this.add.image(0, 0, TEX.towWorker).setDepth(6);
+          this.towWorkerSprites[i] = worker;
+        }
+        const goal = tow.phase === 'collect' ? tow.target : tow.pos;
+        worker
+          .setVisible(true)
+          .setPosition(tow.crew.x, tow.crew.y)
+          .setRotation(Math.atan2(goal.y - tow.crew.y, goal.x - tow.crew.x));
+      } else {
+        worker?.setVisible(false);
+      }
+
       let beacon = this.towBeacons[i];
       if (!beacon) {
         const halo = this.add
@@ -767,6 +800,7 @@ export class CityScene extends Phaser.Scene {
     for (let i = this.world.tows.length; i < this.towSprites.length; i++) {
       this.towSprites[i].setVisible(false);
       this.towBeacons[i]?.setVisible(false);
+      this.towWorkerSprites[i]?.setVisible(false);
     }
   }
 

@@ -1239,6 +1239,88 @@ describe('World service vehicles treat actors as solid', () => {
   });
 });
 
+describe('World service vehicle crew fetch the cargo on foot', () => {
+  const miniCity = () => buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+
+  it('parks the ambulance and sends a medic out to collect the body', () => {
+    const city = miniCity();
+    const spot = tileCenter(city.spec, 2, 4); // on road row 4
+    const runner: Car = { pos: vec2(spot.x - 10, spot.y), heading: 0, speed: 100, radius: 12 };
+    const w = new World({
+      player: player(),
+      cars: [runner],
+      city,
+      carDrivers: [null],
+      pedestrians: [pedAt(spot.x, spot.y)],
+      viewRadius: 4000, // the whole map is "in frame"
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+
+    w.tick(controls(), 1 / 60); // the NPC car runs the pedestrian down
+    expect(w.corpses.length).toBeGreaterThanOrEqual(1);
+
+    // Drive on until the body is collected, watching the medic step out on foot.
+    let medicWalkedOut = false;
+    let parkedBesideBody = false;
+    for (let i = 0; i < 3000 && w.corpses.length > 0; i++) {
+      w.tick(controls(), 1 / 60);
+      const amb = w.ambulance;
+      if (amb?.crew) {
+        medicWalkedOut = true;
+        // While the medic is out, the ambulance is stopped and the body still lies there.
+        if (amb.speed === 0 && w.corpses.length > 0) parkedBesideBody = true;
+      }
+    }
+    expect(medicWalkedOut).toBe(true); // a medic got out and walked to the body
+    expect(parkedBesideBody).toBe(true); // the ambulance waited, stationary, beside it
+    expect(w.corpses).toHaveLength(0); // and the medic picked the body up
+
+    // The medic carries it back, climbs in, and only then does the ambulance leave.
+    let climbedBackIn = false;
+    for (let i = 0; i < 3000 && w.ambulance; i++) {
+      w.tick(controls(), 1 / 60);
+      if (w.ambulance && w.ambulance.crew === null) climbedBackIn = true;
+    }
+    expect(climbedBackIn).toBe(true); // the medic got back aboard
+    expect(w.ambulance).toBeNull(); // and the ambulance drove off the map
+  });
+
+  it('parks the tow truck and sends an operator out to hook the one wreck', () => {
+    const city = miniCity();
+    const wreck: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 };
+    const w = new World({
+      player: player(), // (0,0) — clear of the truck's route and the wreck
+      cars: [wreck],
+      city,
+      carDrivers: [null],
+      viewRadius: 4000,
+      bounds: { width: city.width, height: city.height },
+    });
+    w.wreckedCars[0] = true;
+
+    let operatorWalkedOut = false;
+    let parkedBesideWreck = false;
+    for (let i = 0; i < 1500 && !w.towedCars[0]; i++) {
+      w.tick(controls(), 1 / 60);
+      const tow = w.tows[0];
+      if (tow?.crew) {
+        operatorWalkedOut = true;
+        // While the operator is out, the truck is stopped and the wreck not yet hooked.
+        if (tow.speed === 0 && !w.towedCars[0]) parkedBesideWreck = true;
+      }
+    }
+    expect(operatorWalkedOut).toBe(true); // an operator got out and walked to the wreck
+    expect(parkedBesideWreck).toBe(true); // the truck waited, stationary, beside it
+    expect(w.towedCars[0]).toBe(true); // and the operator hooked it up
+
+    // It carries the single car away and leaves; no second car is ever taken.
+    for (let i = 0; i < 3000 && w.tows.length > 0; i++) w.tick(controls(), 1 / 60);
+    expect(w.tows).toHaveLength(0); // the lone truck departed once its one car was done
+    expect(w.towedCars.filter(Boolean)).toHaveLength(1); // exactly one car was taken
+  });
+});
+
 describe('World mission', () => {
   it('tracks a reach-then-eliminate mission and banks the reward', () => {
     const w = new World({

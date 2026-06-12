@@ -15,6 +15,8 @@ export const TEX = {
   player: 'tex-player',
   pedestrian: 'tex-pedestrian',
   policeFoot: 'tex-police-foot',
+  medic: 'tex-medic',
+  towWorker: 'tex-tow-worker',
   ammo: 'tex-ammo',
 } as const;
 
@@ -185,6 +187,9 @@ export function createGameTextures(scene: Phaser.Scene): void {
   make(TEX.player, PERSON, PERSON, (g) => drawPerson(g, 0x39ff14, 0xf5d6a8));
   make(TEX.pedestrian, PERSON, PERSON, (g) => drawPerson(g, 0xfbbf24, 0xf5d6a8));
   make(TEX.policeFoot, PERSON, PERSON, (g) => drawPerson(g, 0x3b82f6, 0xf5d6a8));
+  // Service-vehicle crew on foot: a white-coated medic and a hi-vis tow operator.
+  make(TEX.medic, PERSON, PERSON, (g) => drawPerson(g, 0xf8fafc, 0xf5d6a8));
+  make(TEX.towWorker, PERSON, PERSON, (g) => drawPerson(g, 0xf59e0b, 0xf5d6a8));
 
   make(TEX.ammo, 18, 18, (g) => {
     g.fillStyle(0x3f3f12, 1);
