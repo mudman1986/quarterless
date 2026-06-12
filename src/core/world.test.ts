@@ -1134,7 +1134,7 @@ describe('World car explosions', () => {
     });
     w.lights = createTrafficLights(0); // east-west green, so the rammer never stops
 
-    for (let i = 0; i < 600 && w.explosionsTriggered === 0; i++) w.tick(controls(), 1 / 60);
+    for (let i = 0; i < 1800 && w.explosionsTriggered === 0; i++) w.tick(controls(), 1 / 60);
     expect(w.explosionsTriggered).toBeGreaterThanOrEqual(1); // rammed to destruction
     expect(w.wreckedCars.some(Boolean)).toBe(true);
     // The player was nowhere near it, so the crash must NOT make them wanted.
@@ -1164,6 +1164,24 @@ describe('World car explosions', () => {
     expect(w.score.current).toBe(0);
   });
 
+  it('does not let two NPC cars blow up immediately on first impact', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    const east: Car = { pos: tileCenter(city.spec, 1, 4), heading: 0, speed: 0, radius: 12 };
+    const west: Car = { pos: tileCenter(city.spec, 6, 4), heading: Math.PI, speed: 0, radius: 12 };
+    const w = new World({
+      player: player(),
+      cars: [east, west],
+      city,
+      carDrivers: [{ dir: vec2(1, 0) }, { dir: vec2(-1, 0) }],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+    w.lights = createTrafficLights(0);
+
+    for (let i = 0; i < 180 && w.explosionsTriggered === 0; i++) w.tick(controls(), 1 / 60);
+    expect(w.explosionsTriggered).toBe(0); // the first crash is messy, but not instant fireball city
+  });
+
   it('blows up an ambulance that is repeatedly rammed by a car', () => {
     const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
     const laneY = tileCenter(city.spec, 0, 4).y;
@@ -1181,7 +1199,7 @@ describe('World car explosions', () => {
       heading: 0,
       radius: 14,
       dir: vec2(1, 0),
-      target: vec2(tileCenter(city.spec, 3, 4).x + 200, laneY),
+      target: vec2(tileCenter(city.spec, 3, 4).x + 600, laneY),
       phase: 'collect',
       crew: tileCenter(city.spec, 3, 4),
       age: 0,
@@ -1190,7 +1208,7 @@ describe('World car explosions', () => {
       health: CAR_MAX_HEALTH,
     };
 
-    for (let i = 0; i < 900 && w.ambulance; i++) w.tick(controls(), 1 / 60);
+    for (let i = 0; i < 2400 && w.ambulance; i++) w.tick(controls(), 1 / 60);
     expect(w.ambulance).toBeNull();
     expect(w.explosionsTriggered).toBeGreaterThanOrEqual(1);
   });
@@ -1397,7 +1415,43 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     }
     expect(w.ambulance).toBeNull();
     expect(w.corpses).toHaveLength(1); // the medic's body remains in the street
+    expect(w.cars).toHaveLength(2);
+    expect(w.wreckedCars[1]).toBe(true); // the abandoned ambulance stays behind for recovery
+    expect(w.towedCars[1]).toBe(false);
     expect(w.kills).toBe(1);
+  });
+
+  it('has a tow truck recover an abandoned ambulance after the medic is killed', () => {
+    const city = miniCity();
+    const spot = tileCenter(city.spec, 2, 4);
+    const runner: Car = { pos: vec2(spot.x - 10, spot.y), heading: 0, speed: 100, radius: 12 };
+    const w = new World({
+      player: player(),
+      cars: [runner],
+      city,
+      carDrivers: [null],
+      pedestrians: [pedAt(spot.x, spot.y)],
+      viewRadius: 4000,
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+
+    w.tick(controls(), 1 / 60);
+    for (let i = 0; i < 3000; i++) {
+      w.tick(controls(), 1 / 60);
+      if (w.ambulance?.crew && w.ambulance.phase === 'return' && w.corpses.length === 0) break;
+    }
+
+    for (let i = 0; i < 30 && w.ambulance; i++) {
+      const crew = w.ambulance.crew;
+      if (crew) w.player = { ...w.player, pos: vec2(crew.x - 30, crew.y), angle: 0 };
+      w.tick(controls({ fire: true }), 1 / 60);
+    }
+
+    expect(w.ambulance).toBeNull();
+    expect(w.wreckedCars[1]).toBe(true);
+    for (let i = 0; i < 4000 && !w.towedCars[1]; i++) w.tick(controls(), 1 / 60);
+    expect(w.towedCars[1]).toBe(true); // another tow eventually hauls off the abandoned ambulance
   });
 
   it('parks the ambulance and sends a medic out to collect the body', () => {
@@ -1503,8 +1557,12 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
       if (crew) w.player = { ...w.player, pos: vec2(crew.x - 30, crew.y), angle: 0 };
       w.tick(controls({ fire: true }), 1 / 60);
     }
-    expect(w.tows).toHaveLength(0);
     expect(w.corpses).toHaveLength(1); // the operator dies into a body instead of vanishing
+    expect(w.cars).toHaveLength(2);
+    expect(w.wreckedCars[1]).toBe(true); // the abandoned tow truck remains for later pickup
+    expect(w.towedCars[1]).toBe(false);
+    for (let i = 0; i < 4000 && !w.towedCars[1]; i++) w.tick(controls(), 1 / 60);
+    expect(w.towedCars[1]).toBe(true); // another tow eventually recovers the abandoned truck
     expect(w.kills).toBe(1);
   });
 });
