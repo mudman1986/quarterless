@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   World,
+  AMBULANCE_DISPATCH_DELAY,
   CAR_MAX_HEALTH,
   SCORE_PER_PEDESTRIAN,
   SCORE_PER_POLICE,
@@ -747,6 +748,23 @@ describe('World living world', () => {
     expect(dispatched).toBe(true); // an ambulance was sent
     expect(w.corpses).toHaveLength(0); // and it took the body away
   });
+
+  it('dispatches the ambulance from the hospital building', () => {
+    const city = miniCity();
+    const hospital = city.facilities.find((f) => f.kind === 'hospital');
+    expect(hospital).toBeDefined();
+    const w = new World({
+      player: player(),
+      city,
+      bounds: { width: city.width, height: city.height },
+    });
+    w.corpses = [
+      { pos: tileCenter(city.spec, 2, 4), offscreenFor: 0, inFrameFor: AMBULANCE_DISPATCH_DELAY },
+    ];
+
+    w.tick(controls(), 0); // dispatch without advancing away from the spawn point
+    expect(w.ambulance?.pos).toEqual(hospital!.spawn);
+  });
 });
 
 describe('World road deaths', () => {
@@ -1258,7 +1276,7 @@ describe('World tow truck', () => {
       { pos: tileCenter(city.spec, 8, 8), heading: 0, speed: 0, radius: 12 },
     ];
     const w = new World({
-      player: { pos: tileCenter(city.spec, 0, 4), angle: 0, radius: 8 },
+      player: { pos: tileCenter(city.spec, 8, 0), angle: 0, radius: 8 },
       cars,
       city,
       carDrivers: [null, null, null],
@@ -1268,12 +1286,29 @@ describe('World tow truck', () => {
     for (let i = 0; i < cars.length; i++) w.wreckedCars[i] = true;
 
     let maxConcurrent = 0;
-    for (let i = 0; i < 3000 && !w.towedCars.every(Boolean); i++) {
+    for (let i = 0; i < 5000 && !w.towedCars.every(Boolean); i++) {
       w.tick(controls(), 1 / 60);
       maxConcurrent = Math.max(maxConcurrent, w.tows.length);
     }
     expect(maxConcurrent).toBeGreaterThan(1); // several tows worked in parallel
     expect(w.towedCars.every(Boolean)).toBe(true); // every wreck was hauled away
+  });
+
+  it('dispatches the tow truck from the tow yard building', () => {
+    const city = miniCity();
+    const towYard = city.facilities.find((f) => f.kind === 'towYard');
+    expect(towYard).toBeDefined();
+    const w = new World({
+      player: player(),
+      cars: [{ pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 }],
+      city,
+      carDrivers: [null],
+      bounds: { width: city.width, height: city.height },
+    });
+    w.wreckedCars[0] = true;
+
+    w.tick(controls(), 0); // dispatch without advancing away from the spawn point
+    expect(w.tows[0]?.pos).toEqual(towYard!.spawn);
   });
 });
 
@@ -1307,7 +1342,7 @@ describe('World service vehicles treat actors as solid', () => {
     const city = miniCity();
     const wreck: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 };
     const w = new World({
-      player: { pos: tileCenter(city.spec, 0, 0), angle: 0, radius: 8 }, // on the tow's spawn corner
+      player: player(),
       cars: [wreck],
       city,
       carDrivers: [null],
@@ -1315,6 +1350,14 @@ describe('World service vehicles treat actors as solid', () => {
       bounds: { width: city.width, height: city.height },
     });
     w.wreckedCars[0] = true;
+
+    w.tick(controls(), 0); // dispatch the tow at the yard without moving it yet
+    const tow = w.tows[0]!;
+    w.player = {
+      ...w.player,
+      pos: vec2(tow.pos.x + Math.cos(tow.heading) * 15, tow.pos.y + Math.sin(tow.heading) * 15),
+      angle: tow.heading,
+    };
 
     for (let i = 0; i < 400 && !w.isWasted; i++) w.tick(controls(), 1 / 60);
     expect(w.isWasted).toBe(true); // the moving tow truck mowed the player down

@@ -35,6 +35,19 @@ describe('buildCity', () => {
     const onAnyBuilding = city.buildings.some((b) => circleIntersectsRect(intersection, 8, b));
     expect(onAnyBuilding).toBe(false);
   });
+
+  it('assigns custom service buildings with road-adjacent spawn points', () => {
+    const kinds = new Set(city.facilities.map((f) => f.kind));
+    expect(kinds).toEqual(new Set(['policeStation', 'hospital', 'towYard']));
+    expect(new Set(city.facilities.map((f) => f.buildingIndex)).size).toBe(city.facilities.length);
+    for (const facility of city.facilities) {
+      const insideBuilding = city.buildings.some((b) => pointInRect(facility.spawn, b));
+      expect(insideBuilding).toBe(false);
+      const tx = Math.floor(facility.spawn.x / city.spec.tile);
+      const ty = Math.floor(facility.spawn.y / city.spec.tile);
+      expect(city.isRoad(tx, ty)).toBe(true);
+    }
+  });
 });
 
 describe('buildCity with a road margin', () => {

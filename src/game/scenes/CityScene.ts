@@ -29,6 +29,12 @@ const COLORS = {
   building: 0x4b5563,
   buildingEdge: 0x111827,
   buildingRoof: 0x596577,
+  policeBuilding: 0x1d4ed8,
+  hospitalBuilding: 0xf8fafc,
+  towBuilding: 0xf59e0b,
+  policeRoof: 0x0f285f,
+  hospitalRoof: 0xe2e8f0,
+  towRoof: 0x92400e,
   window: 0xfde68a,
   windowDark: 0x334155,
   bullet: 0xfde047,
@@ -50,6 +56,9 @@ const COLORS = {
   mmBg: 0x0b0f17,
   mmRoad: 0x334155,
   mmBuilding: 0x1e293b,
+  mmPoliceBuilding: 0x2563eb,
+  mmHospitalBuilding: 0xe5e7eb,
+  mmTowBuilding: 0xf59e0b,
   mmWater: 0x1d4e6f,
   mmPlayer: 0x39ff14,
   mmPolice: 0x3b82f6,
@@ -311,6 +320,10 @@ export class CityScene extends Phaser.Scene {
 
   /** Police appear from the four corners of the map when the player is wanted. */
   private policeSpawnPoints(): Vec2[] {
+    const stations = this.city.facilities
+      .filter((f) => f.kind === 'policeStation')
+      .map((f) => f.spawn);
+    if (stations.length > 0) return stations;
     const { width, height } = this.city;
     return [vec2(40, 40), vec2(width - 40, 40), vec2(40, height - 40), vec2(width - 40, height - 40)];
   }
@@ -431,10 +444,28 @@ export class CityScene extends Phaser.Scene {
     // Buildings with rooftops and lit windows for a denser city look.
     const g = this.add.graphics();
     const shades = [0x3f4654, 0x4b5563, 0x434b59, 0x515b6b, 0x3a4150];
+    const facilities = new Map(this.city.facilities.map((f) => [f.buildingIndex, f]));
     this.city.buildings.forEach((b, i) => {
-      g.fillStyle(shades[i % shades.length], 1);
+      const facility = facilities.get(i);
+      const bodyColor =
+        facility?.kind === 'policeStation'
+          ? COLORS.policeBuilding
+          : facility?.kind === 'hospital'
+            ? COLORS.hospitalBuilding
+            : facility?.kind === 'towYard'
+              ? COLORS.towBuilding
+              : shades[i % shades.length];
+      const roofColor =
+        facility?.kind === 'policeStation'
+          ? COLORS.policeRoof
+          : facility?.kind === 'hospital'
+            ? COLORS.hospitalRoof
+            : facility?.kind === 'towYard'
+              ? COLORS.towRoof
+              : COLORS.buildingRoof;
+      g.fillStyle(bodyColor, 1);
       g.fillRect(b.x, b.y, b.w, b.h);
-      g.fillStyle(COLORS.buildingRoof, 1);
+      g.fillStyle(roofColor, 1);
       g.fillRect(b.x + 5, b.y + 5, b.w - 10, b.h - 10);
       g.lineStyle(2, COLORS.buildingEdge, 1);
       g.strokeRect(b.x, b.y, b.w, b.h);
@@ -449,7 +480,35 @@ export class CityScene extends Phaser.Scene {
           g.fillRect(wx, wy, 8, 8);
         }
       }
+
+      if (facility?.kind === 'hospital') {
+        const cx = b.x + b.w / 2;
+        const cy = b.y + b.h / 2;
+        g.fillStyle(0xdc2626, 1);
+        g.fillRect(cx - 6, cy - 18, 12, 36);
+        g.fillRect(cx - 18, cy - 6, 36, 12);
+      } else if (facility?.kind === 'policeStation') {
+        const cx = b.x + b.w / 2;
+        const cy = b.y + b.h / 2;
+        g.fillStyle(0xbfdbfe, 1);
+        g.fillRect(cx - 16, cy - 12, 32, 6);
+        g.fillRect(cx - 12, cy - 4, 24, 6);
+        g.fillRect(cx - 8, cy + 4, 16, 6);
+      } else if (facility?.kind === 'towYard') {
+        g.fillStyle(0x111114, 1);
+        for (let k = 0; k < 5; k++) {
+          g.fillRect(b.x + 16 + k * 18, b.y + b.h / 2 - 4, 10, 8);
+        }
+      }
     });
+
+    // Forecourt markers where service vehicles / police emerge from the facility.
+    g.fillStyle(0xffffff, 0.9);
+    for (const facility of this.city.facilities) {
+      g.fillCircle(facility.spawn.x, facility.spawn.y, 6);
+      g.lineStyle(2, COLORS.buildingEdge, 1);
+      g.strokeCircle(facility.spawn.x, facility.spawn.y, 6);
+    }
   }
 
   /** Draw the river water, the bridge decks crossing it, and the bridge rails. */
@@ -957,6 +1016,18 @@ export class CityScene extends Phaser.Scene {
     g.fillRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
     g.fillStyle(COLORS.mmBuilding, 1);
     for (const b of this.city.buildings) {
+      g.fillRect(b.x * scale, b.y * scale, Math.max(1, b.w * scale), Math.max(1, b.h * scale));
+    }
+    for (const facility of this.city.facilities) {
+      g.fillStyle(
+        facility.kind === 'policeStation'
+          ? COLORS.mmPoliceBuilding
+          : facility.kind === 'hospital'
+            ? COLORS.mmHospitalBuilding
+            : COLORS.mmTowBuilding,
+        1,
+      );
+      const b = facility.building;
       g.fillRect(b.x * scale, b.y * scale, Math.max(1, b.w * scale), Math.max(1, b.h * scale));
     }
     g.fillStyle(COLORS.mmWater, 1);

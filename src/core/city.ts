@@ -48,6 +48,9 @@ export interface City {
   height: number;
   /** One merged rectangle per building block (for rendering and collision). */
   buildings: Rect[];
+  /** Special named facilities embedded in the building stock, with the road
+   * point their vehicles / NPCs spawn from. */
+  facilities: Facility[];
   /** Lethal water rectangles (for rendering and drowning checks). */
   water: Rect[];
   /** Thin rails along the sides of every bridge (added to wall collision). */
@@ -72,6 +75,18 @@ export interface ParkingSpot {
   heading: number;
 }
 
+export type FacilityKind = 'policeStation' | 'hospital' | 'towYard';
+
+/** A named civic/service building and the road point its vehicles emerge from. */
+export interface Facility {
+  kind: FacilityKind;
+  /** Index into `city.buildings` of the building used as this facility. */
+  buildingIndex: number;
+  building: Rect;
+  /** Road-adjacent spawn point where the corresponding NPC/car appears. */
+  spawn: Vec2;
+}
+
 export const DEFAULT_CITY: CitySpec = { cols: 25, rows: 25, tile: 64, block: 5 };
 export const CROSSWALK_ROAD_MARGIN = 4;
 export const CROSSWALK_WIDTH_RATIO = 0.5;
@@ -92,6 +107,8 @@ interface TileRect {
   tw: number;
   th: number;
 }
+
+type FacilitySide = 'left' | 'right' | 'top' | 'bottom';
 
 /** Remove a river band's rows (horizontal) or columns (vertical) from a tile
  * rect, returning the 0–2 pieces left over. Pure. */
@@ -114,6 +131,68 @@ function subtractBand(r: TileRect, river: RiverSpec): TileRect[] {
   if (left < bStart) pieces.push({ tx: left, ty: r.ty, tw: bStart - left, th: r.th });
   if (bEnd < right) pieces.push({ tx: bEnd, ty: r.ty, tw: right - bEnd, th: r.th });
   return pieces;
+}
+
+/** Pick three distinct building blocks to act as the police station, hospital,
+ * and tow yard, favouring the city corners so they read as deliberate landmarks.
+ * Each facility also gets a road-adjacent spawn point on a preferred frontage,
+ * with fallbacks if that side is missing (e.g. the map edge or a cropped block).
+ */
+function buildFacilities(
+  spec: CitySpec,
+  tileRects: readonly TileRect[],
+  buildings: readonly Rect[],
+  isRoad: (tx: number, ty: number) => boolean,
+): Facility[] {
+  const { cols, rows, tile } = spec;
+  const center = (r: Rect): Vec2 => vec2(r.x + r.w / 2, r.y + r.h / 2);
+  const spawnFor = (r: TileRect, prefs: readonly FacilitySide[]): Vec2 | null => {
+    const midTx = r.tx + Math.floor((r.tw - 1) / 2);
+    const midTy = r.ty + Math.floor((r.th - 1) / 2);
+    const tileFor = (side: FacilitySide): { tx: number; ty: number } => {
+      if (side === 'left') return { tx: r.tx - 1, ty: midTy };
+      if (side === 'right') return { tx: r.tx + r.tw, ty: midTy };
+      if (side === 'top') return { tx: midTx, ty: r.ty - 1 };
+      return { tx: midTx, ty: r.ty + r.th };
+    };
+    for (const side of prefs) {
+      const { tx, ty } = tileFor(side);
+      if (tx < 0 || ty < 0 || tx >= cols || ty >= rows) continue;
+      if (!isRoad(tx, ty)) continue;
+      return vec2(tx * tile + tile / 2, ty * tile + tile / 2);
+    }
+    return null;
+  };
+
+  const plans: { kind: FacilityKind; target: Vec2; prefs: FacilitySide[] }[] = [
+    { kind: 'policeStation', target: vec2(0, 0), prefs: ['top', 'left', 'right', 'bottom'] },
+    { kind: 'hospital', target: vec2(cols * tile, 0), prefs: ['right', 'top', 'bottom', 'left'] },
+    { kind: 'towYard', target: vec2(0, rows * tile), prefs: ['left', 'bottom', 'top', 'right'] },
+  ];
+
+  const used = new Set<number>();
+  const facilities: Facility[] = [];
+  for (const plan of plans) {
+    const pick = buildings
+      .map((building, i) => ({
+        i,
+        building,
+        tileRect: tileRects[i],
+        dist: Math.hypot(center(building).x - plan.target.x, center(building).y - plan.target.y),
+      }))
+      .filter((c) => !used.has(c.i))
+      .sort((a, b) => a.dist - b.dist)
+      .find((c) => spawnFor(c.tileRect, plan.prefs) !== null);
+    if (!pick) continue;
+    used.add(pick.i);
+    facilities.push({
+      kind: plan.kind,
+      buildingIndex: pick.i,
+      building: pick.building,
+      spawn: spawnFor(pick.tileRect, plan.prefs)!,
+    });
+  }
+  return facilities;
 }
 
 /**
@@ -164,6 +243,7 @@ export function buildCity(spec: CitySpec = DEFAULT_CITY): City {
       rect(r.tx * tile + margin, r.ty * tile + margin, r.tw * tile - 2 * margin, r.th * tile - 2 * margin),
     )
     .filter((b) => b.w > 0 && b.h > 0);
+  const facilities = buildFacilities(spec, tileRects, buildings, isRoad);
 
   // Water rectangles (band segments between bridges) and the bridge side rails.
   const water: Rect[] = [];
@@ -210,6 +290,7 @@ export function buildCity(spec: CitySpec = DEFAULT_CITY): City {
     width: cols * tile,
     height: rows * tile,
     buildings,
+    facilities,
     water,
     fences,
     sidewalks: buildSidewalks(buildings),

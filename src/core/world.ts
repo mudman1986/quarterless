@@ -205,6 +205,8 @@ export const TOW_DISPATCH_DELAY = 2.5;
 export const MAX_TOWS = 3;
 /** Seconds a dispatched service vehicle keeps trying before giving up and leaving. */
 export const SERVICE_TIMEOUT = 40;
+/** Spacing (px) between vehicles fanning out from the same facility frontage. */
+export const SERVICE_SPAWN_SPACING = 36;
 /** Speed (px/s) the medic / tow operator walks to and from the body or wreck. */
 export const CREW_WALK_SPEED = 55;
 /** How close the crew must get to the body/wreck (or back to their vehicle) to act. */
@@ -932,7 +934,7 @@ export class World {
     if (!this.ambulance) {
       const corpse = this.corpses.find((c) => c.inFrameFor >= AMBULANCE_DISPATCH_DELAY);
       if (!corpse) return;
-      this.ambulance = this.dispatchService(corpse.pos);
+      this.ambulance = this.dispatchService(corpse.pos, 'hospital');
     }
     const amb = this.ambulance;
 
@@ -1007,7 +1009,7 @@ export class World {
     while (this.tows.length < MAX_TOWS) {
       const idx = this.nearestUntowedWreck(claimed);
       if (idx === -1) break;
-      this.tows.push({ ...this.dispatchService(this.cars[idx].pos), targetCar: idx });
+      this.tows.push({ ...this.dispatchService(this.cars[idx].pos, 'towYard', claimed.size), targetCar: idx });
       claimed.add(idx);
     }
   }
@@ -1030,8 +1032,12 @@ export class World {
 
   /** A fresh service vehicle, spawned on the nearest corner road tile and aimed
    * (via the road grid) at `target`. */
-  private dispatchService(target: Vec2): ServiceVehicle {
-    const pos = this.nearestCornerTile(target);
+  private dispatchService(
+    target: Vec2,
+    facilityKind: 'hospital' | 'towYard',
+    slot = 0,
+  ): ServiceVehicle {
+    const pos = this.serviceSpawnPoint(facilityKind, slot) ?? this.nearestCornerTile(target);
     return {
       pos,
       heading: 0,
@@ -1045,6 +1051,21 @@ export class World {
       blocked: 0,
       health: CAR_MAX_HEALTH,
     };
+  }
+
+  /** Spawn point outside the named service building, or null if the city has
+   * no such facility (tiny test maps can still fall back to corner dispatch). */
+  private serviceSpawnPoint(kind: 'hospital' | 'towYard', slot = 0): Vec2 | null {
+    const facility = this.city?.facilities.find((f) => f.kind === kind);
+    if (!facility) return null;
+    const offsetRank = Math.ceil(slot / 2);
+    const offset = slot === 0 ? 0 : (slot % 2 === 1 ? 1 : -1) * offsetRank * SERVICE_SPAWN_SPACING;
+    const verticalRoad =
+      facility.spawn.x < facility.building.x ||
+      facility.spawn.x > facility.building.x + facility.building.w;
+    return verticalRoad
+      ? vec2(facility.spawn.x, facility.spawn.y + offset)
+      : vec2(facility.spawn.x + offset, facility.spawn.y);
   }
 
   /**
