@@ -29,8 +29,8 @@ describe('cameraWorldToScreen / uiScreenToWorld', () => {
     for (const v of viewports) {
       for (const zoom of zooms) {
         for (const screen of [vec2(10, 10), vec2(v.width / 2, 84), vec2(v.width - 180, 12)]) {
-          const world = uiScreenToWorld(screen, zoom);
-          const back = cameraWorldToScreen(world, zoom);
+          const world = uiScreenToWorld(screen, v, zoom);
+          const back = cameraWorldToScreen(world, v, zoom);
           expect(back.x).toBeCloseTo(screen.x, 6);
           expect(back.y).toBeCloseTo(screen.y, 6);
         }
@@ -39,27 +39,29 @@ describe('cameraWorldToScreen / uiScreenToWorld', () => {
   });
 
   it('is the identity when the camera is not zoomed', () => {
-    expect(uiScreenToWorld(vec2(10, 10), 1)).toEqual(vec2(10, 10));
-    expect(cameraWorldToScreen(vec2(10, 10), 1)).toEqual(vec2(10, 10));
+    const v = { width: 1280, height: 720 };
+    expect(uiScreenToWorld(vec2(10, 10), v, 1)).toEqual(vec2(10, 10));
+    expect(cameraWorldToScreen(vec2(10, 10), v, 1)).toEqual(vec2(10, 10));
   });
 
-  it('scales a scrollFactor-0 point about the top-left corner (Phaser camera origin 0,0)', () => {
-    // Phaser's camera origin is the top-left, so a scroll-pinned point simply
-    // scales by the zoom with no centring offset: screen = zoom * world.
-    for (const zoom of zooms) {
-      const back = cameraWorldToScreen(vec2(200, 120), zoom);
-      expect(back.x).toBeCloseTo(200 * zoom, 6);
-      expect(back.y).toBeCloseTo(120 * zoom, 6);
+  it('keeps the viewport centre fixed at any zoom', () => {
+    for (const v of viewports) {
+      for (const zoom of zooms) {
+        const centre = vec2(v.width / 2, v.height / 2);
+        const back = cameraWorldToScreen(uiScreenToWorld(centre, v, zoom), v, zoom);
+        expect(back.x).toBeCloseTo(centre.x, 6);
+        expect(back.y).toBeCloseTo(centre.y, 6);
+      }
     }
   });
 
   it('reproduces the bug: a raw screen anchor drifts off-screen once zoomed', () => {
     // A top-right minimap drawn at a raw screen coordinate (the old behaviour):
-    // under a zoom > 1 the camera transform pushes it outside the viewport,
+    // under any zoom != 1 the camera transform pushes it outside the viewport,
     // which is exactly why the map/HUD vanished on laptops and iPads.
     const v = { width: 1920, height: 1080 };
     const rawTopRight = vec2(v.width - 180, 12);
-    const drifted = cameraWorldToScreen(rawTopRight, 1.42);
+    const drifted = cameraWorldToScreen(rawTopRight, v, 1.42);
     const offScreen = drifted.x > v.width || drifted.x < 0 || drifted.y < 0 || drifted.y > v.height;
     expect(offScreen).toBe(true);
   });
@@ -88,9 +90,10 @@ describe('uiAnchorOnScreen', () => {
         );
         // Map the element's on-screen corners back through the camera: both must
         // sit inside [0,width] x [0,height], i.e. the whole map is visible.
-        const topLeft = cameraWorldToScreen(anchor, zoom);
+        const topLeft = cameraWorldToScreen(anchor, v, zoom);
         const bottomRight = cameraWorldToScreen(
           vec2(anchor.x + size.width / zoom, anchor.y + size.height / zoom),
+          v,
           zoom,
         );
         expect(topLeft.x).toBeGreaterThanOrEqual(-1e-6);

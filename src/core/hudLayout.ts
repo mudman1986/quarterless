@@ -9,11 +9,6 @@ import { clamp } from './math';
  * exactly 1 (the "map/HUD missing on laptops and iPads" bug). These helpers undo
  * the camera zoom so a UI element lands on the screen pixel we intend, at its
  * native size, on every display.
- *
- * Phaser's camera origin is the top-left (0,0), so for a `scrollFactor(0)` world
- * point the on-screen position is simply `screen = zoom * world` — the zoom
- * scales about the corner, with no centring offset. The helpers below invert
- * exactly that.
  */
 export interface Viewport {
   width: number;
@@ -22,15 +17,18 @@ export interface Viewport {
 
 /**
  * Where a `scrollFactor(0)` world point appears on screen once the camera
- * applies `zoom` (camera origin 0,0):
+ * applies `zoom` about the viewport centre (camera origin 0.5, no extra offset):
  *
- *   screen = zoom * world
+ *   screen = zoom * world + (viewport / 2) * (1 - zoom)
  *
  * This is exactly Phaser's transform for a scroll-pinned object, so it documents
  * the behaviour the other helpers invert. Pure.
  */
-export function cameraWorldToScreen(world: Vec2, zoom: number): Vec2 {
-  return vec2(world.x * zoom, world.y * zoom);
+export function cameraWorldToScreen(world: Vec2, viewport: Viewport, zoom: number): Vec2 {
+  return vec2(
+    zoom * world.x + (viewport.width / 2) * (1 - zoom),
+    zoom * world.y + (viewport.height / 2) * (1 - zoom),
+  );
 }
 
 /**
@@ -38,13 +36,16 @@ export function cameraWorldToScreen(world: Vec2, zoom: number): Vec2 {
  * camera applies `zoom`, it appears at screen pixel `screen`. The inverse of
  * {@link cameraWorldToScreen}:
  *
- *   world = screen / zoom
+ *   world = screen / zoom + (viewport / 2) * (1 - 1 / zoom)
  *
  * Pair with {@link uiCounterScale} so the element also keeps its native size.
  * Pure.
  */
-export function uiScreenToWorld(screen: Vec2, zoom: number): Vec2 {
-  return vec2(screen.x / zoom, screen.y / zoom);
+export function uiScreenToWorld(screen: Vec2, viewport: Viewport, zoom: number): Vec2 {
+  return vec2(
+    screen.x / zoom + (viewport.width / 2) * (1 - 1 / zoom),
+    screen.y / zoom + (viewport.height / 2) * (1 - 1 / zoom),
+  );
 }
 
 /** The scale a `scrollFactor(0)` UI object needs so the camera zoom leaves it at
@@ -69,5 +70,5 @@ export function uiAnchorOnScreen(
   const maxX = Math.max(0, viewport.width - size.width);
   const maxY = Math.max(0, viewport.height - size.height);
   const clamped = vec2(clamp(screenAnchor.x, 0, maxX), clamp(screenAnchor.y, 0, maxY));
-  return uiScreenToWorld(clamped, zoom);
+  return uiScreenToWorld(clamped, viewport, zoom);
 }

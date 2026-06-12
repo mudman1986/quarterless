@@ -823,7 +823,7 @@ export class CityScene extends Phaser.Scene {
       screenY: number,
     ): void => {
       if (!obj) return;
-      const w = uiScreenToWorld(vec2(screenX, screenY), zoom);
+      const w = uiScreenToWorld(vec2(screenX, screenY), viewport, zoom);
       obj.setPosition(w.x, w.y).setScale(counter);
     };
 
@@ -997,10 +997,6 @@ export class CityScene extends Phaser.Scene {
     }
 
     this.syncSprites();
-    // Re-pin the HUD/minimap every frame against the live camera zoom: the zoom
-    // is only finalised once the canvas has been measured (which can happen
-    // after create), so laying out once is not enough to keep them on-screen.
-    this.layoutHud();
     this.syncMinimap();
     this.handleEvents();
     this.updateSiren(dt);
