@@ -5,7 +5,6 @@ import {
   CROSSWALK_WIDTH_RATIO,
   DEFAULT_CITY,
   tileCenter,
-  type City,
 } from './city';
 import { describe, it, expect } from 'vitest';
 import { rect, circleIntersectsRect, pointInRect, randomPointInRect } from './collision';

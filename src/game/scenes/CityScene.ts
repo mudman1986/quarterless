@@ -1,7 +1,5 @@
 import {
   buildCity,
-  CROSSWALK_ROAD_MARGIN,
-  CROSSWALK_WIDTH_RATIO,
   tileCenter,
   type City,
   type ParkingSpot,
