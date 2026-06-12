@@ -636,6 +636,31 @@ export class World {
     this.corpses.push({ pos, offscreenFor: 0, inFrameFor: 0 });
   }
 
+  /** Resolve an on-foot NPC death into a body left in the world, crediting the
+   * player only when they caused it. Shared by pedestrians, foot police, and
+   * any service crew member currently out of their vehicle. */
+  private killOnFootNpc(pos: Vec2, kind: 'pedestrian' | 'police', byPlayer: boolean): void {
+    this.addCorpse(pos);
+    if (byPlayer) this.registerKill(kind);
+  }
+
+  /** Kill the ambulance medic currently out on foot, aborting the call. */
+  private killAmbulanceCrew(byPlayer: boolean): void {
+    const crew = this.ambulance?.crew;
+    if (!crew) return;
+    this.killOnFootNpc(crew, 'pedestrian', byPlayer);
+    this.ambulance = null;
+  }
+
+  /** Kill a tow-truck operator currently out on foot, abandoning that truck's
+   * job. The wreck remains available for another tow to claim later. */
+  private killTowCrew(index: number, byPlayer: boolean): void {
+    const tow = this.tows[index];
+    if (!tow?.crew) return;
+    this.killOnFootNpc(tow.crew, 'pedestrian', byPlayer);
+    this.tows.splice(index, 1);
+  }
+
   /** Age corpses; one left out of frame long enough is cleared and a fresh
    * pedestrian respawns elsewhere so the streets stay populated. */
   private updateCorpses(dt: number): void {
@@ -1085,15 +1110,27 @@ export class World {
       }
       const pedIdx = this.pedestrians.findIndex((p) => bulletHits(stepped, p.pos, p.radius));
       if (pedIdx !== -1) {
-        this.addCorpse(this.pedestrians[pedIdx].pos);
+        this.killOnFootNpc(this.pedestrians[pedIdx].pos, 'pedestrian', true);
         this.pedestrians.splice(pedIdx, 1);
-        this.registerKill('pedestrian');
         continue;
       }
       const copIdx = this.police.findIndex((cop) => bulletHits(stepped, cop.pos, cop.radius));
       if (copIdx !== -1) {
+        const cop = this.police[copIdx];
         this.police.splice(copIdx, 1);
-        this.registerKill('police');
+        if (cop.kind === 'foot') this.killOnFootNpc(cop.pos, 'police', true);
+        else this.registerKill('police');
+        continue;
+      }
+      if (this.ambulance?.crew && bulletHits(stepped, this.ambulance.crew, this.player.radius)) {
+        this.killAmbulanceCrew(true);
+        continue;
+      }
+      const towIdx = this.tows.findIndex(
+        (tow) => tow.crew && bulletHits(stepped, tow.crew, this.player.radius),
+      );
+      if (towIdx !== -1) {
+        this.killTowCrew(towIdx, true);
         continue;
       }
       // Shooting a car damages it; enough hits destroy it. The car the player is

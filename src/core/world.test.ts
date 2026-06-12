@@ -871,6 +871,7 @@ describe('World combat', () => {
       w.tick(controls({ fire: true }), 1 / 60);
     }
     expect(w.police).toHaveLength(0);
+    expect(w.corpses).toHaveLength(1); // cops die into bodies instead of vanishing
     expect(w.kills).toBe(1);
     expect(w.score.current).toBe(SCORE_PER_POLICE);
   });
@@ -1242,6 +1243,39 @@ describe('World service vehicles treat actors as solid', () => {
 describe('World service vehicle crew fetch the cargo on foot', () => {
   const miniCity = () => buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
 
+  it('leaves a corpse when the medic is shot on foot', () => {
+    const city = miniCity();
+    const spot = tileCenter(city.spec, 2, 4);
+    const runner: Car = { pos: vec2(spot.x - 10, spot.y), heading: 0, speed: 100, radius: 12 };
+    const w = new World({
+      player: player(),
+      cars: [runner],
+      city,
+      carDrivers: [null],
+      pedestrians: [pedAt(spot.x, spot.y)],
+      viewRadius: 4000,
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+
+    w.tick(controls(), 1 / 60); // create the corpse that summons the ambulance
+    for (let i = 0; i < 3000; i++) {
+      w.tick(controls(), 1 / 60);
+      if (w.ambulance?.crew && w.ambulance.phase === 'return' && w.corpses.length === 0) break;
+    }
+    expect(w.ambulance?.crew).not.toBeNull();
+    expect(w.ambulance?.phase).toBe('return');
+
+    for (let i = 0; i < 30 && w.ambulance; i++) {
+      const crew = w.ambulance.crew;
+      if (crew) w.player = { ...w.player, pos: vec2(crew.x - 30, crew.y), angle: 0 };
+      w.tick(controls({ fire: true }), 1 / 60);
+    }
+    expect(w.ambulance).toBeNull();
+    expect(w.corpses).toHaveLength(1); // the medic's body remains in the street
+    expect(w.kills).toBe(1);
+  });
+
   it('parks the ambulance and sends a medic out to collect the body', () => {
     const city = miniCity();
     const spot = tileCenter(city.spec, 2, 4); // on road row 4
@@ -1318,6 +1352,36 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     for (let i = 0; i < 3000 && w.tows.length > 0; i++) w.tick(controls(), 1 / 60);
     expect(w.tows).toHaveLength(0); // the lone truck departed once its one car was done
     expect(w.towedCars.filter(Boolean)).toHaveLength(1); // exactly one car was taken
+  });
+
+  it('leaves a corpse when the tow operator is shot on foot', () => {
+    const city = miniCity();
+    const wreck: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 };
+    const w = new World({
+      player: player(),
+      cars: [wreck],
+      city,
+      carDrivers: [null],
+      viewRadius: 4000,
+      bounds: { width: city.width, height: city.height },
+    });
+    w.wreckedCars[0] = true;
+
+    for (let i = 0; i < 3000; i++) {
+      w.tick(controls(), 1 / 60);
+      if (w.tows[0]?.crew && w.tows[0].phase === 'return' && w.towedCars[0]) break;
+    }
+    expect(w.tows[0]?.crew).not.toBeNull();
+    expect(w.tows[0]?.phase).toBe('return');
+
+    for (let i = 0; i < 30 && w.tows.length > 0; i++) {
+      const crew = w.tows[0].crew;
+      if (crew) w.player = { ...w.player, pos: vec2(crew.x - 30, crew.y), angle: 0 };
+      w.tick(controls({ fire: true }), 1 / 60);
+    }
+    expect(w.tows).toHaveLength(0);
+    expect(w.corpses).toHaveLength(1); // the operator dies into a body instead of vanishing
+    expect(w.kills).toBe(1);
   });
 });
 
