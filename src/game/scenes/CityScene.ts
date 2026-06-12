@@ -17,6 +17,7 @@ import type { Pedestrian } from '../../core/pedestrianAI';
 import type { TrafficAI } from '../../core/trafficAI';
 import type { AmmoPickup } from '../../core/weapon';
 import { vec2, type Vec2 } from '../../core/vector';
+import { uiScreenToWorld, uiCounterScale, uiAnchorOnScreen } from '../../core/hudLayout';
 import { greenAxis } from '../../core/trafficLight';
 import { KeyboardInput } from '../input/KeyboardInput';
 import { Sound } from '../audio/Sound';
@@ -247,6 +248,7 @@ export class CityScene extends Phaser.Scene {
     this.setupCamera();
     this.createHud();
     this.createMinimap();
+    this.layoutHud();
 
     this.input_ = new KeyboardInput(this.input.keyboard!);
     // Menu keys: P pauses/resumes, N starts a fresh game.
@@ -797,10 +799,51 @@ export class CityScene extends Phaser.Scene {
   private onResize(): void {
     this.applyZoom();
     const { width, height } = this.scale.gameSize;
-    this.bustedText?.setPosition(width / 2, height / 2);
-    this.banner?.setPosition(width / 2, 84);
-    this.pauseMenu?.setPosition(width / 2, height / 2);
-    this.dayNightOverlay?.setPosition(width / 2, height / 2).setSize(width * 3, height * 3);
+    this.dayNightOverlay?.setSize(width * 3, height * 3);
+    this.layoutHud();
+  }
+
+  /**
+   * Re-pin every screen-space UI element against the current camera zoom. Phaser
+   * keeps a `scrollFactor(0)` object's scroll fixed but still applies the camera
+   * zoom to it, so each element is placed at the world point that maps back to
+   * its intended screen pixel and counter-scaled to its native size. Without
+   * this the HUD and minimap are rescaled and pushed off-screen whenever the
+   * derived zoom is not 1 — the map/HUD-missing bug seen on laptops and iPads.
+   */
+  private layoutHud(): void {
+    const { width, height } = this.scale.gameSize;
+    const viewport = { width, height };
+    const zoom = this.cameras.main.zoom;
+    const counter = uiCounterScale(zoom);
+
+    const place = (
+      obj: Phaser.GameObjects.Image | Phaser.GameObjects.Text | Phaser.GameObjects.Graphics | undefined,
+      screenX: number,
+      screenY: number,
+    ): void => {
+      if (!obj) return;
+      const w = uiScreenToWorld(vec2(screenX, screenY), zoom);
+      obj.setPosition(w.x, w.y).setScale(counter);
+    };
+
+    place(this.hud, 10, 10); // top-left status readout
+    place(this.banner, width / 2, 84); // mission announcement
+    place(this.bustedText, width / 2, height / 2);
+    place(this.pauseMenu, width / 2, height / 2);
+
+    if (this.minimapBg) {
+      // Clamp the top-right anchor so the whole map stays on screen even on a
+      // very small viewport; both the backdrop and the live dots share it.
+      const anchor = uiAnchorOnScreen(
+        vec2(width - MINIMAP_SIZE - 12, 12),
+        { width: MINIMAP_SIZE, height: MINIMAP_SIZE },
+        viewport,
+        zoom,
+      );
+      this.minimapBg.setPosition(anchor.x, anchor.y).setScale(counter);
+      this.minimapDots.setPosition(anchor.x, anchor.y).setScale(counter);
+    }
   }
 
   private createHud(): void {
@@ -906,31 +949,30 @@ export class CityScene extends Phaser.Scene {
   /** Redraw the minimap's moving dots (player, police, ammo, objective). */
   private syncMinimap(): void {
     const scale = MINIMAP_SIZE / this.city.width;
-    const ox = this.scale.width - MINIMAP_SIZE - 12;
-    const oy = 12;
-    this.minimapBg.setPosition(ox, oy);
-
+    // Dots are drawn in the minimap's own local space (0..MINIMAP_SIZE). The
+    // graphics object's position and counter-zoom scale (set in layoutHud) place
+    // and size it on screen, so no screen offset is baked into the geometry.
     const g = this.minimapDots;
     g.clear();
 
     const objective = this.world.missionObjective;
     if (objective && objective.kind === 'reach') {
       g.lineStyle(2, COLORS.mmTarget, 1);
-      g.strokeCircle(ox + objective.target.x * scale, oy + objective.target.y * scale, 4);
+      g.strokeCircle(objective.target.x * scale, objective.target.y * scale, 4);
     }
 
     g.fillStyle(COLORS.mmAmmo, 1);
     for (const a of this.world.ammoPickups) {
-      g.fillRect(ox + a.pos.x * scale - 1, oy + a.pos.y * scale - 1, 3, 3);
+      g.fillRect(a.pos.x * scale - 1, a.pos.y * scale - 1, 3, 3);
     }
 
     g.fillStyle(COLORS.mmPolice, 1);
     for (const cop of this.world.police) {
-      g.fillCircle(ox + cop.pos.x * scale, oy + cop.pos.y * scale, 2);
+      g.fillCircle(cop.pos.x * scale, cop.pos.y * scale, 2);
     }
 
     g.fillStyle(COLORS.mmPlayer, 1);
-    g.fillCircle(ox + this.world.focus.x * scale, oy + this.world.focus.y * scale, 3);
+    g.fillCircle(this.world.focus.x * scale, this.world.focus.y * scale, 3);
   }
 
   update(_time: number, deltaMs: number): void {
@@ -955,6 +997,10 @@ export class CityScene extends Phaser.Scene {
     }
 
     this.syncSprites();
+    // Re-pin the HUD/minimap every frame against the live camera zoom: the zoom
+    // is only finalised once the canvas has been measured (which can happen
+    // after create), so laying out once is not enough to keep them on-screen.
+    this.layoutHud();
     this.syncMinimap();
     this.handleEvents();
     this.updateSiren(dt);
@@ -963,7 +1009,6 @@ export class CityScene extends Phaser.Scene {
     // Count down the announcement banner.
     if (this.announceRemaining > 0) {
       this.announceRemaining -= dt;
-      this.banner.setPosition(this.scale.width / 2, 84);
       if (this.announceRemaining <= 0) this.banner.setVisible(false);
     }
   }
@@ -1000,8 +1045,7 @@ export class CityScene extends Phaser.Scene {
   /** Freeze or resume the simulation and show/hide the pause menu. */
   private togglePause(): void {
     this.paused = !this.paused;
-    const { width, height } = this.scale.gameSize;
-    this.pauseMenu.setPosition(width / 2, height / 2).setVisible(this.paused);
+    this.pauseMenu.setVisible(this.paused);
   }
 
   /** Restart the scene, beginning a brand-new game (the high score persists). */
