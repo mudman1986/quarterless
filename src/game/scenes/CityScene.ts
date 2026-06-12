@@ -108,6 +108,10 @@ const MINIMAP_SIZE = 168;
 const ANNOUNCE_SECONDS = 3.2;
 /** Length in seconds of a full day/night cycle (30 minutes). */
 const DAY_LENGTH = 1800;
+/** Tow-truck amber beacon: blink interval (ms) and how far forward (px) of the
+ * truck's centre the cab-roof light sits. */
+const TOW_BEACON_BLINK_MS = 280;
+const TOW_BEACON_FWD = 9.5;
 
 /**
  * Renders the core `World` simulation with Phaser. The scene owns no game
@@ -130,8 +134,10 @@ export class CityScene extends Phaser.Scene {
   private explosionGfx!: Phaser.GameObjects.Graphics;
   private lightsGfx!: Phaser.GameObjects.Graphics;
   private corpseGfx!: Phaser.GameObjects.Graphics;
-  private ambulanceSprite!: Phaser.GameObjects.Rectangle;
-  private towSprites: Phaser.GameObjects.Rectangle[] = [];
+  private ambulanceSprite!: Phaser.GameObjects.Image;
+  private towSprites: Phaser.GameObjects.Image[] = [];
+  /** Flashing amber beacon overlaid on each tow truck (parallel to `towSprites`). */
+  private towBeacons: Phaser.GameObjects.Container[] = [];
   /** The parking bays that actually hold a parked car (for drawing the markings). */
   private parkedSpots: ParkingSpot[] = [];
   /** Centre of every intersection, for drawing the traffic lights. */
@@ -550,7 +556,7 @@ export class CityScene extends Phaser.Scene {
     // Corpses and their blood puddles sit just above the road, below the living.
     this.corpseGfx = this.add.graphics().setDepth(4);
     // The ambulance: a white emergency vehicle, hidden until dispatched.
-    this.ambulanceSprite = this.add.rectangle(0, 0, 30, 16, 0xf8fafc).setDepth(6).setVisible(false);
+    this.ambulanceSprite = this.add.image(0, 0, TEX.ambulance).setDepth(6).setVisible(false);
     // Tow trucks: amber service vehicles, created on demand into a pool.
     this.towSprites = [];
 
@@ -682,18 +688,41 @@ export class CityScene extends Phaser.Scene {
     }
   }
 
-  /** Show every active tow truck, tracking each one's position and heading. */
+  /** Show every active tow truck, tracking each one's position and heading. Its
+   * cab-roof beacon flashes amber the whole time it is on a recovery run. */
   private syncTow(): void {
+    const beaconOn = Math.floor(this.time.now / TOW_BEACON_BLINK_MS) % 2 === 0;
     this.world.tows.forEach((tow, i) => {
       let sprite = this.towSprites[i];
       if (!sprite) {
-        sprite = this.add.rectangle(0, 0, 32, 16, 0xf59e0b).setDepth(6);
+        sprite = this.add.image(0, 0, TEX.tow).setDepth(6);
         this.towSprites[i] = sprite;
       }
       sprite.setVisible(true).setPosition(tow.pos.x, tow.pos.y).setRotation(tow.heading);
+
+      let beacon = this.towBeacons[i];
+      if (!beacon) {
+        const halo = this.add
+          .image(0, 0, 'glow')
+          .setScale(0.13)
+          .setTint(0xf59e0b)
+          .setBlendMode(Phaser.BlendModes.ADD);
+        const core = this.add.circle(0, 0, 2.5, 0xfde047);
+        beacon = this.add.container(0, 0, [halo, core]).setDepth(7);
+        this.towBeacons[i] = beacon;
+      }
+      // Place the beacon over the cab roof, rotated with the truck, and blink it.
+      beacon
+        .setVisible(true)
+        .setPosition(
+          tow.pos.x + Math.cos(tow.heading) * TOW_BEACON_FWD,
+          tow.pos.y + Math.sin(tow.heading) * TOW_BEACON_FWD,
+        )
+        .setAlpha(beaconOn ? 1 : 0.12);
     });
     for (let i = this.world.tows.length; i < this.towSprites.length; i++) {
       this.towSprites[i].setVisible(false);
+      this.towBeacons[i]?.setVisible(false);
     }
   }
 
