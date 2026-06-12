@@ -5,6 +5,7 @@ import {
   resolveCircleCircles,
   circleIntersectsRect,
   pointInRect,
+  segmentIntersectsRect,
 } from './collision';
 import { wrap } from './math';
 import {
@@ -1155,8 +1156,16 @@ export class World {
         if (arrestable && this.patrolAtDeployRange(cop)) return cop; // pull up, don't ram
         return stepPoliceCar(cop, this.focus, this.city, dt, policeSpeedFor('car', this.wantedStars));
       }
+      // An officer on foot charges straight at the player whenever no building
+      // blocks the line of sight; the flow field is only needed to route around
+      // buildings. Homing directly closes the final step onto a player loitering
+      // on the pavement, whose tile sits off the walkable nav-grid (so a flow-
+      // field-only officer is steered to a road tile and never quite reaches).
+      const sightBlocked = this.walls.some((wll) => segmentIntersectsRect(cop.pos, this.focus, wll));
       const waypoint =
-        this.navGrid && this.copFlow ? (flowWaypoint(this.navGrid, this.copFlow, cop.pos) ?? this.focus) : this.focus;
+        sightBlocked && this.navGrid && this.copFlow
+          ? (flowWaypoint(this.navGrid, this.copFlow, cop.pos) ?? this.focus)
+          : this.focus;
       const stepped = stepPolice(cop, waypoint, dt, policeSpeedFor(cop.kind, this.wantedStars));
       return { ...stepped, pos: resolveCircleRects(stepped.pos, stepped.radius, this.walls) };
     });

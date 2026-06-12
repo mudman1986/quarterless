@@ -28,6 +28,38 @@ export function pointInRect(p: Vec2, r: Rect): boolean {
   return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
 }
 
+/**
+ * Whether the segment from `a` to `b` touches a rect (a point inside counts).
+ * Liang–Barsky clipping against the rect's slabs. Used for line-of-sight checks
+ * (e.g. whether a building blocks an officer's straight run at the player). Pure.
+ */
+export function segmentIntersectsRect(a: Vec2, b: Vec2, r: Rect): boolean {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  let t0 = 0;
+  let t1 = 1;
+  // Clip the parametric segment a + t*(b-a) against one slab: keeps p*t <= q.
+  const clip = (p: number, q: number): boolean => {
+    if (p === 0) return q >= 0; // parallel to this slab: inside iff q >= 0
+    const t = q / p;
+    if (p < 0) {
+      if (t > t1) return false;
+      if (t > t0) t0 = t;
+    } else {
+      if (t < t0) return false;
+      if (t < t1) t1 = t;
+    }
+    return true;
+  };
+  const accepted =
+    clip(-dx, a.x - r.x) &&
+    clip(dx, r.x + r.w - a.x) &&
+    clip(-dy, a.y - r.y) &&
+    clip(dy, r.y + r.h - a.y);
+  return accepted && t0 <= t1;
+}
+
+
 /** A uniformly random point inside a rect, using the injected RNG. Pure. */
 export function randomPointInRect(r: Rect, rng: () => number): Vec2 {
   return vec2(r.x + rng() * r.w, r.y + rng() * r.h);

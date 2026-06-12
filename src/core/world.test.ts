@@ -8,7 +8,7 @@ import {
 import { type OnFootActor } from './entity';
 import { type Car } from './vehicle';
 import { type Pedestrian } from './pedestrianAI';
-import { rect } from './collision';
+import { rect, pointInRect } from './collision';
 import { buildCity, tileCenter } from './city';
 import { controls } from './types';
 import { addHeat, createWanted, CRIME_HEAT } from './wantedLevel';
@@ -1017,6 +1017,33 @@ describe('World patrol car arrest', () => {
     expect(w.isBusted).toBe(false); // a car alone cannot make the arrest
   });
 });
+
+describe('World busts a player on the sidewalk', () => {
+  it('lets a foot officer arrest a player loitering on the pavement by a corner', () => {
+    // Buildings are inset from the roads (margin), like the real city, so the
+    // pavement hugging a building sits inside a tile whose centre is the
+    // building itself — that tile is off the walkable nav-grid. Near a corner
+    // the nearest walkable tile is diagonal, so an officer routed purely by the
+    // flow field is steered away and can never close the final step. It must
+    // still be able to bust a player who just stands on the pavement.
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 5, margin: 18 });
+    const onPavement = vec2(76, 96); // left pavement, by the building's top-left corner
+    expect(city.sidewalks.some((s) => pointInRect(onPavement, s))).toBe(true);
+
+    const w = new World({
+      player: { pos: onPavement, angle: 0, radius: 8 },
+      city,
+      police: [{ pos: vec2(40, 96), heading: 0, radius: 12, kind: 'foot' }],
+      walls: [...city.buildings, ...city.fences],
+      bounds: { width: city.width, height: city.height },
+    });
+    w.wanted = addHeat(createWanted(), CRIME_HEAT.hitPolice);
+
+    for (let i = 0; i < 600 && !w.isBusted; i++) w.tick(controls(), 1 / 60);
+    expect(w.isBusted).toBe(true);
+  });
+});
+
 
 describe('World car explosions', () => {
   it('destroys a car after enough shots, leaving a wreck and a blast', () => {

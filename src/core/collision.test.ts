@@ -3,6 +3,7 @@ import {
   closestPointOnRect,
   circleIntersectsRect,
   pointInRect,
+  segmentIntersectsRect,
   resolveCircleRect,
   resolveCircleRects,
   resolveCircleCircle,
@@ -37,6 +38,24 @@ describe('pointInRect', () => {
   it('counts the boundary as inside', () => {
     expect(pointInRect(vec2(0, 0), box)).toBe(true);
     expect(pointInRect(vec2(100, 50), box)).toBe(true);
+  });
+});
+
+describe('segmentIntersectsRect', () => {
+  it('is true when the segment crosses the rect', () => {
+    expect(segmentIntersectsRect(vec2(-20, 25), vec2(120, 25), box)).toBe(true);
+  });
+
+  it('is true when an endpoint lies inside the rect', () => {
+    expect(segmentIntersectsRect(vec2(-20, 25), vec2(50, 25), box)).toBe(true);
+  });
+
+  it('is false when the segment stops short of the rect', () => {
+    expect(segmentIntersectsRect(vec2(-20, 25), vec2(-5, 25), box)).toBe(false);
+  });
+
+  it('is false when the segment passes clear of the rect', () => {
+    expect(segmentIntersectsRect(vec2(-20, -10), vec2(120, -10), box)).toBe(false);
   });
 });
 
