@@ -16,6 +16,11 @@ export interface Police {
   radius: number;
   /** Whether this unit is an officer on foot or a patrol car. */
   kind: 'foot' | 'car';
+  /** Current speed (px/s). Used for patrol-car collision damage; foot officers
+   * simply sit at 0. */
+  speed?: number;
+  /** Remaining hit points of a patrol car. Ignored for officers on foot. */
+  health?: number;
   /** Seconds until this unit can fire again (officers shoot at high heat). */
   fireCooldown?: number;
   /** Whether a patrol car has already dropped an officer to make an arrest. */

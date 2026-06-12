@@ -247,6 +247,9 @@ export interface ServiceVehicle {
   speed: number;
   /** Seconds it has been held up by an obstacle ahead (drives the reroute). */
   blocked: number;
+  /** Remaining hit points of the vehicle body. Enough bullets or impacts turn
+   * it into an explosion, just like any other vehicle. */
+  health: number;
 }
 
 /** An ambulance that drives to a corpse, parks, sends a medic out to fetch the
@@ -269,6 +272,12 @@ export interface Explosion {
   /** Total time the visual lasts. */
   life: number;
 }
+
+type DamageableVehicleRef =
+  | { kind: 'car'; index: number }
+  | { kind: 'ambulance'; vehicle: Ambulance }
+  | { kind: 'tow'; vehicle: TowTruck }
+  | { kind: 'patrol'; vehicle: Police };
 
 /**
  * Authoritative game simulation. Holds all entities and advances them with a
@@ -356,7 +365,11 @@ export class World {
     this.cars = opts.cars ?? [];
     this.walls = opts.walls ?? [];
     this.pedestrians = opts.pedestrians ?? [];
-    this.police = opts.police ?? [];
+    this.police = (opts.police ?? []).map((cop) =>
+      cop.kind === 'car'
+        ? { ...cop, speed: cop.speed ?? 0, health: cop.health ?? CAR_MAX_HEALTH }
+        : { ...cop, speed: 0 },
+    );
     this.policeSpawns = opts.policeSpawns ?? [];
     this.bounds = opts.bounds ?? { width: 1600, height: 1600 };
     this.water = opts.water ?? [];
@@ -463,7 +476,7 @@ export class World {
     }
     this.lights = tickLights(this.lights, dt);
     this.updateTraffic(dt);
-    this.resolveCarCollisions();
+    this.resolveVehicleCollisions();
     this.updatePedestrians(dt);
     this.updateNpcDriving(dt);
     this.checkRoadKill();
@@ -472,7 +485,6 @@ export class World {
     this.updateWeapon(c, dt);
     this.updateBullets(dt);
     this.updateWantedAndPolice(dt);
-    this.resolvePoliceVehicleCollisions();
     this.updateArrest();
     this.updatePoliceBullets(dt);
     this.stepExplosions(dt);
@@ -661,6 +673,229 @@ export class World {
     this.tows.splice(index, 1);
   }
 
+  /** Record that the player destroyed a vehicle, using the same reward/heat rule
+   * as the original car-only explosion logic. */
+  private noteVehicleDestroyed(byPlayer: boolean): void {
+    if (!byPlayer) return;
+    this.kills += 1;
+    this.score = award(this.score, SCORE_PER_CAR);
+    this.wanted = addHeat(this.wanted, CRIME_HEAT.hitPedestrian);
+  }
+
+  /** Every active vehicle body that can be shot, rammed, or blown up. */
+  private damageableVehicles(): DamageableVehicleRef[] {
+    const refs: DamageableVehicleRef[] = [];
+    for (let i = 0; i < this.cars.length; i++) {
+      if (this.wreckedCars[i] || this.towedCars[i]) continue;
+      refs.push({ kind: 'car', index: i });
+    }
+    if (this.ambulance) refs.push({ kind: 'ambulance', vehicle: this.ambulance });
+    for (const tow of this.tows) refs.push({ kind: 'tow', vehicle: tow });
+    for (const cop of this.police) {
+      if (cop.kind === 'car') refs.push({ kind: 'patrol', vehicle: cop });
+    }
+    return refs;
+  }
+
+  /** Current physical body of a damageable vehicle, or null if it no longer exists. */
+  private vehicleBody(ref: DamageableVehicleRef): Car | null {
+    if (ref.kind === 'car') {
+      if (this.wreckedCars[ref.index] || this.towedCars[ref.index]) return null;
+      return this.cars[ref.index];
+    }
+    if (ref.kind === 'ambulance') {
+      return this.ambulance === ref.vehicle ? ref.vehicle : null;
+    }
+    if (ref.kind === 'tow') {
+      return this.tows.includes(ref.vehicle) ? ref.vehicle : null;
+    }
+    return ref.vehicle.kind === 'car' && this.police.includes(ref.vehicle)
+      ? {
+          pos: ref.vehicle.pos,
+          heading: ref.vehicle.heading,
+          speed: ref.vehicle.speed ?? 0,
+          radius: ref.vehicle.radius,
+        }
+      : null;
+  }
+
+  /** Overwrite a vehicle body's physical state after collision resolution. */
+  private setVehicleBody(ref: DamageableVehicleRef, body: Car): void {
+    if (ref.kind === 'car') {
+      this.cars[ref.index] = body;
+      return;
+    }
+    if (ref.kind === 'ambulance') {
+      if (this.ambulance !== ref.vehicle) return;
+      const next = {
+        ...ref.vehicle,
+        pos: body.pos,
+        heading: body.heading,
+        speed: body.speed,
+        radius: body.radius,
+      };
+      this.ambulance = next;
+      ref.vehicle = next;
+      return;
+    }
+    if (ref.kind === 'tow') {
+      const idx = this.tows.indexOf(ref.vehicle);
+      if (idx === -1) return;
+      const next = {
+        ...ref.vehicle,
+        pos: body.pos,
+        heading: body.heading,
+        speed: body.speed,
+        radius: body.radius,
+      };
+      this.tows[idx] = next;
+      ref.vehicle = next;
+      return;
+    }
+    const idx = this.police.indexOf(ref.vehicle);
+    if (idx === -1 || ref.vehicle.kind !== 'car') return;
+    const next = {
+      ...ref.vehicle,
+      pos: body.pos,
+      heading: body.heading,
+      speed: body.speed,
+      radius: body.radius,
+    };
+    this.police[idx] = next;
+    ref.vehicle = next;
+  }
+
+  /** Whether a damageable vehicle is the player's currently driven car. */
+  private isPlayerVehicle(ref: DamageableVehicleRef): boolean {
+    return ref.kind === 'car' && ref.index === this.drivingCarIndex;
+  }
+
+  /** Apply damage to any vehicle type, exploding it once its health runs out. */
+  private damageVehicle(ref: DamageableVehicleRef, amount: number, byPlayer: boolean): void {
+    if (ref.kind === 'car') {
+      this.damageCar(ref.index, amount, byPlayer);
+      return;
+    }
+    if (ref.kind === 'ambulance') {
+      if (this.ambulance !== ref.vehicle) return;
+      const health = ref.vehicle.health - amount;
+      if (health <= 0) {
+        this.explodeServiceVehicle(ref, byPlayer);
+      } else {
+        const next = { ...ref.vehicle, health };
+        this.ambulance = next;
+        ref.vehicle = next;
+      }
+      return;
+    }
+    if (ref.kind === 'tow') {
+      const idx = this.tows.indexOf(ref.vehicle);
+      if (idx === -1) return;
+      const health = ref.vehicle.health - amount;
+      if (health <= 0) {
+        this.explodeServiceVehicle(ref, byPlayer);
+      } else {
+        const next = { ...ref.vehicle, health };
+        this.tows[idx] = next;
+        ref.vehicle = next;
+      }
+      return;
+    }
+    const idx = this.police.indexOf(ref.vehicle);
+    if (idx === -1 || ref.vehicle.kind !== 'car') return;
+    const health = (ref.vehicle.health ?? CAR_MAX_HEALTH) - amount;
+    if (health <= 0) {
+      this.explodePatrolCar(ref, byPlayer);
+    } else {
+      const next = { ...ref.vehicle, health };
+      this.police[idx] = next;
+      ref.vehicle = next;
+    }
+  }
+
+  /** Destroy a service vehicle in an explosion and remove it from play. */
+  private explodeServiceVehicle(
+    ref: Extract<DamageableVehicleRef, { kind: 'ambulance' | 'tow' }>,
+    byPlayer: boolean,
+  ): void {
+    const vehicle =
+      ref.kind === 'ambulance'
+        ? this.ambulance === ref.vehicle
+          ? ref.vehicle
+          : null
+        : this.tows.includes(ref.vehicle)
+          ? ref.vehicle
+          : null;
+    if (!vehicle) return;
+    const center = vehicle.pos;
+    const crew = vehicle.crew;
+    if (ref.kind === 'ambulance') {
+      this.ambulance = null;
+    } else {
+      const idx = this.tows.indexOf(ref.vehicle);
+      if (idx === -1) return;
+      this.tows.splice(idx, 1);
+    }
+    if (crew) this.killOnFootNpc(crew, 'pedestrian', byPlayer);
+    this.triggerExplosion(center, byPlayer);
+  }
+
+  /** Destroy a patrol car in an explosion and remove it from play. */
+  private explodePatrolCar(
+    ref: Extract<DamageableVehicleRef, { kind: 'patrol' }>,
+    byPlayer: boolean,
+  ): void {
+    const idx = this.police.indexOf(ref.vehicle);
+    if (idx === -1 || ref.vehicle.kind !== 'car') return;
+    const center = ref.vehicle.pos;
+    this.police.splice(idx, 1);
+    this.triggerExplosion(center, byPlayer);
+  }
+
+  /** Spawn an explosion and apply its blast uniformly to actors and vehicles. */
+  private triggerExplosion(center: Vec2, byPlayer: boolean): void {
+    this.explosions.push({ pos: center, radius: EXPLOSION_RADIUS, age: 0, life: EXPLOSION_LIFE });
+    this.explosionsTriggered += 1;
+    this.noteVehicleDestroyed(byPlayer);
+
+    this.pedestrians = this.pedestrians.filter((p) => {
+      if (distance(center, p.pos) > EXPLOSION_RADIUS + p.radius) return true;
+      this.killOnFootNpc(p.pos, 'pedestrian', byPlayer);
+      return false;
+    });
+    this.police = this.police.filter((cop) => {
+      if (cop.kind !== 'foot' || distance(center, cop.pos) > EXPLOSION_RADIUS + cop.radius) return true;
+      this.killOnFootNpc(cop.pos, 'police', byPlayer);
+      return false;
+    });
+    if (
+      this.ambulance?.crew &&
+      distance(center, this.ambulance.crew) <= EXPLOSION_RADIUS + this.player.radius
+    ) {
+      this.killAmbulanceCrew(byPlayer);
+    }
+    for (let i = this.tows.length - 1; i >= 0; i--) {
+      const crew = this.tows[i].crew;
+      if (crew && distance(center, crew) <= EXPLOSION_RADIUS + this.player.radius) {
+        this.killTowCrew(i, byPlayer);
+      }
+    }
+    if (distance(center, this.focus) <= EXPLOSION_RADIUS + this.player.radius) {
+      if (this.isDriving && distance(center, this.drivingCar!.pos) <= EXPLOSION_RADIUS + this.drivingCar!.radius) {
+        this.drivingCarIndex = null; // thrown clear of the wreck they were driving
+        this.player = { ...this.player, pos: center };
+      }
+      this.applyPlayerDamage(EXPLOSION_DAMAGE);
+    }
+    for (const ref of this.damageableVehicles()) {
+      const body = this.vehicleBody(ref);
+      if (!body) continue;
+      if (distance(center, body.pos) <= EXPLOSION_RADIUS + body.radius) {
+        this.damageVehicle(ref, EXPLOSION_CAR_DAMAGE, byPlayer);
+      }
+    }
+  }
+
   /** Age corpses; one left out of frame long enough is cleared and a fresh
    * pedestrian respawns elsewhere so the streets stay populated. */
   private updateCorpses(dt: number): void {
@@ -808,6 +1043,7 @@ export class World {
       age: 0,
       speed: 0,
       blocked: 0,
+      health: CAR_MAX_HEALTH,
     };
   }
 
@@ -912,23 +1148,26 @@ export class World {
     return obstacles;
   }
 
-  /** Push any overlapping cars apart so they collide instead of passing through,
-   * and damage both from the impact so repeated ramming eventually destroys a car. */
-  private resolveCarCollisions(): void {
-    for (let i = 0; i < this.cars.length; i++) {
-      if (this.towedCars[i]) continue;
-      for (let j = i + 1; j < this.cars.length; j++) {
-        if (this.towedCars[j]) continue;
-        const a = this.cars[i];
-        const b = this.cars[j];
+  /** Push overlapping vehicles apart so they collide instead of passing through,
+   * and damage both from the impact so repeated ramming can destroy any vehicle. */
+  private resolveVehicleCollisions(): void {
+    const refs = this.damageableVehicles();
+    for (let i = 0; i < refs.length; i++) {
+      const refA = refs[i];
+      const a = this.vehicleBody(refA);
+      if (!a) continue;
+      for (let j = i + 1; j < refs.length; j++) {
+        const refB = refs[j];
+        const b = this.vehicleBody(refB);
+        if (!b) continue;
         const delta = sub(a.pos, b.pos);
         const dist = length(delta);
         if (dist >= a.radius + b.radius) continue; // not touching
         const [na, nb] = collideCars(a, b);
-        this.cars[i] = na;
-        this.cars[j] = nb;
+        this.setVehicleBody(refA, na);
+        this.setVehicleBody(refB, nb);
         // Impact = closing speed along the contact normal; a hard enough knock
-        // damages both cars (so being rammed repeatedly blows a car up too).
+        // damages both vehicles (so repeated ramming blows any of them up too).
         const normal = dist === 0 ? vec2(1, 0) : normalize(delta);
         const velA = scale(fromAngle(a.heading), a.speed);
         const velB = scale(fromAngle(b.heading), b.speed);
@@ -936,31 +1175,12 @@ export class World {
         if (closing > CAR_RAM_THRESHOLD) {
           const dmg = (closing - CAR_RAM_THRESHOLD) * CAR_RAM_DAMAGE_SCALE;
           // A ram is the player's doing only when their own car is the rammer:
-          // each car's damage is "by player" when the OTHER car is the player's.
-          this.damageCar(i, dmg, j === this.drivingCarIndex);
-          this.damageCar(j, dmg, i === this.drivingCarIndex);
+          // each vehicle's damage is "by player" when the OTHER vehicle is theirs.
+          this.damageVehicle(refA, dmg, this.isPlayerVehicle(refB));
+          this.damageVehicle(refB, dmg, this.isPlayerVehicle(refA));
         }
       }
     }
-  }
-
-  /** Make patrol cars physically collide with the player's car (no driving through). */
-  private resolvePoliceVehicleCollisions(): void {
-    const idx = this.drivingCarIndex;
-    if (idx === null || this.towedCars[idx]) return;
-    let car = this.cars[idx];
-    this.police = this.police.map((cop) => {
-      if (cop.kind !== 'car') return cop;
-      const [movedCar, movedCop] = collideCars(car, {
-        pos: cop.pos,
-        heading: cop.heading,
-        speed: 0,
-        radius: cop.radius,
-      });
-      car = movedCar;
-      return { ...cop, pos: movedCop.pos };
-    });
-    this.cars[idx] = car;
   }
 
   /** Collect any ammo pickup the player is standing on (on foot or driving). */
@@ -1117,9 +1337,12 @@ export class World {
       const copIdx = this.police.findIndex((cop) => bulletHits(stepped, cop.pos, cop.radius));
       if (copIdx !== -1) {
         const cop = this.police[copIdx];
-        this.police.splice(copIdx, 1);
-        if (cop.kind === 'foot') this.killOnFootNpc(cop.pos, 'police', true);
-        else this.registerKill('police');
+        if (cop.kind === 'foot') {
+          this.police.splice(copIdx, 1);
+          this.killOnFootNpc(cop.pos, 'police', true);
+        } else {
+          this.damageVehicle({ kind: 'patrol', vehicle: cop }, stepped.damage, true);
+        }
         continue;
       }
       if (this.ambulance?.crew && bulletHits(stepped, this.ambulance.crew, this.player.radius)) {
@@ -1131,6 +1354,15 @@ export class World {
       );
       if (towIdx !== -1) {
         this.killTowCrew(towIdx, true);
+        continue;
+      }
+      if (this.ambulance && bulletHits(stepped, this.ambulance.pos, this.ambulance.radius)) {
+        this.damageVehicle({ kind: 'ambulance', vehicle: this.ambulance }, stepped.damage, true);
+        continue;
+      }
+      const tow = this.tows.find((t) => bulletHits(stepped, t.pos, t.radius));
+      if (tow) {
+        this.damageVehicle({ kind: 'tow', vehicle: tow }, stepped.damage, true);
         continue;
       }
       // Shooting a car damages it; enough hits destroy it. The car the player is
@@ -1171,42 +1403,7 @@ export class World {
     this.carDrivers[idx] = null;
     const center = this.cars[idx].pos;
     this.cars[idx] = { ...this.cars[idx], speed: 0 };
-
-    this.explosions.push({ pos: center, radius: EXPLOSION_RADIUS, age: 0, life: EXPLOSION_LIFE });
-    this.explosionsTriggered += 1;
-    if (byPlayer) {
-      this.kills += 1;
-      this.score = award(this.score, SCORE_PER_CAR);
-      this.wanted = addHeat(this.wanted, CRIME_HEAT.hitPedestrian);
-    }
-
-    // The blast catches pedestrians, police, the player, and other cars.
-    this.pedestrians = this.pedestrians.filter((p) => {
-      if (distance(center, p.pos) > EXPLOSION_RADIUS + p.radius) return true;
-      this.addCorpse(p.pos);
-      if (byPlayer) this.registerKill('pedestrian');
-      return false;
-    });
-    this.police = this.police.filter((cop) => {
-      if (distance(center, cop.pos) > EXPLOSION_RADIUS + cop.radius) return true;
-      if (byPlayer) this.registerKill('police');
-      return false;
-    });
-    if (distance(center, this.focus) <= EXPLOSION_RADIUS + this.player.radius) {
-      if (this.isDriving && this.drivingCarIndex === idx) {
-        this.drivingCarIndex = null; // thrown clear of the wreck they were driving
-        this.player = { ...this.player, pos: center };
-      }
-      this.applyPlayerDamage(EXPLOSION_DAMAGE);
-    }
-    // Chain reaction: other cars in range detonate too, inheriting the cause so
-    // a blast the player set off keeps crediting them (and an NPC one never does).
-    this.cars.forEach((car, i) => {
-      if (i === idx || this.wreckedCars[i]) return;
-      if (distance(center, car.pos) <= EXPLOSION_RADIUS + car.radius) {
-        this.damageCar(i, EXPLOSION_CAR_DAMAGE, byPlayer);
-      }
-    });
+    this.triggerExplosion(center, byPlayer);
   }
 
   /** Advance active explosions, dropping those whose visual has finished. */
@@ -1289,7 +1486,14 @@ export class World {
       const spawn = this.policeSpawns[this.police.length % this.policeSpawns.length];
       // Alternate between officers on foot and patrol cars.
       const kind: 'foot' | 'car' = this.police.length % 2 === 0 ? 'foot' : 'car';
-      this.police.push({ pos: spawn, heading: 0, radius: kind === 'car' ? 14 : 12, kind });
+      this.police.push({
+        pos: spawn,
+        heading: 0,
+        radius: kind === 'car' ? 14 : 12,
+        kind,
+        speed: 0,
+        health: kind === 'car' ? CAR_MAX_HEALTH : undefined,
+      });
     }
 
     // A speeding car mows down officers on foot (patrol cars are immune).
@@ -1319,8 +1523,9 @@ export class World {
         : undefined;
     this.police = this.police.map((cop) => {
       if (cop.kind === 'car' && this.city) {
-        if (arrestable && this.patrolAtDeployRange(cop)) return cop; // pull up, don't ram
-        return stepPoliceCar(cop, this.focus, this.city, dt, policeSpeedFor('car', this.wantedStars));
+        if (arrestable && this.patrolAtDeployRange(cop)) return { ...cop, speed: 0 }; // pull up, don't ram
+        const speed = policeSpeedFor('car', this.wantedStars);
+        return { ...stepPoliceCar(cop, this.focus, this.city, dt, speed), speed };
       }
       // An officer on foot charges straight at the player whenever no building
       // blocks the line of sight; the flow field is only needed to route around
@@ -1333,7 +1538,7 @@ export class World {
           ? (flowWaypoint(this.navGrid, this.copFlow, cop.pos) ?? this.focus)
           : this.focus;
       const stepped = stepPolice(cop, waypoint, dt, policeSpeedFor(cop.kind, this.wantedStars));
-      return { ...stepped, pos: resolveCircleRects(stepped.pos, stepped.radius, this.walls) };
+      return { ...stepped, pos: resolveCircleRects(stepped.pos, stepped.radius, this.walls), speed: 0 };
     });
 
     this.updatePoliceShooting(dt);

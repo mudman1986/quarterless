@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   World,
+  CAR_MAX_HEALTH,
   SCORE_PER_PEDESTRIAN,
   SCORE_PER_POLICE,
   PLAYER_MAX_HEALTH,
@@ -242,10 +243,16 @@ describe('World police and wanted level', () => {
       bounds: { width: 4000, height: 4000 },
     });
     w.tick(controls({ action: true }), 1 / 60);
-    for (let i = 0; i < 200; i++) w.tick(controls({ up: true }), 1 / 60);
-    // One pedestrian alone is a single star; reaching two proves an officer on
-    // foot was also run over (which adds far more heat).
-    expect(w.wantedStars).toBeGreaterThanOrEqual(2);
+    let reachedTwoStars = false;
+    for (let i = 0; i < 200; i++) {
+      w.tick(controls({ up: true }), 1 / 60);
+      reachedTwoStars ||= w.wantedStars >= 2;
+      if (w.isWasted || w.isBusted) break;
+    }
+    // One pedestrian alone is a single star; reaching two at any point proves
+    // an officer on foot was also run over (which adds far more heat). The run
+    // may later end if the ensuing vehicle pile-up explodes.
+    expect(reachedTwoStars).toBe(true);
   });
 });
 
@@ -1137,6 +1144,80 @@ describe('World car explosions', () => {
     expect(w.wantedStars).toBe(0); // the player did nothing: no heat
     expect(w.kills).toBe(0);
     expect(w.score.current).toBe(0);
+  });
+
+  it('blows up an ambulance that is repeatedly rammed by a car', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    const laneY = tileCenter(city.spec, 0, 4).y;
+    const w = new World({
+      player: player(),
+      cars: [{ pos: tileCenter(city.spec, 1, 4), heading: 0, speed: 0, radius: 12 }],
+      city,
+      carDrivers: [{ dir: vec2(1, 0) }],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+    w.lights = createTrafficLights(0); // east-west green: the rammer keeps going
+    w.ambulance = {
+      pos: tileCenter(city.spec, 3, 4),
+      heading: 0,
+      radius: 14,
+      dir: vec2(1, 0),
+      target: vec2(tileCenter(city.spec, 3, 4).x + 200, laneY),
+      phase: 'collect',
+      crew: tileCenter(city.spec, 3, 4),
+      age: 0,
+      speed: 0,
+      blocked: 0,
+      health: CAR_MAX_HEALTH,
+    };
+
+    for (let i = 0; i < 900 && w.ambulance; i++) w.tick(controls(), 1 / 60);
+    expect(w.ambulance).toBeNull();
+    expect(w.explosionsTriggered).toBeGreaterThanOrEqual(1);
+  });
+
+  it('destroys a tow truck after enough shots, leaving an explosion', () => {
+    const w = new World({
+      player: player(),
+      cars: [carAt(400, 400)],
+      bounds: { width: 4000, height: 4000 },
+    });
+    w.tows = [
+      {
+        pos: vec2(140, 0),
+        heading: Math.PI,
+        radius: 14,
+        dir: vec2(-1, 0),
+        target: vec2(0, 0),
+        phase: 'approach',
+        crew: null,
+        age: 0,
+        speed: 0,
+        blocked: 0,
+        health: CAR_MAX_HEALTH,
+        targetCar: 0,
+      },
+    ];
+
+    for (let i = 0; i < 180 && w.tows.length > 0; i++) w.tick(controls({ fire: true }), 1 / 60);
+    expect(w.tows).toHaveLength(0);
+    expect(w.explosionsTriggered).toBeGreaterThanOrEqual(1);
+  });
+
+  it('destroys a patrol car after enough shots, leaving an explosion', () => {
+    const w = new World({
+      player: player(),
+      police: [{ pos: vec2(140, 0), heading: Math.PI, radius: 14, kind: 'car' }],
+      bounds: { width: 4000, height: 4000 },
+    });
+    w.wanted = addHeat(createWanted(), CRIME_HEAT.hitPolice); // keep the patrol car active
+
+    for (let i = 0; i < 180 && w.police.some((c) => c.kind === 'car'); i++) {
+      w.tick(controls({ fire: true }), 1 / 60);
+    }
+    expect(w.police.some((c) => c.kind === 'car')).toBe(false);
+    expect(w.explosionsTriggered).toBeGreaterThanOrEqual(1);
   });
 });
 
