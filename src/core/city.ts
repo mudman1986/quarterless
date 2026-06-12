@@ -73,6 +73,8 @@ export interface ParkingSpot {
 }
 
 export const DEFAULT_CITY: CitySpec = { cols: 25, rows: 25, tile: 64, block: 5 };
+export const CROSSWALK_ROAD_MARGIN = 4;
+export const CROSSWALK_WIDTH_RATIO = 0.5;
 
 /** Thickness in pixels of the rails lining each bridge. */
 const FENCE = 5;
@@ -232,17 +234,47 @@ function buildSidewalks(buildings: readonly Rect[]): Rect[] {
   return strips;
 }
 
-/** A crossing zone on every (dry) intersection tile. */
+/**
+ * Crossing zones at each intersection. A crosswalk sits on the road tiles
+ * immediately *adjacent* to an intersection (its four approaches), not on the
+ * junction tile itself: those approach tiles are the road squares a pedestrian
+ * actually steps across to get from one sidewalk to the other. (The junction
+ * tile is surrounded by road on all sides, so nobody could ever reach it.)
+ */
 function buildCrosswalks(
   spec: CitySpec,
   isRoad: (tx: number, ty: number) => boolean,
   isWater: (tx: number, ty: number) => boolean,
 ): Rect[] {
   const { cols, rows, tile, block } = spec;
+  const crosswalkSpan = (tile - CROSSWALK_ROAD_MARGIN * 2) * CROSSWALK_WIDTH_RATIO;
+  const crosswalkInset = (tile - crosswalkSpan) * 0.5;
+  const crossable = (tx: number, ty: number): boolean =>
+    tx >= 0 && ty >= 0 && tx < cols && ty < rows && isRoad(tx, ty) && !isWater(tx, ty);
+  const seen = new Set<string>();
   const zones: Rect[] = [];
-  for (let tx = 0; tx < cols; tx += block) {
-    for (let ty = 0; ty < rows; ty += block) {
-      if (isRoad(tx, ty) && !isWater(tx, ty)) zones.push(rect(tx * tile, ty * tile, tile, tile));
+  for (let bx = 0; bx < cols; bx += block) {
+    for (let by = 0; by < rows; by += block) {
+      if (!crossable(bx, by)) continue; // dry road intersection only
+      for (const [dx, dy] of [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ]) {
+        const tx = bx + dx;
+        const ty = by + dy;
+        const key = `${tx},${ty}`;
+        if (crossable(tx, ty) && !seen.has(key)) {
+          seen.add(key);
+          const verticalRoad = tx % block === 0;
+          zones.push(
+            verticalRoad
+              ? rect(tx * tile, ty * tile + crosswalkInset, tile, crosswalkSpan)
+              : rect(tx * tile + crosswalkInset, ty * tile, crosswalkSpan, tile),
+          );
+        }
+      }
     }
   }
   return zones;

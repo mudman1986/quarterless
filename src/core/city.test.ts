@@ -1,5 +1,13 @@
+import {
+  boundaryWalls,
+  buildCity,
+  CROSSWALK_ROAD_MARGIN,
+  CROSSWALK_WIDTH_RATIO,
+  DEFAULT_CITY,
+  tileCenter,
+  type City,
+} from './city';
 import { describe, it, expect } from 'vitest';
-import { buildCity, tileCenter, boundaryWalls, DEFAULT_CITY } from './city';
 import { rect, circleIntersectsRect, pointInRect, randomPointInRect } from './collision';
 import { vec2 } from './vector';
 
@@ -177,14 +185,29 @@ describe('sidewalks, crosswalks and parking', () => {
     }
   });
 
-  it('places a crosswalk on each intersection tile', () => {
+  it('places crosswalks on the road approaches to each intersection', () => {
     expect(city.crosswalks.length).toBeGreaterThan(0);
-    // Every crosswalk sits on a road intersection (both coords on a block edge).
+    const { block, tile } = city.spec;
+    const expectedSpan = (tile - CROSSWALK_ROAD_MARGIN * 2) * CROSSWALK_WIDTH_RATIO;
     for (const cw of city.crosswalks) {
       const tx = Math.round(cw.x / city.spec.tile);
       const ty = Math.round(cw.y / city.spec.tile);
-      expect(tx % city.spec.block).toBe(0);
-      expect(ty % city.spec.block).toBe(0);
+      // A crossing tile is a road tile with exactly one coordinate on a block
+      // edge (the road line) and the other one tile off it (the approach) —
+      // i.e. adjacent to an intersection, never the junction tile itself.
+      const onColLine = tx % block === 0;
+      const onRowLine = ty % block === 0;
+      expect(onColLine !== onRowLine).toBe(true); // exactly one, not both
+      expect(city.isRoad(tx, ty)).toBe(true);
+      if (onColLine) {
+        expect(cw.x).toBe(tx * tile);
+        expect(cw.w).toBe(tile);
+        expect(cw.h).toBe(expectedSpan);
+      } else {
+        expect(cw.y).toBe(ty * tile);
+        expect(cw.w).toBe(expectedSpan);
+        expect(cw.h).toBe(tile);
+      }
     }
   });
 

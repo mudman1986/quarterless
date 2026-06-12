@@ -1,5 +1,12 @@
+import {
+  buildCity,
+  CROSSWALK_ROAD_MARGIN,
+  CROSSWALK_WIDTH_RATIO,
+  tileCenter,
+  type City,
+  type ParkingSpot,
+} from '../../core/city';
 import Phaser from 'phaser';
-import { buildCity, tileCenter, type City, type ParkingSpot } from '../../core/city';
 import { World } from '../../core/world';
 import { createMission, type Mission } from '../../core/mission';
 import {
@@ -201,9 +208,7 @@ export class CityScene extends Phaser.Scene {
 
     this.city = buildCity(CITY_SPEC);
     createGameTextures(this);
-    this.intersectionCenters = this.city.crosswalks.map((cw) =>
-      vec2(cw.x + cw.w / 2, cw.y + cw.h / 2),
-    );
+    this.intersectionCenters = this.computeIntersectionCenters();
     const spawn = tileCenter(this.city.spec, this.city.spec.block, this.city.spec.block);
 
     const traffic = this.spawnTraffic();
@@ -465,6 +470,21 @@ export class CityScene extends Phaser.Scene {
   }
 
   /** Draw sidewalks, crosswalk stripes, and parking bay outlines. */
+  /** Centres of every dry road intersection (block-aligned road tiles), used to
+   * place traffic-light indicators and night-time street lights. */
+  private computeIntersectionCenters(): Vec2[] {
+    const { cols, rows, block } = this.city.spec;
+    const centers: Vec2[] = [];
+    for (let tx = 0; tx < cols; tx += block) {
+      for (let ty = 0; ty < rows; ty += block) {
+        if (this.city.isRoad(tx, ty) && !this.city.isWater(tx, ty)) {
+          centers.push(tileCenter(this.city.spec, tx, ty));
+        }
+      }
+    }
+    return centers;
+  }
+
   private drawStreets(): void {
     const tile = this.city.spec.tile;
     const g = this.add.graphics().setDepth(0);
@@ -473,23 +493,21 @@ export class CityScene extends Phaser.Scene {
     g.fillStyle(COLORS.sidewalk, 1);
     for (const s of this.city.sidewalks) g.fillRect(s.x, s.y, s.w, s.h);
 
-    // Crosswalks: a zebra crossing across each of the four approaches to an
-    // intersection (one band per side), leaving the middle of the box clear so
-    // it reads as a real junction rather than a painted-over square.
+    // Crosswalks: zebra stripes laid across the road at each crossing tile.
+    // A tile on a vertical road is crossed east-west (upright bars); one on a
+    // horizontal road is crossed north-south (flat bars).
     g.fillStyle(COLORS.crosswalk, 0.9);
-    const band = 10; // how far the crossing reaches in from the kerb
-    const bars = 4; // stripes per crossing
-    const step = tile / bars;
-    const barT = step * 0.5; // stripe thickness (half on, half gap)
+    const bars = 4;
+    const stripe = tile / (bars * 2); // half on, half gap
     for (const cw of this.city.crosswalks) {
+      const verticalRoad = cw.w > cw.h; // crossed east-west
       for (let k = 0; k < bars; k++) {
-        const off = k * step + (step - barT) / 2;
-        // North & south approaches: upright stripes spanning the band depth.
-        g.fillRect(cw.x + off, cw.y, barT, band);
-        g.fillRect(cw.x + off, cw.y + tile - band, barT, band);
-        // East & west approaches: stripes laid the other way.
-        g.fillRect(cw.x, cw.y + off, band, barT);
-        g.fillRect(cw.x + tile - band, cw.y + off, band, barT);
+        const off = k * 2 * stripe + stripe / 2;
+        if (verticalRoad) {
+          g.fillRect(cw.x + off, cw.y, stripe, cw.h); // upright bars
+        } else {
+          g.fillRect(cw.x, cw.y + off, cw.w, stripe); // flat bars
+        }
       }
     }
 

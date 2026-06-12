@@ -8,7 +8,11 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  // One worker: the specs each boot a full headless Phaser game, and running
+  // several WebGL instances at once starves the frame loop enough to make the
+  // stateful timing assertions flaky. Serial keeps them deterministic (this is
+  // already the CI behaviour) and the suite is small.
+  workers: 1,
   reporter: 'html',
   use: {
     baseURL: 'http://127.0.0.1:4173',

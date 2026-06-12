@@ -622,6 +622,38 @@ describe('World traffic rerouting and lights', () => {
       if (onRoadRow) expect(atCrosswalkColumn).toBe(true);
     }
   });
+
+  it('lets a calm pedestrian cross the road at a crosswalk to reach the far side', () => {
+    // A city with a building margin so sidewalks sit just off the road.
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4, margin: 10 });
+    // Crosswalks are the road tiles adjacent to an intersection; (4,3) is the
+    // approach just north of junction (4,4) on the vertical road. A pedestrian
+    // crosses it east-west from the west sidewalk to the east sidewalk.
+    const ped: Pedestrian = {
+      pos: vec2(248, 224), // west sidewalk, level with the crossing
+      heading: 0,
+      radius: 7,
+      state: 'wander',
+      target: vec2(330, 224), // east sidewalk, straight across the crosswalk
+    };
+    const w = new World({
+      player: player(),
+      city,
+      pedestrians: [ped],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.5,
+    });
+
+    let reachedFarSide = false;
+    for (let i = 0; i < 1200; i++) {
+      w.tick(controls(), 1 / 60);
+      if (w.pedestrians[0].pos.x >= 320) {
+        reachedFarSide = true; // made it across the road to the east side
+        break;
+      }
+    }
+    expect(reachedFarSide).toBe(true); // it actually crossed, rather than being stuck
+  });
 });
 
 describe('World living world', () => {
