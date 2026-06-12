@@ -112,6 +112,11 @@ const DAY_LENGTH = 1800;
  * truck's centre the cab-roof light sits. */
 const TOW_BEACON_BLINK_MS = 280;
 const TOW_BEACON_FWD = 9.5;
+/** Ambulance light bar: strobe interval (ms), and how far forward (px) and to
+ * each side (px) of the centre the blue and red lamps sit (over the roof bar). */
+const AMB_BEACON_BLINK_MS = 220;
+const AMB_BEACON_FWD = 6.5;
+const AMB_BEACON_SIDE = 3.5;
 
 /**
  * Renders the core `World` simulation with Phaser. The scene owns no game
@@ -135,6 +140,9 @@ export class CityScene extends Phaser.Scene {
   private lightsGfx!: Phaser.GameObjects.Graphics;
   private corpseGfx!: Phaser.GameObjects.Graphics;
   private ambulanceSprite!: Phaser.GameObjects.Image;
+  /** The ambulance's roof light bar: two lamps that strobe blue then red. */
+  private ambulanceBeaconBlue?: Phaser.GameObjects.Container;
+  private ambulanceBeaconRed?: Phaser.GameObjects.Container;
   private towSprites: Phaser.GameObjects.Image[] = [];
   /** Flashing amber beacon overlaid on each tow truck (parallel to `towSprites`). */
   private towBeacons: Phaser.GameObjects.Container[] = [];
@@ -678,14 +686,48 @@ export class CityScene extends Phaser.Scene {
     }
   }
 
-  /** Show the ambulance when one is active, tracking its position and heading. */
+  /** Show the ambulance when one is active, tracking its position and heading.
+   * Its roof light bar strobes blue then red the whole time it is on a call. */
   private syncAmbulance(): void {
     const amb = this.world.ambulance;
-    if (amb) {
-      this.ambulanceSprite.setVisible(true).setPosition(amb.pos.x, amb.pos.y).setRotation(amb.heading);
-    } else {
+    if (!amb) {
       this.ambulanceSprite.setVisible(false);
+      this.ambulanceBeaconBlue?.setVisible(false);
+      this.ambulanceBeaconRed?.setVisible(false);
+      return;
     }
+    this.ambulanceSprite.setVisible(true).setPosition(amb.pos.x, amb.pos.y).setRotation(amb.heading);
+
+    if (!this.ambulanceBeaconBlue || !this.ambulanceBeaconRed) {
+      const lamp = (tint: number, core: number): Phaser.GameObjects.Container => {
+        const halo = this.add
+          .image(0, 0, 'glow')
+          .setScale(0.1)
+          .setTint(tint)
+          .setBlendMode(Phaser.BlendModes.ADD);
+        const bulb = this.add.circle(0, 0, 2, core);
+        return this.add.container(0, 0, [halo, bulb]).setDepth(7);
+      };
+      this.ambulanceBeaconBlue = lamp(0x3b82f6, 0xbfdbfe);
+      this.ambulanceBeaconRed = lamp(0xef4444, 0xfecaca);
+    }
+
+    // The two lamps sit on the cab roof, one each side of the centreline, and
+    // strobe in alternation — blue, then red — like a real ambulance light bar.
+    const cos = Math.cos(amb.heading);
+    const sin = Math.sin(amb.heading);
+    const baseX = amb.pos.x + cos * AMB_BEACON_FWD;
+    const baseY = amb.pos.y + sin * AMB_BEACON_FWD;
+    this.ambulanceBeaconBlue
+      .setVisible(true)
+      .setPosition(baseX + sin * AMB_BEACON_SIDE, baseY - cos * AMB_BEACON_SIDE);
+    this.ambulanceBeaconRed
+      .setVisible(true)
+      .setPosition(baseX - sin * AMB_BEACON_SIDE, baseY + cos * AMB_BEACON_SIDE);
+
+    const blueOn = Math.floor(this.time.now / AMB_BEACON_BLINK_MS) % 2 === 0;
+    this.ambulanceBeaconBlue.setAlpha(blueOn ? 1 : 0.12);
+    this.ambulanceBeaconRed.setAlpha(blueOn ? 0.12 : 1);
   }
 
   /** Show every active tow truck, tracking each one's position and heading. Its
