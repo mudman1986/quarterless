@@ -1,15 +1,18 @@
 import {
   boundaryWalls,
   buildCity,
+  CROSSWALK_BELT_WIDTH,
   crosswalkStripeRects,
-  CROSSWALK_ROAD_MARGIN,
-  CROSSWALK_WIDTH_RATIO,
   DEFAULT_CITY,
   tileCenter,
 } from './city';
 import { describe, it, expect } from 'vitest';
 import { rect, circleIntersectsRect, pointInRect, randomPointInRect } from './collision';
+import { CITY_SPEC } from '../game/citySpec';
 import { vec2 } from './vector';
+
+const overlapsRect = (a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }): boolean =>
+  a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 
 describe('buildCity', () => {
   const city = buildCity(DEFAULT_CITY);
@@ -42,10 +45,11 @@ describe('buildCity', () => {
     expect(kinds).toEqual(new Set(['policeStation', 'hospital', 'towYard']));
     expect(new Set(city.facilities.map((f) => f.buildingIndex)).size).toBe(city.facilities.length);
     for (const facility of city.facilities) {
-      const insideBuilding = city.buildings.some((b) => pointInRect(facility.spawn, b));
+      expect(pointInRect(facility.spawn, facility.building)).toBe(true);
+      const insideBuilding = city.buildings.some((b) => pointInRect(facility.roadSpawn, b));
       expect(insideBuilding).toBe(false);
-      const tx = Math.floor(facility.spawn.x / city.spec.tile);
-      const ty = Math.floor(facility.spawn.y / city.spec.tile);
+      const tx = Math.floor(facility.roadSpawn.x / city.spec.tile);
+      const ty = Math.floor(facility.roadSpawn.y / city.spec.tile);
       expect(city.isRoad(tx, ty)).toBe(true);
     }
   });
@@ -93,7 +97,12 @@ describe('buildCity with wider roads', () => {
   });
 
   it('spans crosswalks across the full wide-road frontage', () => {
-    const rightApproach = city.crosswalks.find((cw) => cw.x === 4 * city.spec.tile + (city.spec.tile - cw.w) * 0.5);
+    const rightApproach = city.crosswalks.find(
+      (cw) =>
+        cw.x === 4 * city.spec.tile + (city.spec.tile - 40) * 0.5 &&
+        cw.y === 0 &&
+        cw.w === 40,
+    );
     expect(rightApproach).toBeDefined();
     expect(rightApproach!.h).toBe(4 * city.spec.tile);
   });
@@ -106,11 +115,31 @@ describe('buildCity with wider roads', () => {
     expect(snugPolice).toBeDefined();
     expect(roomyPolice).toBeDefined();
     expect(snugPolice!.spawn).not.toEqual(roomyPolice!.spawn);
+    expect(snugPolice!.roadSpawn).not.toEqual(roomyPolice!.roadSpawn);
+  });
+});
+
+describe('buildCity with the live wide river layout', () => {
+  const city = buildCity(CITY_SPEC);
+  const expectedBuildingSize = (CITY_SPEC.block - CITY_SPEC.roadWidth!) * CITY_SPEC.tile - 2 * CITY_SPEC.margin!;
+
+  it('keeps full-size building footprints beside the river instead of clipping them into slivers', () => {
+    expect(city.buildings.every((b) => b.w === expectedBuildingSize && b.h === expectedBuildingSize)).toBe(true);
+  });
+
+  it('does not place sidewalk strips over the water band', () => {
+    const wetSidewalk = city.sidewalks.some((sidewalk) => city.water.some((water) => overlapsRect(sidewalk, water)));
+    expect(wetSidewalk).toBe(false);
+  });
+
+  it('keeps crosswalks off the sidewalks', () => {
+    const overlapping = city.crosswalks.some((crosswalk) => city.sidewalks.some((sidewalk) => overlapsRect(crosswalk, sidewalk)));
+    expect(overlapping).toBe(false);
   });
 });
 
 describe('crosswalkStripeRects', () => {
-  it('starts at the block corner and reaches the far kerb on a wide north-south crossing', () => {
+  it('starts at the sidewalk edge and reaches the far kerb on a wide north-south crossing', () => {
     const cw = rect(0, 300, 256, 32);
     const stripes = crosswalkStripeRects(cw);
     expect(stripes[0]).toBeDefined();
@@ -119,7 +148,7 @@ describe('crosswalkStripeRects', () => {
     expect(last.x + last.w).toBeCloseTo(cw.x + cw.w);
   });
 
-  it('starts at the block corner and reaches the far kerb on a wide east-west crossing', () => {
+  it('starts at the sidewalk edge and reaches the far kerb on a wide east-west crossing', () => {
     const cw = rect(400, 0, 32, 256);
     const stripes = crosswalkStripeRects(cw);
     expect(stripes[0]).toBeDefined();
@@ -180,6 +209,25 @@ describe('buildCity with a river', () => {
   it('lines every bridge with two side rails', () => {
     // Two bridges (columns 0 and 10), two rails each.
     expect(city.fences).toHaveLength(4);
+  });
+
+  it('bridges the full width of a wide road band', () => {
+    const wide = buildCity({
+      cols: 24,
+      rows: 24,
+      tile: 64,
+      block: 6,
+      roadWidth: 4,
+      rivers: [{ orientation: 'horizontal', start: 11, span: 3, bridgeEvery: 2 }],
+    });
+    for (let tx = 0; tx < 4; tx++) {
+      expect(wide.isWater(tx, 12)).toBe(false);
+      expect(wide.isBridge(tx, 12)).toBe(true);
+    }
+    for (let tx = 6; tx < 10; tx++) {
+      expect(wide.isWater(tx, 12)).toBe(true);
+      expect(wide.isBridge(tx, 12)).toBe(false);
+    }
   });
 
   it('removes buildings from the water band', () => {
@@ -261,10 +309,10 @@ describe('sidewalks, crosswalks and parking', () => {
   it('places crosswalks on the road approaches to each intersection', () => {
     expect(city.crosswalks.length).toBeGreaterThan(0);
     const { block, tile } = city.spec;
-    const expectedSpan = (tile - CROSSWALK_ROAD_MARGIN * 2) * CROSSWALK_WIDTH_RATIO;
+    const expectedRoadSpan = tile;
     for (const cw of city.crosswalks) {
-      const tx = Math.round(cw.x / city.spec.tile);
-      const ty = Math.round(cw.y / city.spec.tile);
+      const tx = Math.floor((cw.x + cw.w / 2) / city.spec.tile);
+      const ty = Math.floor((cw.y + cw.h / 2) / city.spec.tile);
       // A crossing tile is a road tile with exactly one coordinate on a block
       // edge (the road line) and the other one tile off it (the approach) —
       // i.e. adjacent to an intersection, never the junction tile itself.
@@ -274,12 +322,12 @@ describe('sidewalks, crosswalks and parking', () => {
       expect(city.isRoad(tx, ty)).toBe(true);
       if (onColLine) {
         expect(cw.x).toBe(tx * tile);
-        expect(cw.w).toBe(tile);
-        expect(cw.h).toBe(expectedSpan);
+        expect(cw.w).toBe(expectedRoadSpan);
+        expect(cw.h).toBe(CROSSWALK_BELT_WIDTH);
       } else {
         expect(cw.y).toBe(ty * tile);
-        expect(cw.w).toBe(expectedSpan);
-        expect(cw.h).toBe(tile);
+        expect(cw.w).toBe(CROSSWALK_BELT_WIDTH);
+        expect(cw.h).toBe(expectedRoadSpan);
       }
     }
   });

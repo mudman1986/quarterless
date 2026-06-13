@@ -4,6 +4,7 @@ import {
   tileCoord,
   roadAt,
   openDirections,
+  isIntersection,
   obstacleAhead,
   laneChangeTarget,
   TRAFFIC_SPEED,
@@ -47,6 +48,13 @@ describe('openDirections', () => {
   it('offers only along-the-road ways on a straight stretch', () => {
     // (2,0) sits on the top road; only east/west continue onto road tiles.
     expect(openDirections(city, 2, 0)).toHaveLength(2);
+  });
+
+  it('treats every tile inside a wide crossing as part of the intersection', () => {
+    const wide = buildCity({ cols: 18, rows: 18, tile: 64, block: 6, roadWidth: 4 });
+    expect(isIntersection(wide, 2, 6)).toBe(true);
+    expect(isIntersection(wide, 3, 7)).toBe(true);
+    expect(isIntersection(wide, 4, 6)).toBe(false);
   });
 });
 

@@ -7,6 +7,7 @@ import {
 } from '../../core/city';
 import Phaser from 'phaser';
 import { World } from '../../core/world';
+import { CITY_SPEC } from '../citySpec';
 import { createMission, type Mission } from '../../core/mission';
 import {
   loadHighScore,
@@ -84,21 +85,6 @@ function safeStorage(): KeyValueStore {
   };
 }
 
-/**
- * A roomy city: 70x70 tiles, with four-lane roads, wider sidewalks, and
- * smaller buildings so there is much more forgiving driving space. A wide river
- * cuts across the middle, crossed by bridges on every other road.
- */
-const CITY_SPEC = {
-  cols: 70,
-  rows: 70,
-  tile: 64,
-  block: 6,
-  roadWidth: 4,
-  margin: 9,
-  sidewalkWidth: 30,
-  rivers: [{ orientation: 'horizontal' as const, start: 31, span: 4, bridgeEvery: 2 }],
-};
 const FIXED_STEP = 1 / 60;
 const MAX_SUBSTEPS = 5;
 const PLAYER_SIZE = 14;
@@ -358,7 +344,7 @@ export class CityScene extends Phaser.Scene {
   private policeSpawnPoints(): Vec2[] {
     const stations = this.city.facilities
       .filter((f) => f.kind === 'policeStation')
-      .map((f) => f.spawn);
+      .flatMap((f) => [f.spawn, f.roadSpawn]);
     if (stations.length > 0) return stations;
     const { width, height } = this.city;
     return [vec2(40, 40), vec2(width - 40, 40), vec2(40, height - 40), vec2(width - 40, height - 40)];

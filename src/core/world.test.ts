@@ -599,6 +599,43 @@ describe('World traffic rerouting and lights', () => {
     }
   });
 
+  it('keeps a wide-road NPC in its lane while waiting at a red light', () => {
+    const city = buildCity({ cols: 18, rows: 18, tile: 64, block: 6, roadWidth: 4 });
+    const start = tileCenter(city.spec, 2, 4);
+    const npc: Car = { pos: start, heading: Math.PI / 2, speed: 0, radius: 12 };
+    const w = new World({
+      player: player(),
+      cars: [npc],
+      city,
+      carDrivers: [{ dir: vec2(0, 1) }],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+    w.lights = createTrafficLights(0);
+
+    for (let i = 0; i < 90; i++) w.tick(controls(), 1 / 60);
+    expect(w.cars[0].pos.x).toBeCloseTo(start.x);
+  });
+
+  it('changes lanes gradually instead of teleporting sideways', () => {
+    const city = buildCity({ cols: 18, rows: 18, tile: 64, block: 6, roadWidth: 4 });
+    const start = tileCenter(city.spec, 6, 2);
+    const blocker = vec2(start.x + 40, start.y);
+    const w = new World({
+      player: { pos: blocker, angle: 0, radius: 8 },
+      cars: [{ pos: start, heading: 0, speed: 0, radius: 12 }],
+      city,
+      carDrivers: [{ dir: vec2(1, 0) }],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+
+    w.tick(controls(), 1 / 60);
+    const shift = Math.abs(w.cars[0].pos.y - start.y);
+    expect(shift).toBeGreaterThan(0);
+    expect(shift).toBeLessThan(20);
+  });
+
   it('keeps a calm pedestrian off the road except at a crosswalk', () => {
     const city = miniCity();
     // A pedestrian on a building-interior tile (off the road) with a target on
@@ -625,24 +662,38 @@ describe('World traffic rerouting and lights', () => {
       w.tick(controls(), 1 / 60);
       const p = w.pedestrians[0];
       const onRoadRow = p.pos.y > roadRowTop && p.pos.y < roadRowBottom;
-      const atCrosswalkColumn = p.pos.x > 4 * city.spec.tile && p.pos.x < 5 * city.spec.tile;
-      // It may only be within the road row if it is at the intersection crossing.
-      if (onRoadRow) expect(atCrosswalkColumn).toBe(true);
+      const onSidewalk = city.sidewalks.some((sidewalk) => pointInRect(p.pos, sidewalk));
+      const onCrosswalk = city.crosswalks.some((crosswalk) => pointInRect(p.pos, crosswalk));
+      // It may only be within the road row if it is still on kerbside pavement
+      // or at the marked crossing.
+      if (onRoadRow && !onSidewalk) expect(onCrosswalk).toBe(true);
     }
   });
 
   it('lets a calm pedestrian cross the road at a crosswalk to reach the far side', () => {
     // A city with a building margin so sidewalks sit just off the road.
     const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4, margin: 10 });
+    const y = 3 * city.spec.tile + city.spec.tile / 2;
+    const roadStart = 4 * city.spec.tile;
+    const roadEnd = 5 * city.spec.tile;
+    const westBuilding = city.buildings
+      .filter((b) => b.x + b.w <= roadStart && y >= b.y && y <= b.y + b.h)
+      .sort((a, b) => b.x + b.w - (a.x + a.w))[0];
+    const eastBuilding = city.buildings
+      .filter((b) => b.x >= roadEnd && y >= b.y && y <= b.y + b.h)
+      .sort((a, b) => a.x - b.x)[0];
+    expect(westBuilding).toBeDefined();
+    expect(eastBuilding).toBeDefined();
+    const radius = 7;
     // Crosswalks are the road tiles adjacent to an intersection; (4,3) is the
     // approach just north of junction (4,4) on the vertical road. A pedestrian
     // crosses it east-west from the west sidewalk to the east sidewalk.
     const ped: Pedestrian = {
-      pos: vec2(248, 224), // west sidewalk, level with the crossing
+      pos: vec2(westBuilding!.x + westBuilding!.w + radius, y),
       heading: 0,
-      radius: 7,
+      radius,
       state: 'wander',
-      target: vec2(330, 224), // east sidewalk, straight across the crosswalk
+      target: vec2(eastBuilding!.x - radius, y),
     };
     const w = new World({
       player: player(),
@@ -655,7 +706,7 @@ describe('World traffic rerouting and lights', () => {
     let reachedFarSide = false;
     for (let i = 0; i < 1200; i++) {
       w.tick(controls(), 1 / 60);
-      if (w.pedestrians[0].pos.x >= 320) {
+      if (w.pedestrians[0].pos.x >= ped.target.x - 5) {
         reachedFarSide = true; // made it across the road to the east side
         break;
       }
@@ -763,7 +814,7 @@ describe('World living world', () => {
     ];
 
     w.tick(controls(), 0); // dispatch without advancing away from the spawn point
-    expect(w.ambulance?.pos).toEqual(hospital!.spawn);
+    expect(w.ambulance?.pos).toEqual(hospital!.roadSpawn);
   });
 });
 
@@ -1326,7 +1377,7 @@ describe('World tow truck', () => {
     w.wreckedCars[0] = true;
 
     w.tick(controls(), 0); // dispatch without advancing away from the spawn point
-    expect(w.tows[0]?.pos).toEqual(towYard!.spawn);
+    expect(w.tows[0]?.pos).toEqual(towYard!.roadSpawn);
   });
 });
 

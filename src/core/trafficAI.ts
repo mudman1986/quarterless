@@ -34,7 +34,8 @@ export const YIELD_LANE_HALF = 26;
 /** Whether a road tile is an intersection (a road row crossing a road column). */
 export function isIntersection(city: City, tx: number, ty: number): boolean {
   const { block } = city.spec;
-  return roadAt(city, tx, ty) && tx % block === 0 && ty % block === 0;
+  const roadWidth = Math.max(1, Math.min(block, city.spec.roadWidth ?? 1));
+  return roadAt(city, tx, ty) && tx % block < roadWidth && ty % block < roadWidth;
 }
 
 /**

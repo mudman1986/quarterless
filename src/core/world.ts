@@ -216,6 +216,8 @@ export const SERVICE_SPAWN_SPACING = 36;
 export const CREW_WALK_SPEED = 55;
 /** How close the crew must get to the body/wreck (or back to their vehicle) to act. */
 export const CREW_REACH_RADIUS = 8;
+/** Lateral speed (px/s) of an NPC or service vehicle changing lanes. */
+const LANE_CHANGE_SPEED = 180;
 
 /** A dead pedestrian left on the ground (with a blood puddle, rendered later). */
 export interface Corpse {
@@ -382,7 +384,7 @@ export class World {
     this.policeSpawns = opts.policeSpawns ?? [];
     this.bounds = opts.bounds ?? { width: 1600, height: 1600 };
     this.water = opts.water ?? [];
-    this.sidewalks = opts.sidewalks ?? [];
+    this.sidewalks = opts.sidewalks ?? opts.city?.sidewalks ?? [];
     this.viewRadius = opts.viewRadius ?? DEFAULT_VIEW_RADIUS;
     this.enterRadius = opts.enterRadius ?? 28;
     this.tuning = opts.carTuning ?? DEFAULT_CAR_TUNING;
@@ -588,7 +590,7 @@ export class World {
       if (obstacleAhead(car.pos, ai.dir, obstacles)) {
         const lane = laneChangeTarget(this.city, car.pos, ai.dir, obstacles);
         if (lane) {
-          car = { ...car, pos: lane };
+          car = { ...car, pos: this.shiftTowardLane(car.pos, lane, ai.dir, dt) };
           driver = ai.blocked ? { ...ai, blocked: 0 } : ai;
         } else {
         // Wait behind a pedestrian/player in the lane; after a few seconds give
@@ -1087,11 +1089,23 @@ export class World {
     const offsetRank = Math.ceil(slot / 2);
     const offset = slot === 0 ? 0 : (slot % 2 === 1 ? 1 : -1) * offsetRank * SERVICE_SPAWN_SPACING;
     const verticalRoad =
-      facility.spawn.x < facility.building.x ||
-      facility.spawn.x > facility.building.x + facility.building.w;
+      facility.roadSpawn.x < facility.building.x ||
+      facility.roadSpawn.x > facility.building.x + facility.building.w;
     return verticalRoad
-      ? vec2(facility.spawn.x, facility.spawn.y + offset)
-      : vec2(facility.spawn.x + offset, facility.spawn.y);
+      ? vec2(facility.roadSpawn.x, facility.roadSpawn.y + offset)
+      : vec2(facility.roadSpawn.x + offset, facility.roadSpawn.y);
+  }
+
+  private shiftTowardLane(pos: Vec2, lane: Vec2, dir: Vec2, dt: number): Vec2 {
+    const maxShift = LANE_CHANGE_SPEED * dt;
+    if (dir.x !== 0) {
+      const dy = lane.y - pos.y;
+      const step = Math.sign(dy) * Math.min(Math.abs(dy), maxShift);
+      return vec2(pos.x, pos.y + step);
+    }
+    const dx = lane.x - pos.x;
+    const step = Math.sign(dx) * Math.min(Math.abs(dx), maxShift);
+    return vec2(pos.x + step, pos.y);
   }
 
   /**
@@ -1111,7 +1125,7 @@ export class World {
     if (obstacleAhead(v.pos, v.dir, obstacles)) {
       const lane = laneChangeTarget(this.city!, v.pos, v.dir, obstacles);
       if (lane) {
-        pos = lane;
+        pos = this.shiftTowardLane(v.pos, lane, v.dir, dt);
         blocked = 0;
       } else {
         blocked += dt;
@@ -1352,6 +1366,7 @@ export class World {
    * calm pedestrian should not step there (no jaywalking). */
   private onForbiddenRoad(pos: Vec2): boolean {
     if (!this.city) return false;
+    if (this.sidewalks.some((sidewalk) => pointInRect(pos, sidewalk))) return false;
     const { tx, ty } = tileCoord(this.city.spec, pos);
     if (!this.city.isRoad(tx, ty) || this.city.isWater(tx, ty)) return false;
     return !this.city.crosswalks.some((cw) => pointInRect(pos, cw));
