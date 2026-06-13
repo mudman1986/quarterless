@@ -1,5 +1,6 @@
 import {
   buildCity,
+  crosswalkStripeRects,
   tileCenter,
   type City,
   type ParkingSpot,
@@ -84,16 +85,18 @@ function safeStorage(): KeyValueStore {
 }
 
 /**
- * A roomy city: 70x70 tiles, with buildings inset from the roads (`margin`) so
- * there is comfortable driving space along every street. A wide river cuts
- * across the middle, crossed by bridges on every other road.
+ * A roomy city: 70x70 tiles, with four-lane roads, wider sidewalks, and
+ * smaller buildings so there is much more forgiving driving space. A wide river
+ * cuts across the middle, crossed by bridges on every other road.
  */
 const CITY_SPEC = {
   cols: 70,
   rows: 70,
   tile: 64,
-  block: 5,
-  margin: 18,
+  block: 6,
+  roadWidth: 4,
+  margin: 9,
+  sidewalkWidth: 30,
   rivers: [{ orientation: 'horizontal' as const, start: 31, span: 4, bridgeEvery: 2 }],
 };
 const FIXED_STEP = 1 / 60;
@@ -260,6 +263,7 @@ export class CityScene extends Phaser.Scene {
     this.createEntitySprites();
     this.setupCamera();
     this.createHud();
+    this.hud.setText(this.hudText());
     this.createMinimap();
     this.layoutHud();
 
@@ -276,7 +280,9 @@ export class CityScene extends Phaser.Scene {
   /** A lively mix of cars parked in the marked bays and cars driven by NPC traffic. */
   private spawnTraffic(): { cars: Car[]; drivers: (TrafficAI | null)[] } {
     const { spec } = this.city;
-    const { block, cols } = spec;
+    const { block, cols, rows } = spec;
+    const roadWidth = Math.max(1, Math.min(block, spec.roadWidth ?? 1));
+    const lanesPerDirection = Math.max(1, Math.floor(roadWidth / 2));
     const cars: Car[] = [];
     const drivers: (TrafficAI | null)[] = [];
 
@@ -292,15 +298,45 @@ export class CityScene extends Phaser.Scene {
       this.parkedSpots.push(spot);
     });
 
-    // NPC cars cruise the lane centres, one per vertical road, heading up or down.
-    // They start clear of the player's spawn tile.
+    // NPC cars use both directions and both lanes of the wider streets, spread
+    // across vertical and horizontal corridors so the traffic system exercises
+    // lane changes instead of bunching into a single file.
     let n = 0;
     for (let tx = block; tx < cols; tx += block) {
-      const dir = n % 2 === 0 ? vec2(0, 1) : vec2(0, -1);
-      const start = tileCenter(spec, tx, block * 2);
-      if (!this.city.isWater(tx, block * 2)) {
-        cars.push({ pos: start, heading: Math.atan2(dir.y, dir.x), speed: 0, radius: 14 });
-        drivers.push({ dir });
+      const southLane = roadWidth - lanesPerDirection + (n % lanesPerDirection);
+      const northLane = lanesPerDirection - 1 - (n % lanesPerDirection);
+      const southTx = tx + southLane;
+      const northTx = tx + northLane;
+      const southTy = block * 2;
+      const northTy = Math.max(block * 2, rows - block * 2 - 1);
+      if (southTx < cols && !this.city.isWater(southTx, southTy)) {
+        const start = tileCenter(spec, southTx, southTy);
+        cars.push({ pos: start, heading: Math.PI / 2, speed: 0, radius: 14 });
+        drivers.push({ dir: vec2(0, 1) });
+      }
+      if (northTx < cols && !this.city.isWater(northTx, northTy)) {
+        const start = tileCenter(spec, northTx, northTy);
+        cars.push({ pos: start, heading: -Math.PI / 2, speed: 0, radius: 14 });
+        drivers.push({ dir: vec2(0, -1) });
+      }
+      n++;
+    }
+    for (let ty = block; ty < rows; ty += block) {
+      const eastLane = roadWidth - lanesPerDirection + (n % lanesPerDirection);
+      const westLane = lanesPerDirection - 1 - (n % lanesPerDirection);
+      const eastTx = block * 2;
+      const westTx = Math.max(block * 2, cols - block * 2 - 1);
+      const eastTy = ty + eastLane;
+      const westTy = ty + westLane;
+      if (eastTy < rows && !this.city.isWater(eastTx, eastTy)) {
+        const start = tileCenter(spec, eastTx, eastTy);
+        cars.push({ pos: start, heading: 0, speed: 0, radius: 14 });
+        drivers.push({ dir: vec2(1, 0) });
+      }
+      if (westTy < rows && !this.city.isWater(westTx, westTy)) {
+        const start = tileCenter(spec, westTx, westTy);
+        cars.push({ pos: start, heading: Math.PI, speed: 0, radius: 14 });
+        drivers.push({ dir: vec2(-1, 0) });
       }
       n++;
     }
@@ -422,18 +458,24 @@ export class CityScene extends Phaser.Scene {
 
   private drawCity(): void {
     const { width, height, spec } = this.city;
+    const roadWidth = Math.max(1, Math.min(spec.block, spec.roadWidth ?? 1));
     this.cameras.main.setBackgroundColor(COLORS.road);
 
-    // Lane markings down the middle of every road.
+    // Lane markings between every lane, with a stronger divider between the two directions.
     const lines = this.add.graphics();
-    lines.lineStyle(2, COLORS.roadLine, 0.5);
-    for (let tx = 0; tx <= spec.cols; tx += spec.block) {
-      const x = tx * spec.tile + spec.tile / 2;
-      lines.lineBetween(x, 0, x, height);
+    for (let tx = 0; tx < spec.cols; tx += spec.block) {
+      for (let lane = 1; lane < roadWidth; lane++) {
+        const divider = (tx + lane) * spec.tile;
+        lines.lineStyle(2, COLORS.roadLine, lane === roadWidth / 2 ? 0.85 : 0.45);
+        lines.lineBetween(divider, 0, divider, height);
+      }
     }
-    for (let ty = 0; ty <= spec.rows; ty += spec.block) {
-      const y = ty * spec.tile + spec.tile / 2;
-      lines.lineBetween(0, y, width, y);
+    for (let ty = 0; ty < spec.rows; ty += spec.block) {
+      for (let lane = 1; lane < roadWidth; lane++) {
+        const divider = (ty + lane) * spec.tile;
+        lines.lineStyle(2, COLORS.roadLine, lane === roadWidth / 2 ? 0.85 : 0.45);
+        lines.lineBetween(0, divider, width, divider);
+      }
     }
 
     // Water and bridges cover the road/markings where the river cuts across.
@@ -550,12 +592,13 @@ export class CityScene extends Phaser.Scene {
   /** Centres of every dry road intersection (block-aligned road tiles), used to
    * place traffic-light indicators and night-time street lights. */
   private computeIntersectionCenters(): Vec2[] {
-    const { cols, rows, block } = this.city.spec;
+    const { cols, rows, block, tile } = this.city.spec;
+    const roadWidth = Math.max(1, Math.min(block, this.city.spec.roadWidth ?? 1));
     const centers: Vec2[] = [];
     for (let tx = 0; tx < cols; tx += block) {
       for (let ty = 0; ty < rows; ty += block) {
         if (this.city.isRoad(tx, ty) && !this.city.isWater(tx, ty)) {
-          centers.push(tileCenter(this.city.spec, tx, ty));
+          centers.push(vec2(tx * tile + (roadWidth * tile) / 2, ty * tile + (roadWidth * tile) / 2));
         }
       }
     }
@@ -563,28 +606,17 @@ export class CityScene extends Phaser.Scene {
   }
 
   private drawStreets(): void {
-    const tile = this.city.spec.tile;
     const g = this.add.graphics().setDepth(0);
 
     // Sidewalks: pale strips hugging the buildings.
     g.fillStyle(COLORS.sidewalk, 1);
     for (const s of this.city.sidewalks) g.fillRect(s.x, s.y, s.w, s.h);
 
-    // Crosswalks: zebra stripes laid across the road at each crossing tile.
-    // A tile on a vertical road is crossed east-west (upright bars); one on a
-    // horizontal road is crossed north-south (flat bars).
+    // Crosswalks: zebra stripes laid across the full crossing from kerb to kerb.
     g.fillStyle(COLORS.crosswalk, 0.9);
-    const bars = 4;
-    const stripe = tile / (bars * 2); // half on, half gap
     for (const cw of this.city.crosswalks) {
-      const verticalRoad = cw.w > cw.h; // crossed east-west
-      for (let k = 0; k < bars; k++) {
-        const off = k * 2 * stripe + stripe / 2;
-        if (verticalRoad) {
-          g.fillRect(cw.x + off, cw.y, stripe, cw.h); // upright bars
-        } else {
-          g.fillRect(cw.x, cw.y + off, cw.w, stripe); // flat bars
-        }
+      for (const stripe of crosswalkStripeRects(cw)) {
+        g.fillRect(stripe.x, stripe.y, stripe.w, stripe.h);
       }
     }
 

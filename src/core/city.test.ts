@@ -1,6 +1,7 @@
 import {
   boundaryWalls,
   buildCity,
+  crosswalkStripeRects,
   CROSSWALK_ROAD_MARGIN,
   CROSSWALK_WIDTH_RATIO,
   DEFAULT_CITY,
@@ -65,6 +66,66 @@ describe('buildCity with a road margin', () => {
     const besideRoad = vec2(70, 96);
     expect(plain.buildings.some((b) => circleIntersectsRect(besideRoad, 4, b))).toBe(true);
     expect(roomy.buildings.some((b) => circleIntersectsRect(besideRoad, 4, b))).toBe(false);
+  });
+});
+
+describe('buildCity with wider roads', () => {
+  const city = buildCity({ cols: 18, rows: 18, tile: 64, block: 6, roadWidth: 4, margin: 20, sidewalkWidth: 20 });
+
+  it('treats the full road band as drivable', () => {
+    expect(city.isRoad(0, 5)).toBe(true);
+    expect(city.isRoad(3, 5)).toBe(true);
+    expect(city.isRoad(5, 3)).toBe(true);
+    expect(city.isRoad(5, 4)).toBe(false);
+    expect(city.isRoad(5, 5)).toBe(false);
+  });
+
+  it('shrinks the buildable footprint within each block', () => {
+    expect(city.buildings[0]).toEqual(rect(276, 276, 88, 88));
+  });
+
+  it('widens sidewalks independently of building margin', () => {
+    const b = city.buildings[0];
+    const top = city.sidewalks.find((s) => s.y + s.h === b.y);
+    expect(top).toBeDefined();
+    expect(top!.h).toBe(20);
+    expect(top!.w).toBe(b.w + 40);
+  });
+
+  it('spans crosswalks across the full wide-road frontage', () => {
+    const rightApproach = city.crosswalks.find((cw) => cw.x === 4 * city.spec.tile + (city.spec.tile - cw.w) * 0.5);
+    expect(rightApproach).toBeDefined();
+    expect(rightApproach!.h).toBe(4 * city.spec.tile);
+  });
+
+  it('moves facility spawns when the building footprint moves', () => {
+    const snug = buildCity({ cols: 20, rows: 20, tile: 64, block: 6, roadWidth: 4, margin: 9, sidewalkWidth: 20 });
+    const roomy = buildCity({ cols: 20, rows: 20, tile: 64, block: 6, roadWidth: 4, margin: 21, sidewalkWidth: 20 });
+    const snugPolice = snug.facilities.find((f) => f.kind === 'policeStation');
+    const roomyPolice = roomy.facilities.find((f) => f.kind === 'policeStation');
+    expect(snugPolice).toBeDefined();
+    expect(roomyPolice).toBeDefined();
+    expect(snugPolice!.spawn).not.toEqual(roomyPolice!.spawn);
+  });
+});
+
+describe('crosswalkStripeRects', () => {
+  it('starts at the block corner and reaches the far kerb on a wide north-south crossing', () => {
+    const cw = rect(0, 300, 256, 32);
+    const stripes = crosswalkStripeRects(cw);
+    expect(stripes[0]).toBeDefined();
+    expect(stripes[0]!.x).toBe(cw.x);
+    const last = stripes[stripes.length - 1]!;
+    expect(last.x + last.w).toBeCloseTo(cw.x + cw.w);
+  });
+
+  it('starts at the block corner and reaches the far kerb on a wide east-west crossing', () => {
+    const cw = rect(400, 0, 32, 256);
+    const stripes = crosswalkStripeRects(cw);
+    expect(stripes[0]).toBeDefined();
+    expect(stripes[0]!.y).toBe(cw.y);
+    const last = stripes[stripes.length - 1]!;
+    expect(last.y + last.h).toBeCloseTo(cw.y + cw.h);
   });
 });
 

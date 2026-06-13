@@ -43,6 +43,68 @@ export function roadAt(city: City, tx: number, ty: number): boolean {
   return inBounds(city.spec, tx, ty) && city.isRoad(tx, ty);
 }
 
+function roadWidth(spec: CitySpec): number {
+  return Math.max(1, Math.min(spec.block, spec.roadWidth ?? 1));
+}
+
+function lanesPerDirection(spec: CitySpec): number {
+  return Math.max(1, Math.floor(roadWidth(spec) / 2));
+}
+
+function roadBandStart(spec: CitySpec, tileIndex: number): number {
+  return Math.floor(tileIndex / spec.block) * spec.block;
+}
+
+function laneCenterPx(spec: CitySpec, bandStart: number, lane: number): number {
+  return (bandStart + lane) * spec.tile + spec.tile / 2;
+}
+
+function laneIndicesForDirection(spec: CitySpec, dir: Vec2): number[] {
+  const width = roadWidth(spec);
+  const perDirection = lanesPerDirection(spec);
+  if (dir.x > 0 || dir.y > 0) {
+    return Array.from({ length: perDirection }, (_, i) => width - perDirection + i);
+  }
+  return Array.from({ length: perDirection }, (_, i) => perDirection - 1 - i);
+}
+
+function lanePosition(spec: CitySpec, pos: Vec2, dir: Vec2, lane: number): Vec2 {
+  const tile = tileCoord(spec, pos);
+  if (dir.x !== 0) {
+    const bandStart = roadBandStart(spec, tile.ty);
+    return vec2(pos.x, laneCenterPx(spec, bandStart, lane));
+  }
+  const bandStart = roadBandStart(spec, tile.tx);
+  return vec2(laneCenterPx(spec, bandStart, lane), pos.y);
+}
+
+function nearestLane(spec: CitySpec, pos: Vec2, dir: Vec2): number {
+  const candidates = laneIndicesForDirection(spec, dir);
+  const lateral = dir.x !== 0 ? pos.y : pos.x;
+  const tile = tileCoord(spec, pos);
+  const bandStart = roadBandStart(spec, dir.x !== 0 ? tile.ty : tile.tx);
+  return candidates.reduce((best, lane) => {
+    const bestDelta = Math.abs(lateral - laneCenterPx(spec, bandStart, best));
+    const laneDelta = Math.abs(lateral - laneCenterPx(spec, bandStart, lane));
+    return laneDelta < bestDelta ? lane : best;
+  }, candidates[0]!);
+}
+
+function alignToLane(spec: CitySpec, pos: Vec2, dir: Vec2): Vec2 {
+  return lanePosition(spec, pos, dir, nearestLane(spec, pos, dir));
+}
+
+/** All lane centres on the current road, sorted from the current lane outward. */
+export function laneCentersForRoad(city: City, pos: Vec2, dir: Vec2): Vec2[] {
+  const spec = city.spec;
+  const current = alignToLane(spec, pos, dir);
+  const lateralDelta = (candidate: Vec2): number =>
+    dir.x !== 0 ? Math.abs(candidate.y - current.y) : Math.abs(candidate.x - current.x);
+  return laneIndicesForDirection(spec, dir)
+    .map((lane) => lanePosition(spec, current, dir, lane))
+    .sort((a, b) => lateralDelta(a) - lateralDelta(b));
+}
+
 /** Cardinal directions from a tile that lead onto another road tile. */
 export function openDirections(city: City, tx: number, ty: number): Vec2[] {
   return CARDINALS.filter((d) => roadAt(city, tx + d.x, ty + d.y));
@@ -116,8 +178,8 @@ export function stepRoadVehicle(
 ): RoadVehicle {
   const spec = city.spec;
   let dir = v.dir;
-  const before = tileCoord(spec, v.pos);
   let pos = add(v.pos, scale(dir, speed * dt));
+  const before = tileCoord(spec, v.pos);
   const after = tileCoord(spec, pos);
 
   if (after.tx !== before.tx || after.ty !== before.ty) {
@@ -126,15 +188,15 @@ export function stepRoadVehicle(
     const options = openDirections(city, tile.tx, tile.ty);
     if (options.length === 0) {
       dir = vec2(-dir.x, -dir.y); // fully boxed in: reverse
-      pos = tileCenter(spec, before.tx, before.ty);
+      pos = alignToLane(spec, tileCenter(spec, before.tx, before.ty), dir);
     } else {
       const chosen = choose(options, dir, tileCenter(spec, tile.tx, tile.ty));
       if (!onRoad) {
         dir = chosen; // would leave the road: turn, staying on the current tile
-        pos = tileCenter(spec, before.tx, before.ty);
+        pos = alignToLane(spec, tileCenter(spec, before.tx, before.ty), dir);
       } else if (!isSameDir(chosen, dir)) {
         dir = chosen; // turning onto a crossing road: pivot on the lane centre
-        pos = tileCenter(spec, after.tx, after.ty);
+        pos = alignToLane(spec, tileCenter(spec, after.tx, after.ty), dir);
       }
       // else: carry straight on without snapping.
     }

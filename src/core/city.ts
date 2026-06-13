@@ -29,13 +29,17 @@ export interface CitySpec {
   rows: number;
   /** Pixel size of one tile. */
   tile: number;
-  /** Tiles per block; every `block`-th row/column is a road lane. */
+  /** Tiles per repeating city block, including the road band and buildable area. */
   block: number;
+  /** Width in tiles of each road band that starts at a `block` boundary. */
+  roadWidth?: number;
   /**
    * Pixels each building is inset from its block edges, widening the drivable
    * space along the roads. Optional; defaults to 0 (buildings meet the road).
    */
   margin?: number;
+  /** Width in pixels of the sidewalk strip around each building. */
+  sidewalkWidth?: number;
   /** Rivers of water cutting across the map, crossed by bridges. */
   rivers?: RiverSpec[];
 }
@@ -110,6 +114,14 @@ interface TileRect {
 
 type FacilitySide = 'left' | 'right' | 'top' | 'bottom';
 
+function roadWidthFor(spec: CitySpec): number {
+  return Math.max(1, Math.min(spec.block, spec.roadWidth ?? 1));
+}
+
+function sidewalkWidthFor(spec: CitySpec): number {
+  return spec.sidewalkWidth ?? SIDEWALK_WIDTH;
+}
+
 /** Remove a river band's rows (horizontal) or columns (vertical) from a tile
  * rect, returning the 0–2 pieces left over. Pure. */
 function subtractBand(r: TileRect, river: RiverSpec): TileRect[] {
@@ -145,21 +157,22 @@ function buildFacilities(
   isRoad: (tx: number, ty: number) => boolean,
 ): Facility[] {
   const { cols, rows, tile } = spec;
+  const sidewalkWidth = sidewalkWidthFor(spec);
   const center = (r: Rect): Vec2 => vec2(r.x + r.w / 2, r.y + r.h / 2);
-  const spawnFor = (r: TileRect, prefs: readonly FacilitySide[]): Vec2 | null => {
-    const midTx = r.tx + Math.floor((r.tw - 1) / 2);
-    const midTy = r.ty + Math.floor((r.th - 1) / 2);
-    const tileFor = (side: FacilitySide): { tx: number; ty: number } => {
-      if (side === 'left') return { tx: r.tx - 1, ty: midTy };
-      if (side === 'right') return { tx: r.tx + r.tw, ty: midTy };
-      if (side === 'top') return { tx: midTx, ty: r.ty - 1 };
-      return { tx: midTx, ty: r.ty + r.th };
+  const spawnFor = (building: Rect, prefs: readonly FacilitySide[]): Vec2 | null => {
+    const pointFor = (side: FacilitySide): Vec2 => {
+      if (side === 'left') return vec2(building.x - sidewalkWidth - 1, building.y + building.h / 2);
+      if (side === 'right') return vec2(building.x + building.w + sidewalkWidth + 1, building.y + building.h / 2);
+      if (side === 'top') return vec2(building.x + building.w / 2, building.y - sidewalkWidth - 1);
+      return vec2(building.x + building.w / 2, building.y + building.h + sidewalkWidth + 1);
     };
     for (const side of prefs) {
-      const { tx, ty } = tileFor(side);
+      const point = pointFor(side);
+      const tx = Math.floor(point.x / tile);
+      const ty = Math.floor(point.y / tile);
       if (tx < 0 || ty < 0 || tx >= cols || ty >= rows) continue;
       if (!isRoad(tx, ty)) continue;
-      return vec2(tx * tile + tile / 2, ty * tile + tile / 2);
+      return point;
     }
     return null;
   };
@@ -182,14 +195,14 @@ function buildFacilities(
       }))
       .filter((c) => !used.has(c.i))
       .sort((a, b) => a.dist - b.dist)
-      .find((c) => spawnFor(c.tileRect, plan.prefs) !== null);
+      .find((c) => spawnFor(c.building, plan.prefs) !== null);
     if (!pick) continue;
     used.add(pick.i);
     facilities.push({
       kind: plan.kind,
       buildingIndex: pick.i,
       building: pick.building,
-      spawn: spawnFor(pick.tileRect, plan.prefs)!,
+      spawn: spawnFor(pick.building, plan.prefs)!,
     });
   }
   return facilities;
@@ -203,10 +216,11 @@ function buildFacilities(
  */
 export function buildCity(spec: CitySpec = DEFAULT_CITY): City {
   const { cols, rows, tile, block } = spec;
+  const roadWidth = roadWidthFor(spec);
   const margin = spec.margin ?? 0;
   const rivers = spec.rivers ?? [];
 
-  const isRoadLane = (tx: number, ty: number): boolean => tx % block === 0 || ty % block === 0;
+  const isRoadLane = (tx: number, ty: number): boolean => tx % block < roadWidth || ty % block < roadWidth;
   const inBand = (river: RiverSpec, tx: number, ty: number): boolean => {
     const idx = river.orientation === 'horizontal' ? ty : tx;
     return idx >= river.start && idx < river.start + river.span;
@@ -229,8 +243,8 @@ export function buildCity(spec: CitySpec = DEFAULT_CITY): City {
   let tileRects: TileRect[] = [];
   for (let bx = 0; bx * block < cols; bx++) {
     for (let by = 0; by * block < rows; by++) {
-      const tx = bx * block + 1;
-      const ty = by * block + 1;
+      const tx = bx * block + roadWidth;
+      const ty = by * block + roadWidth;
       const tw = Math.min((bx + 1) * block, cols) - tx;
       const th = Math.min((by + 1) * block, rows) - ty;
       if (tw > 0 && th > 0) tileRects.push({ tx, ty, tw, th });
@@ -293,7 +307,7 @@ export function buildCity(spec: CitySpec = DEFAULT_CITY): City {
     facilities,
     water,
     fences,
-    sidewalks: buildSidewalks(buildings),
+    sidewalks: buildSidewalks(buildings, sidewalkWidthFor(spec)),
     crosswalks: buildCrosswalks(spec, isRoad, isWater),
     parkingSpots: buildParkingSpots(spec, buildings, isWater),
     isRoad,
@@ -303,8 +317,8 @@ export function buildCity(spec: CitySpec = DEFAULT_CITY): City {
 }
 
 /** A sidewalk ring hugging the outside of every building. */
-function buildSidewalks(buildings: readonly Rect[]): Rect[] {
-  const s = SIDEWALK_WIDTH;
+function buildSidewalks(buildings: readonly Rect[], sidewalkWidth: number): Rect[] {
+  const s = sidewalkWidth;
   const strips: Rect[] = [];
   for (const b of buildings) {
     strips.push(rect(b.x - s, b.y - s, b.w + 2 * s, s)); // top
@@ -328,37 +342,49 @@ function buildCrosswalks(
   isWater: (tx: number, ty: number) => boolean,
 ): Rect[] {
   const { cols, rows, tile, block } = spec;
+  const roadWidth = roadWidthFor(spec);
   const crosswalkSpan = (tile - CROSSWALK_ROAD_MARGIN * 2) * CROSSWALK_WIDTH_RATIO;
   const crosswalkInset = (tile - crosswalkSpan) * 0.5;
   const crossable = (tx: number, ty: number): boolean =>
     tx >= 0 && ty >= 0 && tx < cols && ty < rows && isRoad(tx, ty) && !isWater(tx, ty);
-  const seen = new Set<string>();
   const zones: Rect[] = [];
   for (let bx = 0; bx < cols; bx += block) {
     for (let by = 0; by < rows; by += block) {
       if (!crossable(bx, by)) continue; // dry road intersection only
-      for (const [dx, dy] of [
-        [1, 0],
-        [-1, 0],
-        [0, 1],
-        [0, -1],
-      ]) {
-        const tx = bx + dx;
-        const ty = by + dy;
-        const key = `${tx},${ty}`;
-        if (crossable(tx, ty) && !seen.has(key)) {
-          seen.add(key);
-          const verticalRoad = tx % block === 0;
-          zones.push(
-            verticalRoad
-              ? rect(tx * tile, ty * tile + crosswalkInset, tile, crosswalkSpan)
-              : rect(tx * tile + crosswalkInset, ty * tile, crosswalkSpan, tile),
-          );
-        }
+      const rightTx = bx + roadWidth;
+      const bottomTy = by + roadWidth;
+      if (crossable(rightTx, by)) {
+        zones.push(rect(rightTx * tile + crosswalkInset, by * tile, crosswalkSpan, roadWidth * tile));
+      }
+      if (crossable(bx - 1, by)) {
+        zones.push(rect((bx - 1) * tile + crosswalkInset, by * tile, crosswalkSpan, roadWidth * tile));
+      }
+      if (crossable(bx, bottomTy)) {
+        zones.push(rect(bx * tile, bottomTy * tile + crosswalkInset, roadWidth * tile, crosswalkSpan));
+      }
+      if (crossable(bx, by - 1)) {
+        zones.push(rect(bx * tile, (by - 1) * tile + crosswalkInset, roadWidth * tile, crosswalkSpan));
       }
     }
   }
   return zones;
+}
+
+/** Zebra-stripe rectangles that fill a crosswalk from one kerb to the other. */
+export function crosswalkStripeRects(crosswalk: Rect, bars = 4): Rect[] {
+  const alongX = crosswalk.w >= crosswalk.h;
+  const span = alongX ? crosswalk.w : crosswalk.h;
+  const stripe = span / Math.max(1, bars * 2 - 1);
+  const stripes: Rect[] = [];
+  for (let k = 0; k < bars; k++) {
+    const off = k * stripe * 2;
+    stripes.push(
+      alongX
+        ? rect(crosswalk.x + off, crosswalk.y, stripe, crosswalk.h)
+        : rect(crosswalk.x, crosswalk.y + off, crosswalk.w, stripe),
+    );
+  }
+  return stripes;
 }
 
 /**
@@ -374,7 +400,7 @@ function buildParkingSpots(
   isWater: (tx: number, ty: number) => boolean,
 ): ParkingSpot[] {
   const { cols, rows, tile } = spec;
-  const s = SIDEWALK_WIDTH;
+  const s = sidewalkWidthFor(spec);
   const spots: ParkingSpot[] = [];
   const dryAt = (x: number, y: number): boolean => {
     const tx = Math.floor(x / tile);

@@ -5,6 +5,7 @@ import {
   roadAt,
   openDirections,
   obstacleAhead,
+  laneChangeTarget,
   TRAFFIC_SPEED,
   type TrafficAI,
 } from './trafficAI';
@@ -64,6 +65,27 @@ describe('obstacleAhead', () => {
 
   it('ignores an obstacle beyond the look-ahead distance', () => {
     expect(obstacleAhead(vec2(0, 0), vec2(1, 0), [vec2(500, 0)])).toBe(false);
+  });
+});
+
+describe('laneChangeTarget', () => {
+  const wide = buildCity({ cols: 18, rows: 18, tile: 64, block: 6, roadWidth: 4 });
+
+  it('chooses the neighboring same-direction lane when it is clear', () => {
+    const start = tileCenter(wide.spec, 6, 2);
+    const target = laneChangeTarget(wide, start, vec2(1, 0), [vec2(start.x + 40, start.y)]);
+    expect(target).not.toBeNull();
+    expect(target!.x).toBeCloseTo(start.x);
+    expect(target!.y).toBeCloseTo(tileCenter(wide.spec, 6, 3).y);
+  });
+
+  it('returns null when every same-direction lane is blocked', () => {
+    const start = tileCenter(wide.spec, 6, 2);
+    const blockers = [
+      vec2(start.x + 40, start.y),
+      vec2(start.x + 40, tileCenter(wide.spec, 6, 3).y),
+    ];
+    expect(laneChangeTarget(wide, start, vec2(1, 0), blockers)).toBeNull();
   });
 });
 

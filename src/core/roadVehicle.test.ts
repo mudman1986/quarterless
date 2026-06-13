@@ -4,6 +4,7 @@ import {
   seekChooser,
   wanderChooser,
   nearestCardinal,
+  laneCentersForRoad,
   openDirections,
   roadAt,
   tileCoord,
@@ -37,6 +38,33 @@ describe('direction helpers', () => {
     expect(roadAt(city, 4, 2)).toBe(true);
     expect(roadAt(city, 2, 2)).toBe(false);
     expect(openDirections(city, 4, 4)).toHaveLength(4); // crossroads
+  });
+
+  it('lists same-direction lane centres on a wide road', () => {
+    const wide = buildCity({ cols: 18, rows: 18, tile: 64, block: 6, roadWidth: 4 });
+    const lanes = laneCentersForRoad(wide, tileCenter(wide.spec, 6, 2), vec2(1, 0));
+    expect(lanes).toHaveLength(2);
+    expect(lanes[0]!.y).toBeCloseTo(tileCenter(wide.spec, 6, 2).y);
+    expect(lanes[1]!.y).toBeCloseTo(tileCenter(wide.spec, 6, 3).y);
+  });
+});
+
+describe('stepRoadVehicle on wide roads', () => {
+  const wide = buildCity({ cols: 18, rows: 18, tile: 64, block: 6, roadWidth: 4 });
+
+  it('stays aligned to its chosen lane on a multi-lane street', () => {
+    const start = tileCenter(wide.spec, 6, 3);
+    const v: RoadVehicle = { pos: start, heading: 0, dir: vec2(1, 0) };
+    const next = stepRoadVehicle(v, wide, DT, 130, wanderChooser(() => 0.9, 0.35));
+    expect(next.pos.x).toBeGreaterThan(start.x);
+    expect(next.pos.y).toBeCloseTo(start.y);
+  });
+
+  it('does not hard-snap sideways while cruising inside the same road band', () => {
+    const start = vec2(tileCenter(wide.spec, 6, 2).x, tileCenter(wide.spec, 6, 2).y + 12);
+    const v: RoadVehicle = { pos: start, heading: 0, dir: vec2(1, 0) };
+    const next = stepRoadVehicle(v, wide, DT, 130, wanderChooser(() => 0.9, 0.35));
+    expect(next.pos.y).toBeCloseTo(start.y);
   });
 });
 

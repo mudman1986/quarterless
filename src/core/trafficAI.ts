@@ -3,6 +3,7 @@ import { type City } from './city';
 import type { Car } from './vehicle';
 import {
   type RoadVehicle,
+  laneCentersForRoad,
   roadAt,
   wanderChooser,
   stepRoadVehicle,
@@ -56,6 +57,26 @@ export function obstacleAhead(
     const lateral = Math.abs(rel.x * dir.y - rel.y * dir.x); // |rel x dir|, dir is unit
     return lateral <= laneHalf;
   });
+}
+
+/** The nearest clear same-direction lane centre this car can hop to, if any. */
+export function laneChangeTarget(
+  city: City,
+  carPos: Vec2,
+  dir: Vec2,
+  obstacles: readonly Vec2[],
+  ahead = YIELD_DISTANCE,
+  laneHalf = YIELD_LANE_HALF,
+): Vec2 | null {
+  const lanes = laneCentersForRoad(city, carPos, dir);
+  const sameLane = lanes[0];
+  const isSameLane = (candidate: Vec2): boolean =>
+    dir.x !== 0 ? Math.abs(candidate.y - sameLane.y) < 0.5 : Math.abs(candidate.x - sameLane.x) < 0.5;
+  for (const lane of lanes) {
+    if (isSameLane(lane)) continue;
+    if (!obstacleAhead(lane, dir, obstacles, ahead, laneHalf)) return lane;
+  }
+  return null;
 }
 
 /**

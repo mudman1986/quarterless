@@ -24,6 +24,7 @@ import {
   stepTraffic,
   TRAFFIC_SPEED,
   obstacleAhead,
+  laneChangeTarget,
   tileCoord,
   isIntersection,
   openDirections,
@@ -580,19 +581,25 @@ export class World {
     for (let i = 0; i < this.cars.length; i++) {
       const ai = this.carDrivers[i];
       if (!ai || i === this.drivingCarIndex || this.wreckedCars[i]) continue;
-      const car = this.cars[i];
+      let car = this.cars[i];
 
       let driver = ai;
       let speed = TRAFFIC_SPEED;
       if (obstacleAhead(car.pos, ai.dir, obstacles)) {
+        const lane = laneChangeTarget(this.city, car.pos, ai.dir, obstacles);
+        if (lane) {
+          car = { ...car, pos: lane };
+          driver = ai.blocked ? { ...ai, blocked: 0 } : ai;
+        } else {
         // Wait behind a pedestrian/player in the lane; after a few seconds give
         // up and reroute (turn around) to find another way around them.
-        const waited = (ai.blocked ?? 0) + dt;
-        if (waited >= TRAFFIC_REROUTE_WAIT) {
-          driver = { dir: vec2(-ai.dir.x, -ai.dir.y), blocked: 0 }; // U-turn and go
-        } else {
-          driver = { ...ai, blocked: waited };
-          speed = 0;
+          const waited = (ai.blocked ?? 0) + dt;
+          if (waited >= TRAFFIC_REROUTE_WAIT) {
+            driver = { dir: vec2(-ai.dir.x, -ai.dir.y), blocked: 0 }; // U-turn and go
+          } else {
+            driver = { ...ai, blocked: waited };
+            speed = 0;
+          }
         }
       } else if (this.redLightAhead(car, ai.dir)) {
         speed = 0; // hold at the red light (not counted as being stuck)
@@ -1099,18 +1106,26 @@ export class World {
     let dir = v.dir;
     let blocked = v.blocked;
     let speed = fullSpeed;
-    if (obstacleAhead(v.pos, v.dir, this.yieldObstacles())) {
-      blocked += dt;
-      if (blocked >= TRAFFIC_REROUTE_WAIT) {
-        dir = vec2(-v.dir.x, -v.dir.y); // give up waiting: turn back and divert
+    let pos = v.pos;
+    const obstacles = this.yieldObstacles();
+    if (obstacleAhead(v.pos, v.dir, obstacles)) {
+      const lane = laneChangeTarget(this.city!, v.pos, v.dir, obstacles);
+      if (lane) {
+        pos = lane;
         blocked = 0;
       } else {
-        speed = 0; // hold short of them
+        blocked += dt;
+        if (blocked >= TRAFFIC_REROUTE_WAIT) {
+          dir = vec2(-v.dir.x, -v.dir.y); // give up waiting: turn back and divert
+          blocked = 0;
+        } else {
+          speed = 0; // hold short of them
+        }
       }
     } else {
       blocked = 0;
     }
-    const rv: RoadVehicle = { pos: v.pos, heading: v.heading, dir };
+    const rv: RoadVehicle = { pos, heading: v.heading, dir };
     const next = stepRoadVehicle(rv, this.city!, dt, speed, seekChooser(v.target));
     return {
       ...v,
