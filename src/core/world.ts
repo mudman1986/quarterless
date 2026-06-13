@@ -179,6 +179,10 @@ export const EXPLOSION_LIFE = 1.3;
 export const CAR_RAM_THRESHOLD = 70;
 /** Hit points lost per px/s of closing speed above the threshold, per contact tick. */
 export const CAR_RAM_DAMAGE_SCALE = 0.15;
+/** Minimum time between damage applications for the same overlapping vehicle pair. */
+export const VEHICLE_IMPACT_COOLDOWN = 0.75;
+/** NPC-only crashes can still wreck vehicles, but one impact should not usually one-shot them. */
+export const NPC_IMPACT_DAMAGE_CAP = 12;
 /** Score awarded for destroying a car. */
 export const SCORE_PER_CAR = 100;
 /** Seconds an NPC car waits behind an obstacle before rerouting around it. */
@@ -357,6 +361,8 @@ export class World {
   private readonly loopCampaigns: boolean;
   /** Index of the campaign currently playing, to avoid repeating it back-to-back. */
   private campaignIndex = -1;
+  /** Per-pair cooldown so one stuck overlap is not treated as dozens of fresh crashes. */
+  private vehicleImpactCooldowns = new Map<string, number>();
   /** The counters captured when the current mission objective began. */
   private objectiveBaseline: MissionBaseline = { kills: 0, collected: 0, elapsed: 0 };
   /** Seconds elapsed in the current run (drives survive objectives). */
@@ -478,7 +484,7 @@ export class World {
     }
     this.lights = tickLights(this.lights, dt);
     this.updateTraffic(dt);
-    this.resolveVehicleCollisions();
+    this.resolveVehicleCollisions(dt);
     this.updatePedestrians(dt);
     this.updateNpcDriving(dt);
     this.checkRoadKill();
@@ -660,9 +666,11 @@ export class World {
 
   /** Kill the ambulance medic currently out on foot, aborting the call. */
   private killAmbulanceCrew(byPlayer: boolean): void {
-    const crew = this.ambulance?.crew;
-    if (!crew) return;
+    const amb = this.ambulance;
+    const crew = amb?.crew;
+    if (!amb || !crew) return;
     this.killOnFootNpc(crew, 'pedestrian', byPlayer);
+    this.abandonServiceVehicle(amb);
     this.ambulance = null;
   }
 
@@ -672,7 +680,18 @@ export class World {
     const tow = this.tows[index];
     if (!tow?.crew) return;
     this.killOnFootNpc(tow.crew, 'pedestrian', byPlayer);
+    this.abandonServiceVehicle(tow);
     this.tows.splice(index, 1);
+  }
+
+  /** Leave an unused service vehicle behind as a towable wreck instead of
+   * making it vanish when its crew dies on foot. */
+  private abandonServiceVehicle(v: ServiceVehicle): void {
+    this.cars.push({ pos: v.pos, heading: v.heading, speed: 0, radius: v.radius });
+    this.carDrivers.push(null);
+    this.carHealth.push(0);
+    this.wreckedCars.push(true);
+    this.towedCars.push(false);
   }
 
   /** Record that the player destroyed a vehicle, using the same reward/heat rule
@@ -1171,7 +1190,15 @@ export class World {
 
   /** Push overlapping vehicles apart so they collide instead of passing through,
    * and damage both from the impact so repeated ramming can destroy any vehicle. */
-  private resolveVehicleCollisions(): void {
+  private resolveVehicleCollisions(dt: number): void {
+    for (const [key, remaining] of this.vehicleImpactCooldowns) {
+      const next = remaining - dt;
+      if (next > 0) {
+        this.vehicleImpactCooldowns.set(key, next);
+      } else {
+        this.vehicleImpactCooldowns.delete(key);
+      }
+    }
     const refs = this.damageableVehicles();
     for (let i = 0; i < refs.length; i++) {
       const refA = refs[i];
@@ -1194,14 +1221,35 @@ export class World {
         const velB = scale(fromAngle(b.heading), b.speed);
         const closing = Math.abs(dot(sub(velA, velB), normal));
         if (closing > CAR_RAM_THRESHOLD) {
-          const dmg = (closing - CAR_RAM_THRESHOLD) * CAR_RAM_DAMAGE_SCALE;
+          const pairKey = this.vehicleImpactPairKey(refA, refB);
+          if (this.vehicleImpactCooldowns.has(pairKey)) continue;
           // A ram is the player's doing only when their own car is the rammer:
           // each vehicle's damage is "by player" when the OTHER vehicle is theirs.
-          this.damageVehicle(refA, dmg, this.isPlayerVehicle(refB));
-          this.damageVehicle(refB, dmg, this.isPlayerVehicle(refA));
+          const byPlayerA = this.isPlayerVehicle(refB);
+          const byPlayerB = this.isPlayerVehicle(refA);
+          const rawDmg = (closing - CAR_RAM_THRESHOLD) * CAR_RAM_DAMAGE_SCALE;
+          const dmg = byPlayerA || byPlayerB ? rawDmg : Math.min(rawDmg, NPC_IMPACT_DAMAGE_CAP);
+          this.damageVehicle(refA, dmg, byPlayerA);
+          this.damageVehicle(refB, dmg, byPlayerB);
+          this.vehicleImpactCooldowns.set(pairKey, VEHICLE_IMPACT_COOLDOWN);
         }
       }
     }
+  }
+
+  /** Stable-ish key for a vehicle body within the current simulation state. */
+  private vehicleImpactRefKey(ref: DamageableVehicleRef): string {
+    if (ref.kind === 'car') return `car:${ref.index}`;
+    if (ref.kind === 'ambulance') return 'ambulance';
+    if (ref.kind === 'tow') return `tow:${this.tows.indexOf(ref.vehicle)}`;
+    return `patrol:${this.police.indexOf(ref.vehicle)}`;
+  }
+
+  /** Order-independent key for a vehicle-pair impact cooldown. */
+  private vehicleImpactPairKey(a: DamageableVehicleRef, b: DamageableVehicleRef): string {
+    const ka = this.vehicleImpactRefKey(a);
+    const kb = this.vehicleImpactRefKey(b);
+    return ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
   }
 
   /** Collect any ammo pickup the player is standing on (on foot or driving). */
