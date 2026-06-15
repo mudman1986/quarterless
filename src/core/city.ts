@@ -87,16 +87,17 @@ export interface Facility {
   /** Index into `city.buildings` of the building used as this facility. */
   buildingIndex: number;
   building: Rect;
-  /** Doorway point tied to the building itself (used by on-foot police spawns). */
+  /** Doorstep point on the pavement in front of the building, where its on-foot
+   * NPCs (e.g. police) emerge. Tied to the building, so it moves with it. */
   spawn: Vec2;
   /** Road-adjacent point where service and patrol vehicles appear. */
   roadSpawn: Vec2;
 }
 
 export const DEFAULT_CITY: CitySpec = { cols: 25, rows: 25, tile: 64, block: 5 };
-export const CROSSWALK_ROAD_MARGIN = 4;
-export const CROSSWALK_WIDTH_RATIO = 0.5;
-export const CROSSWALK_BELT_WIDTH = 40;
+/** Width in pixels of the zebra belt a pedestrian steps across — about four
+ * people wide, so a group can cross abreast. */
+export const CROSSWALK_BELT_WIDTH = 56;
 
 /** Thickness in pixels of the rails lining each bridge. */
 const FENCE = 5;
@@ -183,11 +184,15 @@ function buildFacilities(
       if (side === 'top') return vec2(building.x + building.w / 2, building.y - sidewalkWidth - 1);
       return vec2(building.x + building.w / 2, building.y + building.h + sidewalkWidth + 1);
     };
-    const doorPointFor = (side: FacilitySide): Vec2 => {
-      if (side === 'left') return vec2(building.x + 1, building.y + building.h / 2);
-      if (side === 'right') return vec2(building.x + building.w - 1, building.y + building.h / 2);
-      if (side === 'top') return vec2(building.x + building.w / 2, building.y + 1);
-      return vec2(building.x + building.w / 2, building.y + building.h - 1);
+    const doorstepFor = (side: FacilitySide): Vec2 => {
+      // A point on the pavement right at the building's door, so on-foot police
+      // appear to step out of the station rather than off the kerb. It moves
+      // automatically with the building because it is derived from its rect.
+      const out = sidewalkWidth / 2;
+      if (side === 'left') return vec2(building.x - out, building.y + building.h / 2);
+      if (side === 'right') return vec2(building.x + building.w + out, building.y + building.h / 2);
+      if (side === 'top') return vec2(building.x + building.w / 2, building.y - out);
+      return vec2(building.x + building.w / 2, building.y + building.h + out);
     };
     for (const side of prefs) {
       const roadSpawn = roadPointFor(side);
@@ -195,7 +200,7 @@ function buildFacilities(
       const ty = Math.floor(roadSpawn.y / tile);
       if (tx < 0 || ty < 0 || tx >= cols || ty >= rows) continue;
       if (!isRoad(tx, ty)) continue;
-      return { spawn: doorPointFor(side), roadSpawn };
+      return { spawn: doorstepFor(side), roadSpawn };
     }
     return null;
   };
@@ -356,11 +361,12 @@ function buildSidewalks(buildings: readonly Rect[], sidewalkWidth: number, water
 }
 
 /**
- * Crossing zones at each intersection. A crosswalk sits on the road tiles
- * immediately *adjacent* to an intersection (its four approaches), not on the
- * junction tile itself: those approach tiles are the road squares a pedestrian
- * actually steps across to get from one sidewalk to the other. (The junction
- * tile is surrounded by road on all sides, so nobody could ever reach it.)
+ * Striped pedestrian crossings around every intersection. Each crossing spans
+ * the full width of the road it crosses — kerb to kerb, i.e. exactly the road
+ * band — and sits just outside the junction square on each open approach, so it
+ * starts at the block corner / sidewalk edge rather than over the pavement. Its
+ * short dimension is the {@link CROSSWALK_BELT_WIDTH} belt the pedestrian steps
+ * across. Pure.
  */
 function buildCrosswalks(
   spec: CitySpec,
@@ -369,39 +375,40 @@ function buildCrosswalks(
 ): Rect[] {
   const { cols, rows, tile, block } = spec;
   const roadWidth = roadWidthFor(spec);
-  const sidewalkWidth = sidewalkWidthFor(spec);
-  const margin = spec.margin ?? 0;
-  const crosswalkSpan = CROSSWALK_BELT_WIDTH;
-  const crosswalkInset = (tile - crosswalkSpan) * 0.5;
-  const curbInset = Math.max(0, sidewalkWidth - margin);
-  const roadSpan = roadWidth * tile - 2 * curbInset;
-  const crossable = (tx: number, ty: number): boolean =>
+  const belt = CROSSWALK_BELT_WIDTH;
+  const roadSpan = roadWidth * tile;
+  const dry = (tx: number, ty: number): boolean =>
     tx >= 0 && ty >= 0 && tx < cols && ty < rows && isRoad(tx, ty) && !isWater(tx, ty);
   const zones: Rect[] = [];
   for (let bx = 0; bx < cols; bx += block) {
     for (let by = 0; by < rows; by += block) {
-      if (!crossable(bx, by)) continue; // dry road intersection only
-      const rightTx = bx + roadWidth;
-      const bottomTy = by + roadWidth;
-      if (crossable(rightTx, by)) {
-        zones.push(rect(rightTx * tile + crosswalkInset, by * tile + curbInset, crosswalkSpan, roadSpan));
-      }
-      if (crossable(bx - 1, by)) {
-        zones.push(rect((bx - 1) * tile + crosswalkInset, by * tile + curbInset, crosswalkSpan, roadSpan));
-      }
-      if (crossable(bx, bottomTy)) {
-        zones.push(rect(bx * tile + curbInset, bottomTy * tile + crosswalkInset, roadSpan, crosswalkSpan));
-      }
-      if (crossable(bx, by - 1)) {
-        zones.push(rect(bx * tile + curbInset, (by - 1) * tile + crosswalkInset, roadSpan, crosswalkSpan));
-      }
+      if (!dry(bx, by)) continue; // a dry road intersection only
+      const x0 = bx * tile;
+      const y0 = by * tile;
+      const x1 = (bx + roadWidth) * tile;
+      const y1 = (by + roadWidth) * tile;
+      // North / south crossings span the vertical road band (full width in x).
+      if (dry(bx, by - 1)) zones.push(rect(x0, y0 - belt, roadSpan, belt));
+      if (dry(bx, by + roadWidth)) zones.push(rect(x0, y1, roadSpan, belt));
+      // East / west crossings span the horizontal road band (full width in y).
+      if (dry(bx - 1, by)) zones.push(rect(x0 - belt, y0, belt, roadSpan));
+      if (dry(bx + roadWidth, by)) zones.push(rect(x1, y0, belt, roadSpan));
     }
   }
   return zones;
 }
 
-/** Zebra-stripe rectangles that fill a crosswalk from one kerb to the other. */
-export function crosswalkStripeRects(crosswalk: Rect, bars = 4): Rect[] {
+/** Zebra-stripe rectangles filling a crosswalk. The bars run the long way
+ * (parallel to the pedestrian's path, kerb to kerb) and repeat across the short
+ * belt dimension, so they read as a proper zebra rather than lane lines. */
+/** Zebra-stripe rectangles filling a crosswalk. Real zebra bars run *parallel to
+ * the traffic* (perpendicular to the pedestrian's path): so on a wide crossing
+ * over a north-south road the bars are upright and march across in x, and on a
+ * tall crossing over an east-west road they are flat and march down in y. Each
+ * bar spans the full belt (the short dimension) and they repeat along the road
+ * width (the long dimension the pedestrian walks), with equal bar/gap spacing. */
+export function crosswalkStripeRects(crosswalk: Rect, bars = 8): Rect[] {
+  // The long axis is the road width the pedestrian crosses; bars repeat along it.
   const alongX = crosswalk.w >= crosswalk.h;
   const span = alongX ? crosswalk.w : crosswalk.h;
   const stripe = span / Math.max(1, bars * 2 - 1);
@@ -410,8 +417,8 @@ export function crosswalkStripeRects(crosswalk: Rect, bars = 4): Rect[] {
     const off = k * stripe * 2;
     stripes.push(
       alongX
-        ? rect(crosswalk.x + off, crosswalk.y, stripe, crosswalk.h)
-        : rect(crosswalk.x, crosswalk.y + off, crosswalk.w, stripe),
+        ? rect(crosswalk.x + off, crosswalk.y, stripe, crosswalk.h) // upright bars
+        : rect(crosswalk.x, crosswalk.y + off, crosswalk.w, stripe), // flat bars
     );
   }
   return stripes;

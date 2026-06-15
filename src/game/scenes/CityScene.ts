@@ -340,11 +340,12 @@ export class CityScene extends Phaser.Scene {
     return peds;
   }
 
-  /** Police appear from the four corners of the map when the player is wanted. */
+  /** Police emerge on foot from the police station's doorstep (falling back to
+   * the map corners only on atypical maps without a station). */
   private policeSpawnPoints(): Vec2[] {
     const stations = this.city.facilities
       .filter((f) => f.kind === 'policeStation')
-      .flatMap((f) => [f.spawn, f.roadSpawn]);
+      .map((f) => f.spawn);
     if (stations.length > 0) return stations;
     const { width, height } = this.city;
     return [vec2(40, 40), vec2(width - 40, 40), vec2(40, height - 40), vec2(width - 40, height - 40)];

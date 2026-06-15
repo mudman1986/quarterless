@@ -45,7 +45,11 @@ describe('buildCity', () => {
     expect(kinds).toEqual(new Set(['policeStation', 'hospital', 'towYard']));
     expect(new Set(city.facilities.map((f) => f.buildingIndex)).size).toBe(city.facilities.length);
     for (const facility of city.facilities) {
-      expect(pointInRect(facility.spawn, facility.building)).toBe(true);
+      // The on-foot spawn is the doorstep on the pavement: on a sidewalk strip,
+      // never inside the building wall, and never out on the road.
+      expect(city.buildings.some((b) => pointInRect(facility.spawn, b))).toBe(false);
+      expect(city.sidewalks.some((s) => pointInRect(facility.spawn, s))).toBe(true);
+      // The vehicle spawn sits on a road tile, clear of any building.
       const insideBuilding = city.buildings.some((b) => pointInRect(facility.roadSpawn, b));
       expect(insideBuilding).toBe(false);
       const tx = Math.floor(facility.roadSpawn.x / city.spec.tile);
@@ -97,14 +101,12 @@ describe('buildCity with wider roads', () => {
   });
 
   it('spans crosswalks across the full wide-road frontage', () => {
-    const rightApproach = city.crosswalks.find(
-      (cw) =>
-        cw.x === 4 * city.spec.tile + (city.spec.tile - 40) * 0.5 &&
-        cw.y === 0 &&
-        cw.w === 40,
-    );
-    expect(rightApproach).toBeDefined();
-    expect(rightApproach!.h).toBe(4 * city.spec.tile);
+    // The east approach of the top-left junction crosses the horizontal road
+    // band kerb to kerb: a belt-thick strip the full road width tall.
+    const tile = city.spec.tile;
+    const east = city.crosswalks.find((cw) => cw.x === 4 * tile && cw.y === 0 && cw.w === CROSSWALK_BELT_WIDTH);
+    expect(east).toBeDefined();
+    expect(east!.h).toBe(4 * tile); // full road band, kerb to kerb
   });
 
   it('moves facility spawns when the building footprint moves', () => {
@@ -136,25 +138,43 @@ describe('buildCity with the live wide river layout', () => {
     const overlapping = city.crosswalks.some((crosswalk) => city.sidewalks.some((sidewalk) => overlapsRect(crosswalk, sidewalk)));
     expect(overlapping).toBe(false);
   });
+
+  it('never runs a road tile through the water, so traffic cannot drive into the river', () => {
+    let roadWater = 0;
+    for (let ty = 0; ty < CITY_SPEC.rows; ty++) {
+      for (let tx = 0; tx < CITY_SPEC.cols; tx++) {
+        if (city.isRoad(tx, ty) && city.isWater(tx, ty)) roadWater++;
+      }
+    }
+    expect(roadWater).toBe(0);
+  });
 });
 
 describe('crosswalkStripeRects', () => {
-  it('starts at the sidewalk edge and reaches the far kerb on a wide north-south crossing', () => {
-    const cw = rect(0, 300, 256, 32);
+  it('lays upright zebra bars across a wide crossing over a north-south road', () => {
+    // Wide, shallow belt: pedestrians cross east-west and cars run north-south,
+    // so the bars are upright (parallel to the cars) and march across in x.
+    const cw = rect(0, 300, 256, 56);
     const stripes = crosswalkStripeRects(cw);
-    expect(stripes[0]).toBeDefined();
-    expect(stripes[0]!.x).toBe(cw.x);
+    expect(stripes.length).toBeGreaterThan(1);
+    expect(stripes.every((s) => s.y === cw.y && s.h === cw.h)).toBe(true); // full belt height
+    expect(stripes.every((s) => s.w < s.h)).toBe(true); // upright (thin) bars, not lane lines
+    expect(new Set(stripes.map((s) => s.x)).size).toBe(stripes.length); // march along x
     const last = stripes[stripes.length - 1]!;
-    expect(last.x + last.w).toBeCloseTo(cw.x + cw.w);
+    expect(last.x + last.w).toBeLessThanOrEqual(cw.x + cw.w + 1e-6);
   });
 
-  it('starts at the sidewalk edge and reaches the far kerb on a wide east-west crossing', () => {
-    const cw = rect(400, 0, 32, 256);
+  it('lays flat zebra bars across a tall crossing over an east-west road', () => {
+    // Tall, narrow belt: pedestrians cross north-south and cars run east-west,
+    // so the bars are flat (parallel to the cars) and march down in y.
+    const cw = rect(400, 0, 56, 256);
     const stripes = crosswalkStripeRects(cw);
-    expect(stripes[0]).toBeDefined();
-    expect(stripes[0]!.y).toBe(cw.y);
+    expect(stripes.length).toBeGreaterThan(1);
+    expect(stripes.every((s) => s.x === cw.x && s.w === cw.w)).toBe(true); // full belt width
+    expect(stripes.every((s) => s.h < s.w)).toBe(true); // flat (thin) bars, not lane lines
+    expect(new Set(stripes.map((s) => s.y)).size).toBe(stripes.length); // march down y
     const last = stripes[stripes.length - 1]!;
-    expect(last.y + last.h).toBeCloseTo(cw.y + cw.h);
+    expect(last.y + last.h).toBeLessThanOrEqual(cw.y + cw.h + 1e-6);
   });
 });
 
@@ -308,27 +328,19 @@ describe('sidewalks, crosswalks and parking', () => {
 
   it('places crosswalks on the road approaches to each intersection', () => {
     expect(city.crosswalks.length).toBeGreaterThan(0);
-    const { block, tile } = city.spec;
-    const expectedRoadSpan = tile;
+    const { tile } = city.spec;
+    const roadSpan = tile; // single-lane roads here (roadWidth defaults to 1)
     for (const cw of city.crosswalks) {
-      const tx = Math.floor((cw.x + cw.w / 2) / city.spec.tile);
-      const ty = Math.floor((cw.y + cw.h / 2) / city.spec.tile);
-      // A crossing tile is a road tile with exactly one coordinate on a block
-      // edge (the road line) and the other one tile off it (the approach) —
-      // i.e. adjacent to an intersection, never the junction tile itself.
-      const onColLine = tx % block === 0;
-      const onRowLine = ty % block === 0;
-      expect(onColLine !== onRowLine).toBe(true); // exactly one, not both
+      // Each crossing is a belt spanning a full road band kerb to kerb: one
+      // dimension is the road span, the other the zebra belt width.
+      const northSouth = cw.w === roadSpan && cw.h === CROSSWALK_BELT_WIDTH;
+      const eastWest = cw.w === CROSSWALK_BELT_WIDTH && cw.h === roadSpan;
+      expect(northSouth || eastWest).toBe(true);
+      // Its centre lies on a dry road tile (an approach), never over water.
+      const tx = Math.floor((cw.x + cw.w / 2) / tile);
+      const ty = Math.floor((cw.y + cw.h / 2) / tile);
       expect(city.isRoad(tx, ty)).toBe(true);
-      if (onColLine) {
-        expect(cw.x).toBe(tx * tile);
-        expect(cw.w).toBe(expectedRoadSpan);
-        expect(cw.h).toBe(CROSSWALK_BELT_WIDTH);
-      } else {
-        expect(cw.y).toBe(ty * tile);
-        expect(cw.w).toBe(CROSSWALK_BELT_WIDTH);
-        expect(cw.h).toBe(expectedRoadSpan);
-      }
+      expect(city.isWater(tx, ty)).toBe(false);
     }
   });
 

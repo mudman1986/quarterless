@@ -11,7 +11,7 @@ import {
 
 // Re-exported so existing callers keep importing the road-grid helpers from
 // here; they now live in the shared roadVehicle module.
-export { CARDINALS, tileCoord, roadAt, openDirections } from './roadVehicle';
+export { CARDINALS, tileCoord, roadAt, openDirections, laneCross } from './roadVehicle';
 
 /** A simple NPC driver that keeps a car moving along the road grid. */
 export interface TrafficAI {
@@ -19,6 +19,9 @@ export interface TrafficAI {
   dir: Vec2;
   /** Seconds the car has been blocked by an obstacle (drives a reroute). */
   blocked?: number;
+  /** Cross-travel coordinate of the lane it is committing to during a lane
+   * change, or undefined when it is simply keeping its current lane. */
+  laneTarget?: number;
 }
 
 /** Cruising speed (px/s) of NPC traffic. */
@@ -94,7 +97,7 @@ export function stepTraffic(
   rng: () => number = Math.random,
 ): { car: Car; ai: TrafficAI } {
   const v: RoadVehicle = { pos: car.pos, heading: car.heading, dir: ai.dir };
-  const next = stepRoadVehicle(v, city, dt, speed, wanderChooser(rng, TRAFFIC_TURN_CHANCE));
+  const next = stepRoadVehicle(v, city, dt, speed, wanderChooser(rng, TRAFFIC_TURN_CHANCE), ai.laneTarget);
   return {
     car: { ...car, pos: next.pos, heading: next.heading, speed },
     ai: { ...ai, dir: next.dir },

@@ -10,6 +10,7 @@ import {
 import { type OnFootActor } from './entity';
 import { type Car } from './vehicle';
 import { type Pedestrian } from './pedestrianAI';
+import { type TrafficAI } from './trafficAI';
 import { rect, pointInRect } from './collision';
 import { buildCity, tileCenter } from './city';
 import { controls } from './types';
@@ -617,6 +618,28 @@ describe('World traffic rerouting and lights', () => {
     expect(w.cars[0].pos.x).toBeCloseTo(start.x);
   });
 
+  it('halts a wide-road NPC cleanly before the junction at a red light', () => {
+    const city = buildCity({ cols: 21, rows: 21, tile: 64, block: 7, roadWidth: 4 });
+    const col = 7 + 3; // a southbound lane of the road band starting at column 7
+    const start = tileCenter(city.spec, col, 7 + 4 + 1); // a few tiles north of junction row 14
+    const junctionEdgeY = 14 * city.spec.tile;
+    const w = new World({
+      player: player(),
+      cars: [{ pos: start, heading: Math.PI / 2, speed: 0, radius: 14 }],
+      city,
+      carDrivers: [{ dir: vec2(0, 1) }],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.99,
+    });
+    w.lights = createTrafficLights(0); // horizontal green => our southbound car faces red
+
+    for (let i = 0; i < 200; i++) w.tick(controls(), 1 / 60); // within the 4s green phase
+    const car = w.cars[0];
+    expect(car.pos.y + car.radius).toBeLessThanOrEqual(junctionEdgeY); // never noses into the box
+    expect(car.pos.y).toBeGreaterThan(junctionEdgeY - 64); // actually drove up to the line
+    expect(car.pos.x).toBeCloseTo(start.x); // and held its lane
+  });
+
   it('changes lanes gradually instead of teleporting sideways', () => {
     const city = buildCity({ cols: 18, rows: 18, tile: 64, block: 6, roadWidth: 4 });
     const start = tileCenter(city.spec, 6, 2);
@@ -634,6 +657,37 @@ describe('World traffic rerouting and lights', () => {
     const shift = Math.abs(w.cars[0].pos.y - start.y);
     expect(shift).toBeGreaterThan(0);
     expect(shift).toBeLessThan(20);
+  });
+
+  it('never teleports NPC cars across a wide road while they cruise and turn', () => {
+    const city = buildCity({ cols: 24, rows: 24, tile: 64, block: 6, roadWidth: 4 });
+    const cars: Car[] = [];
+    const drivers: (TrafficAI | null)[] = [];
+    for (let tx = 6; tx < 18; tx += 6) {
+      cars.push({ pos: tileCenter(city.spec, tx + 3, 7), heading: Math.PI / 2, speed: 0, radius: 14 });
+      drivers.push({ dir: vec2(0, 1) });
+    }
+    let seed = 7;
+    const rng = (): number => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const w = new World({
+      player: { pos: vec2(-9999, -9999), angle: 0, radius: 8 },
+      cars,
+      city,
+      carDrivers: drivers,
+      bounds: { width: city.width, height: city.height },
+      rng,
+    });
+    const prev = w.cars.map((c) => ({ ...c.pos }));
+    let maxJump = 0;
+    for (let f = 0; f < 1200; f++) {
+      w.tick(controls(), 1 / 60);
+      w.cars.forEach((c, i) => {
+        maxJump = Math.max(maxJump, Math.hypot(c.pos.x - prev[i].x, c.pos.y - prev[i].y));
+        prev[i] = { ...c.pos };
+      });
+    }
+    // Cruise (~2px/tick) plus a capped pivot — never a multi-lane teleport.
+    expect(maxJump).toBeLessThan(40);
   });
 
   it('keeps a calm pedestrian off the road except at a crosswalk', () => {

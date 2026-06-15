@@ -94,6 +94,36 @@ function alignToLane(spec: CitySpec, pos: Vec2, dir: Vec2): Vec2 {
   return lanePosition(spec, pos, dir, nearestLane(spec, pos, dir));
 }
 
+/** Pixels per second a cruising vehicle drifts back toward its lane centre. Kept
+ * close to traffic speed so a turn settles into the new lane within the junction
+ * rather than snapping there in a single frame (the disappear/reappear bug). */
+const LANE_KEEP_RATE = 130;
+
+/** The cross-travel (lateral) coordinate of a point for a travel direction:
+ * the y for an east/west mover, the x for a north/south mover. */
+export function laneCross(p: Vec2, dir: Vec2): number {
+  return dir.x !== 0 ? p.y : p.x;
+}
+
+/** Ease the lateral (cross-travel) position toward a lane centre, capped per
+ * frame. With an explicit `targetLateral` (a committed lane change) it eases to
+ * that lane; otherwise it drifts toward the nearest lane centre of the current
+ * direction so turns and stray drift settle smoothly. Pure. */
+function easeToLane(spec: CitySpec, pos: Vec2, dir: Vec2, dt: number, targetLateral?: number): Vec2 {
+  const goal = targetLateral ?? laneCross(alignToLane(spec, pos, dir), dir);
+  const cur = laneCross(pos, dir);
+  const next = cur + Math.sign(goal - cur) * Math.min(Math.abs(goal - cur), LANE_KEEP_RATE * dt);
+  return dir.x !== 0 ? vec2(pos.x, next) : vec2(next, pos.y);
+}
+
+/** Undo a step that would carry the vehicle off the road or past a dead end:
+ * reset the travelled-axis coordinate back to the tile we came from, leaving the
+ * cross axis for lane-keeping to settle. At most a half-tile move. Pure. */
+function pivotInTile(spec: CitySpec, pos: Vec2, travelled: Vec2, before: { tx: number; ty: number }): Vec2 {
+  const c = tileCenter(spec, before.tx, before.ty);
+  return travelled.x !== 0 ? vec2(c.x, pos.y) : vec2(pos.x, c.y);
+}
+
 /** All lane centres on the current road, sorted from the current lane outward. */
 export function laneCentersForRoad(city: City, pos: Vec2, dir: Vec2): Vec2[] {
   const spec = city.spec;
@@ -165,9 +195,10 @@ export function wanderChooser(rng: () => number, turnChance: number): DirectionC
 
 /**
  * Advance a road vehicle one step at `speed`. On crossing into a new tile the
- * chooser picks the next direction; the vehicle snaps to the lane centre when it
- * turns (or is forced off a dead end) so it always stays on the road. Pure:
- * returns a new vehicle.
+ * chooser picks the next direction; lane-keeping then eases the vehicle toward a
+ * lane centre (the committed `laneTarget`, else the nearest lane) a little each
+ * frame, so it stays on the road through turns without ever snapping across the
+ * band. Pure: returns a new vehicle.
  */
 export function stepRoadVehicle(
   v: RoadVehicle,
@@ -175,6 +206,7 @@ export function stepRoadVehicle(
   dt: number,
   speed: number,
   choose: DirectionChooser,
+  laneTarget?: number,
 ): RoadVehicle {
   const spec = city.spec;
   let dir = v.dir;
@@ -188,19 +220,25 @@ export function stepRoadVehicle(
     const options = openDirections(city, tile.tx, tile.ty);
     if (options.length === 0) {
       dir = vec2(-dir.x, -dir.y); // fully boxed in: reverse
-      pos = alignToLane(spec, tileCenter(spec, before.tx, before.ty), dir);
+      pos = pivotInTile(spec, pos, v.dir, before);
     } else {
       const chosen = choose(options, dir, tileCenter(spec, tile.tx, tile.ty));
       if (!onRoad) {
         dir = chosen; // would leave the road: turn, staying on the current tile
-        pos = alignToLane(spec, tileCenter(spec, before.tx, before.ty), dir);
+        pos = pivotInTile(spec, pos, v.dir, before);
       } else if (!isSameDir(chosen, dir)) {
-        dir = chosen; // turning onto a crossing road: pivot on the lane centre
-        pos = alignToLane(spec, tileCenter(spec, after.tx, after.ty), dir);
+        dir = chosen; // turning onto a crossing road; lane-keeping eases us over
       }
-      // else: carry straight on without snapping.
+      // else: carry straight on.
     }
   }
+
+  // Continuous lane keeping: ease the cross-travel position toward a lane centre
+  // (the committed change target, or the nearest lane) so turns and any drift
+  // resolve smoothly over several frames instead of teleporting across the wide
+  // road band in a single step. A fresh turn invalidates an old target's axis.
+  const turned = !isSameDir(dir, v.dir);
+  pos = easeToLane(spec, pos, dir, dt, turned ? undefined : laneTarget);
 
   return { pos, heading: angle(dir), dir };
 }

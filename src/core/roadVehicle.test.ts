@@ -51,6 +51,8 @@ describe('direction helpers', () => {
 
 describe('stepRoadVehicle on wide roads', () => {
   const wide = buildCity({ cols: 18, rows: 18, tile: 64, block: 6, roadWidth: 4 });
+  const insideWide = (p: { x: number; y: number }): boolean =>
+    wide.buildings.some((b) => p.x > b.x && p.x < b.x + b.w && p.y > b.y && p.y < b.y + b.h);
 
   it('stays aligned to its chosen lane on a multi-lane street', () => {
     const start = tileCenter(wide.spec, 6, 3);
@@ -64,7 +66,23 @@ describe('stepRoadVehicle on wide roads', () => {
     const start = vec2(tileCenter(wide.spec, 6, 2).x, tileCenter(wide.spec, 6, 2).y + 12);
     const v: RoadVehicle = { pos: start, heading: 0, dir: vec2(1, 0) };
     const next = stepRoadVehicle(v, wide, DT, 130, wanderChooser(() => 0.9, 0.35));
-    expect(next.pos.y).toBeCloseTo(start.y);
+    // It eases gently back toward the lane centre but never jumps there.
+    expect(Math.abs(next.pos.y - start.y)).toBeLessThan(5);
+  });
+
+  it('never teleports sideways when turning at junctions on a wide road', () => {
+    // Force a turn at every junction and confirm each tick only ever moves a
+    // little: a forward step plus a capped lane-keeping ease, never a multi-lane
+    // snap across the 4-wide band (the disappear/reappear bug).
+    let v: RoadVehicle = { pos: tileCenter(wide.spec, 3, 6), heading: Math.PI / 2, dir: vec2(0, 1) };
+    const cruise = 200 * DT;
+    for (let i = 0; i < 600; i++) {
+      const prev = v.pos;
+      v = stepRoadVehicle(v, wide, DT, 200, wanderChooser(() => 0, 1)); // always turn when able
+      const moved = Math.hypot(v.pos.x - prev.x, v.pos.y - prev.y);
+      expect(moved).toBeLessThan(cruise + 36); // forward + at most a half-tile pivot
+      expect(insideWide(v.pos)).toBe(false);
+    }
   });
 });
 

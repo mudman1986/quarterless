@@ -29,7 +29,7 @@ import {
   isIntersection,
   openDirections,
 } from './trafficAI';
-import { type RoadVehicle, stepRoadVehicle, seekChooser, nearestCardinal } from './roadVehicle';
+import { type RoadVehicle, stepRoadVehicle, seekChooser, nearestCardinal, laneCross } from './roadVehicle';
 import {
   type TrafficLights,
   createTrafficLights,
@@ -216,8 +216,6 @@ export const SERVICE_SPAWN_SPACING = 36;
 export const CREW_WALK_SPEED = 55;
 /** How close the crew must get to the body/wreck (or back to their vehicle) to act. */
 export const CREW_REACH_RADIUS = 8;
-/** Lateral speed (px/s) of an NPC or service vehicle changing lanes. */
-const LANE_CHANGE_SPEED = 180;
 
 /** A dead pedestrian left on the ground (with a blood puddle, rendered later). */
 export interface Corpse {
@@ -256,6 +254,9 @@ export interface ServiceVehicle {
   speed: number;
   /** Seconds it has been held up by an obstacle ahead (drives the reroute). */
   blocked: number;
+  /** Cross-travel coordinate of the lane it is easing into during a lane change,
+   * or undefined when simply keeping its current lane. */
+  laneTarget?: number;
   /** Remaining hit points of the vehicle body. Enough bullets or impacts turn
    * it into an explosion, just like any other vehicle. */
   health: number;
@@ -583,36 +584,46 @@ export class World {
     for (let i = 0; i < this.cars.length; i++) {
       const ai = this.carDrivers[i];
       if (!ai || i === this.drivingCarIndex || this.wreckedCars[i]) continue;
-      let car = this.cars[i];
+      const car = this.cars[i];
 
-      let driver = ai;
+      let dir = ai.dir;
+      let blocked = ai.blocked ?? 0;
       let speed = TRAFFIC_SPEED;
+      // Drop a finished lane change once the car has reached the chosen lane.
+      let laneTarget = ai.laneTarget;
+      if (laneTarget !== undefined && Math.abs(laneCross(car.pos, ai.dir) - laneTarget) < 1.5) {
+        laneTarget = undefined;
+      }
       if (obstacleAhead(car.pos, ai.dir, obstacles)) {
-        const lane = laneChangeTarget(this.city, car.pos, ai.dir, obstacles);
-        if (lane) {
-          car = { ...car, pos: this.shiftTowardLane(car.pos, lane, ai.dir, dt) };
-          driver = ai.blocked ? { ...ai, blocked: 0 } : ai;
+        if (laneTarget === undefined) {
+          const lane = laneChangeTarget(this.city, car.pos, ai.dir, obstacles);
+          if (lane) laneTarget = laneCross(lane, ai.dir);
+        }
+        if (laneTarget !== undefined) {
+          speed = 0; // hold position and ease across into the clear lane
+          blocked = 0;
         } else {
-        // Wait behind a pedestrian/player in the lane; after a few seconds give
-        // up and reroute (turn around) to find another way around them.
-          const waited = (ai.blocked ?? 0) + dt;
+          // Nowhere to go around them: wait, then U-turn to find another route.
+          const waited = blocked + dt;
           if (waited >= TRAFFIC_REROUTE_WAIT) {
-            driver = { dir: vec2(-ai.dir.x, -ai.dir.y), blocked: 0 }; // U-turn and go
+            dir = vec2(-ai.dir.x, -ai.dir.y);
+            blocked = 0;
           } else {
-            driver = { ...ai, blocked: waited };
+            blocked = waited;
             speed = 0;
           }
         }
       } else if (this.redLightAhead(car, ai.dir)) {
         speed = 0; // hold at the red light (not counted as being stuck)
-        driver = ai.blocked ? { ...ai, blocked: 0 } : ai;
-      } else if (ai.blocked) {
-        driver = { ...ai, blocked: 0 }; // path cleared
+        blocked = 0;
+      } else {
+        blocked = 0; // path cleared
       }
 
-      const out = stepTraffic(car, driver, this.city, dt, speed, this.rng);
+      const out = stepTraffic(car, { dir, blocked, laneTarget }, this.city, dt, speed, this.rng);
+      const turned = out.ai.dir.x !== ai.dir.x || out.ai.dir.y !== ai.dir.y;
       this.cars[i] = out.car;
-      this.carDrivers[i] = out.ai;
+      this.carDrivers[i] = turned ? { ...out.ai, laneTarget: undefined } : out.ai;
     }
   }
 
@@ -1096,18 +1107,6 @@ export class World {
       : vec2(facility.roadSpawn.x + offset, facility.roadSpawn.y);
   }
 
-  private shiftTowardLane(pos: Vec2, lane: Vec2, dir: Vec2, dt: number): Vec2 {
-    const maxShift = LANE_CHANGE_SPEED * dt;
-    if (dir.x !== 0) {
-      const dy = lane.y - pos.y;
-      const step = Math.sign(dy) * Math.min(Math.abs(dy), maxShift);
-      return vec2(pos.x, pos.y + step);
-    }
-    const dx = lane.x - pos.x;
-    const step = Math.sign(dx) * Math.min(Math.abs(dx), maxShift);
-    return vec2(pos.x + step, pos.y);
-  }
-
   /**
    * Advance a service vehicle one step along the roads toward its target. Like
    * NPC traffic it yields to anyone in its path rather than driving through
@@ -1120,12 +1119,18 @@ export class World {
     let dir = v.dir;
     let blocked = v.blocked;
     let speed = fullSpeed;
-    let pos = v.pos;
     const obstacles = this.yieldObstacles();
+    let laneTarget = v.laneTarget;
+    if (laneTarget !== undefined && Math.abs(laneCross(v.pos, v.dir) - laneTarget) < 1.5) {
+      laneTarget = undefined; // reached the lane it was easing into
+    }
     if (obstacleAhead(v.pos, v.dir, obstacles)) {
-      const lane = laneChangeTarget(this.city!, v.pos, v.dir, obstacles);
-      if (lane) {
-        pos = this.shiftTowardLane(v.pos, lane, v.dir, dt);
+      if (laneTarget === undefined) {
+        const lane = laneChangeTarget(this.city!, v.pos, v.dir, obstacles);
+        if (lane) laneTarget = laneCross(lane, v.dir);
+      }
+      if (laneTarget !== undefined) {
+        speed = 0; // hold and ease into the clear lane
         blocked = 0;
       } else {
         blocked += dt;
@@ -1139,13 +1144,15 @@ export class World {
     } else {
       blocked = 0;
     }
-    const rv: RoadVehicle = { pos, heading: v.heading, dir };
-    const next = stepRoadVehicle(rv, this.city!, dt, speed, seekChooser(v.target));
+    const rv: RoadVehicle = { pos: v.pos, heading: v.heading, dir };
+    const next = stepRoadVehicle(rv, this.city!, dt, speed, seekChooser(v.target), laneTarget);
+    const turned = next.dir.x !== v.dir.x || next.dir.y !== v.dir.y;
     return {
       ...v,
       pos: next.pos,
       heading: next.heading,
       dir: next.dir,
+      laneTarget: turned ? undefined : laneTarget,
       age: v.age + dt,
       speed,
       blocked,
