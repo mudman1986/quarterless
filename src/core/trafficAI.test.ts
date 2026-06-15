@@ -107,16 +107,36 @@ describe('stepTraffic', () => {
   });
 
   it('turns onto a crossing road at an intersection', () => {
-    // One step away from entering crossroads (4,4) while heading east.
+    // Drive into the crossroads at (4,4) heading east and force a turn there.
+    let car: Car = { pos: vec2(255, 288), heading: 0, speed: 0, radius: 12 };
+    let ai: TrafficAI = { dir: vec2(1, 0) };
+    for (let i = 0; i < 40; i++) {
+      const out = stepTraffic(car, ai, city, DT, TRAFFIC_SPEED, () => 0); // always turn
+      car = out.car;
+      ai = out.ai;
+    }
+    expect(ai.dir).toEqual(vec2(0, 1)); // it took the southbound road
+    expect(car.pos.y).toBeGreaterThan(288); // and drove off down it
+    // Having settled into the new lane it faces straight south again (the
+    // visual heading tracks real travel, so mid-turn it points diagonally and
+    // straightens out once aligned — never crabbing sideways).
+    expect(car.heading).toBeCloseTo(Math.PI / 2);
+  });
+
+  it('faces its actual travel direction while turning, not straight ahead', () => {
+    // The frame it pivots onto the crossing road it is still easing toward the
+    // new lane centre, so it points diagonally (between the two cardinals), i.e.
+    // where it is really moving — not snapped to the new heading nor crabbing.
     const { car } = stepTraffic(
       { pos: vec2(255, 288), heading: 0, speed: 0, radius: 12 },
       { dir: vec2(1, 0) },
       city,
       DT,
       TRAFFIC_SPEED,
-      () => 0, // force a turn, pick the first option
+      () => 0, // force the turn
     );
-    expect(car.heading).toBeCloseTo(Math.PI / 2); // now heading south
+    expect(car.heading).toBeGreaterThan(0); // not still facing east
+    expect(car.heading).toBeLessThan(Math.PI / 2); // not snapped to south either
   });
 
   it('turns back at a dead end instead of leaving the road', () => {

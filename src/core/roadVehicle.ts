@@ -238,7 +238,16 @@ export function stepRoadVehicle(
   // resolve smoothly over several frames instead of teleporting across the wide
   // road band in a single step. A fresh turn invalidates an old target's axis.
   const turned = !isSameDir(dir, v.dir);
+  const beforeEase = pos;
   pos = easeToLane(spec, pos, dir, dt, turned ? undefined : laneTarget);
 
-  return { pos, heading: angle(dir), dir };
+  // Visual facing follows the car's ACTUAL travel: its forward motion plus any
+  // lateral lane-keeping / lane-change drift. So a car easing into another lane
+  // or rounding a corner points where it is going (a natural steer) rather than
+  // facing straight ahead while sliding sideways. A stopped car keeps its
+  // cardinal facing instead of swinging toward a stray sideways nudge.
+  const lateral = sub(pos, beforeEase);
+  const heading = speed > 1e-3 ? angle(add(scale(dir, speed), scale(lateral, 1 / dt))) : angle(dir);
+
+  return { pos, heading, dir };
 }

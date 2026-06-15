@@ -654,9 +654,16 @@ describe('World traffic rerouting and lights', () => {
     });
 
     w.tick(controls(), 1 / 60);
-    const shift = Math.abs(w.cars[0].pos.y - start.y);
+    const car = w.cars[0];
+    const shift = Math.abs(car.pos.y - start.y); // lateral (eastbound)
     expect(shift).toBeGreaterThan(0);
-    expect(shift).toBeLessThan(20);
+    expect(shift).toBeLessThan(20); // eased a little, not teleported
+    // It keeps rolling forward while easing over — a diagonal swerve, never a
+    // car sliding straight sideways.
+    expect(car.pos.x).toBeGreaterThan(start.x);
+    // And it faces where it is actually going (diagonally), not straight ahead.
+    expect(Math.abs(car.heading)).toBeGreaterThan(0.05);
+    expect(Math.abs(car.heading)).toBeLessThan(Math.PI / 2);
   });
 
   it('never teleports NPC cars across a wide road while they cruise and turn', () => {

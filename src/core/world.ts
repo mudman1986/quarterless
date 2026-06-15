@@ -216,6 +216,10 @@ export const SERVICE_SPAWN_SPACING = 36;
 export const CREW_WALK_SPEED = 55;
 /** How close the crew must get to the body/wreck (or back to their vehicle) to act. */
 export const CREW_REACH_RADIUS = 8;
+/** Fraction of cruising speed a vehicle still rolls forward at while easing into
+ * another lane, so a lane change is a natural diagonal swerve rather than a car
+ * sliding straight sideways. */
+const LANE_CHANGE_SPEED_FACTOR = 0.6;
 
 /** A dead pedestrian left on the ground (with a blood puddle, rendered later). */
 export interface Corpse {
@@ -600,7 +604,7 @@ export class World {
           if (lane) laneTarget = laneCross(lane, ai.dir);
         }
         if (laneTarget !== undefined) {
-          speed = 0; // hold position and ease across into the clear lane
+          speed = TRAFFIC_SPEED * LANE_CHANGE_SPEED_FACTOR; // roll forward while easing across
           blocked = 0;
         } else {
           // Nowhere to go around them: wait, then U-turn to find another route.
@@ -1130,7 +1134,7 @@ export class World {
         if (lane) laneTarget = laneCross(lane, v.dir);
       }
       if (laneTarget !== undefined) {
-        speed = 0; // hold and ease into the clear lane
+        speed = fullSpeed * LANE_CHANGE_SPEED_FACTOR; // roll forward while easing across
         blocked = 0;
       } else {
         blocked += dt;

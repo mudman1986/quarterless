@@ -16,6 +16,10 @@ export interface Police {
   radius: number;
   /** Whether this unit is an officer on foot or a patrol car. */
   kind: 'foot' | 'car';
+  /** Cardinal travel direction of a patrol car following the road grid. Kept so
+   * the car's grid steering is independent of its visual heading (which now
+   * points along its actual diagonal travel through turns and lane changes). */
+  dir?: Vec2;
   /** Current speed (px/s). Used for patrol-car collision damage; foot officers
    * simply sit at 0. */
   speed?: number;
@@ -99,8 +103,8 @@ export function stepPoliceCar(
   const v: RoadVehicle = {
     pos: police.pos,
     heading: police.heading,
-    dir: nearestCardinal(police.heading),
+    dir: police.dir ?? nearestCardinal(police.heading),
   };
   const next = stepRoadVehicle(v, city, dt, speed, seekChooser(target));
-  return { ...police, pos: next.pos, heading: next.heading };
+  return { ...police, pos: next.pos, heading: next.heading, dir: next.dir };
 }
