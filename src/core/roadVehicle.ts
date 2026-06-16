@@ -140,6 +140,26 @@ export function openDirections(city: City, tx: number, ty: number): Vec2[] {
   return CARDINALS.filter((d) => roadAt(city, tx + d.x, ty + d.y));
 }
 
+/**
+ * Travel directions a vehicle may actually take from a tile. It always carries
+ * straight on along its current road (and may reverse only at a dead end), but
+ * may turn onto a perpendicular road *only at a genuine junction* — where a road
+ * row crosses a road column. This stops a car on a wide multi-lane band from
+ * treating the adjacent parallel lane as a "cross road" and sliding sideways out
+ * of its lane between intersections. Pure.
+ */
+export function routeDirections(city: City, tx: number, ty: number, dir: Vec2): Vec2[] {
+  const { block } = city.spec;
+  const width = roadWidth(city.spec);
+  const atJunction = tx % block < width && ty % block < width;
+  const straightOpen = roadAt(city, tx + dir.x, ty + dir.y);
+  return CARDINALS.filter((d) => {
+    if (!roadAt(city, tx + d.x, ty + d.y)) return false;
+    if (isSameDir(d, dir) || isOppositeDir(d, dir)) return true; // along our own road
+    return atJunction || !straightOpen; // perpendicular: only at a junction, or forced
+  });
+}
+
 /** The cardinal direction nearest to a heading (radians). */
 export function nearestCardinal(heading: number): Vec2 {
   const c = Math.cos(heading);
@@ -217,7 +237,7 @@ export function stepRoadVehicle(
   if (after.tx !== before.tx || after.ty !== before.ty) {
     const onRoad = roadAt(city, after.tx, after.ty);
     const tile = onRoad ? after : before;
-    const options = openDirections(city, tile.tx, tile.ty);
+    const options = routeDirections(city, tile.tx, tile.ty, dir);
     if (options.length === 0) {
       dir = vec2(-dir.x, -dir.y); // fully boxed in: reverse
       pos = pivotInTile(spec, pos, v.dir, before);
