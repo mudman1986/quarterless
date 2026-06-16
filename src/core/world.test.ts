@@ -10,13 +10,13 @@ import {
 import { type OnFootActor } from './entity';
 import { type Car } from './vehicle';
 import { type Pedestrian } from './pedestrianAI';
-import { type TrafficAI } from './trafficAI';
+import { tileCoord, type TrafficAI } from './trafficAI';
 import { rect, pointInRect } from './collision';
 import { buildCity, tileCenter } from './city';
 import { controls } from './types';
 import { addHeat, createWanted, CRIME_HEAT } from './wantedLevel';
 import { createMission } from './mission';
-import { createTrafficLights, LIGHT_GREEN } from './trafficLight';
+import { createTrafficLights, LIGHT_GREEN, LIGHT_PERIOD } from './trafficLight';
 import { vec2, distance } from './vector';
 
 const player = (): OnFootActor => ({ pos: vec2(0, 0), angle: 0, radius: 8 });
@@ -556,6 +556,45 @@ describe('World NPC yielding', () => {
 
 describe('World traffic rerouting and lights', () => {
   const miniCity = () => buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+  const wideLightCity = () => buildCity({ cols: 28, rows: 28, tile: 64, block: 7, roadWidth: 4 });
+
+  const rightHandLaneIndices = (dir: { x: number; y: number }): number[] =>
+    dir.x > 0 || dir.y < 0 ? [2, 3] : [1, 0];
+
+  const lightJunctionBand = 14;
+  const lightRoadWidth = 4;
+  const lanePoint = (
+    city: ReturnType<typeof wideLightCity>,
+    dir: { x: number; y: number },
+    alongTile: number,
+  ) => {
+    const lane = rightHandLaneIndices(dir)[0]!;
+    return dir.x !== 0
+      ? tileCenter(city.spec, alongTile, lightJunctionBand + lane)
+      : tileCenter(city.spec, lightJunctionBand + lane, alongTile);
+  };
+
+  const frontGapToLight = (car: Car, dir: { x: number; y: number }): number => {
+    const frontX = car.pos.x + dir.x * car.radius;
+    const frontY = car.pos.y + dir.y * car.radius;
+    if (dir.x > 0) return lightJunctionBand * 64 - frontX;
+    if (dir.x < 0) return frontX - (lightJunctionBand + lightRoadWidth) * 64;
+    if (dir.y > 0) return lightJunctionBand * 64 - frontY;
+    return frontY - (lightJunctionBand + lightRoadWidth) * 64;
+  };
+
+  const redLightFor = (dir: { x: number; y: number }) =>
+    createTrafficLights(dir.x !== 0 ? LIGHT_GREEN + 0.1 : 0);
+
+  const inWideLightJunction = (city: ReturnType<typeof wideLightCity>, car: Car): boolean => {
+    const { tx, ty } = tileCoord(city.spec, car.pos);
+    return (
+      tx >= lightJunctionBand &&
+      tx < lightJunctionBand + lightRoadWidth &&
+      ty >= lightJunctionBand &&
+      ty < lightJunctionBand + lightRoadWidth
+    );
+  };
 
   it('reroutes an NPC car around someone who blocks the road too long', () => {
     const city = miniCity();
@@ -638,6 +677,102 @@ describe('World traffic rerouting and lights', () => {
     expect(car.pos.y + car.radius).toBeLessThanOrEqual(junctionEdgeY); // never noses into the box
     expect(car.pos.y).toBeGreaterThan(junctionEdgeY - 64); // actually drove up to the line
     expect(car.pos.x).toBeCloseTo(start.x); // and held its lane
+  });
+
+  it.each([
+    ['eastbound', vec2(1, 0), 10],
+    ['westbound', vec2(-1, 0), 20],
+    ['southbound', vec2(0, 1), 10],
+    ['northbound', vec2(0, -1), 20],
+  ])('stops at a natural traffic-light line on a wide road (%s)', (_label, dir, alongTile) => {
+    const city = wideLightCity();
+    const start = lanePoint(city, dir, alongTile);
+    const trafficCar: Car = {
+      pos: start,
+      heading: Math.atan2(dir.y, dir.x),
+      speed: 0,
+      radius: 14,
+    };
+    const world = new World({
+      player: player(),
+      cars: [trafficCar],
+      city,
+      carDrivers: [{ dir }],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.99,
+    });
+    world.lights = redLightFor(dir);
+
+    for (let i = 0; i < 180; i++) world.tick(controls(), 1 / 60);
+
+    const stopped = world.cars[0];
+    const frontGap = frontGapToLight(stopped, dir);
+    expect(stopped.speed).toBe(0);
+    expect(frontGap).toBeGreaterThanOrEqual(8);
+    expect(frontGap).toBeLessThanOrEqual(32);
+    const lateral = dir.x !== 0 ? stopped.pos.y : stopped.pos.x;
+    const startLateral = dir.x !== 0 ? start.y : start.x;
+    expect(lateral).toBeCloseTo(startLateral);
+  });
+
+  it('releases a naturally stopped car when its traffic light turns green', () => {
+    const city = wideLightCity();
+    const dir = vec2(1, 0);
+    const start = lanePoint(city, dir, 10);
+    const trafficCar: Car = { pos: start, heading: 0, speed: 0, radius: 14 };
+    const world = new World({
+      player: player(),
+      cars: [trafficCar],
+      city,
+      carDrivers: [{ dir }],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.99,
+    });
+    world.lights = createTrafficLights(LIGHT_GREEN + 0.1); // horizontal traffic is red
+
+    for (let i = 0; i < 180; i++) world.tick(controls(), 1 / 60);
+    const stoppedX = world.cars[0].pos.x;
+    expect(frontGapToLight(world.cars[0], dir)).toBeLessThanOrEqual(32);
+
+    const ticksUntilGreenRelease = Math.ceil((LIGHT_PERIOD - (LIGHT_GREEN + 0.1) + 0.75) * 60);
+    for (let i = 0; i < ticksUntilGreenRelease; i++) world.tick(controls(), 1 / 60);
+
+    expect(world.cars[0].pos.x).toBeGreaterThan(stoppedX + 40);
+    expect(world.cars[0].speed).toBeGreaterThan(0);
+  });
+
+  it('does not stop in the intersection after turning onto a red axis', () => {
+    const city = wideLightCity();
+    const dir = vec2(1, 0);
+    const start = lanePoint(city, dir, 10);
+    const trafficCar: Car = { pos: start, heading: 0, speed: 0, radius: 14 };
+    const world = new World({
+      player: player(),
+      cars: [trafficCar],
+      city,
+      carDrivers: [{ dir }],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0, // force a turn when the junction offers one
+    });
+    world.lights = createTrafficLights(0); // horizontal green, vertical red
+
+    let turned = false;
+    let stoppedInJunction = false;
+    let clearedJunction = false;
+    for (let i = 0; i < 360; i++) {
+      world.tick(controls(), 1 / 60);
+      const car = world.cars[0];
+      turned ||= car.heading > 0.1;
+      if (turned && inWideLightJunction(city, car) && car.speed === 0) stoppedInJunction = true;
+      if (turned && !inWideLightJunction(city, car)) {
+        clearedJunction = true;
+        break;
+      }
+    }
+
+    expect(turned).toBe(true);
+    expect(stoppedInJunction).toBe(false);
+    expect(clearedJunction).toBe(true);
   });
 
   it('changes lanes gradually instead of teleporting sideways', () => {

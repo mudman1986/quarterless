@@ -636,6 +636,7 @@ export class World {
   private redLightAhead(car: Car, dir: Vec2): boolean {
     if (!this.city || hasGreen(this.lights, dir)) return false; // our axis is green
     const { tx, ty } = tileCoord(this.city.spec, car.pos);
+    if (isIntersection(this.city, tx, ty)) return false; // already committed: clear the junction
     for (let step = 1; step <= 2; step++) {
       const ix = tx + dir.x * step;
       const iy = ty + dir.y * step;
