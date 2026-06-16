@@ -43,6 +43,24 @@ export function roadAt(city: City, tx: number, ty: number): boolean {
   return inBounds(city.spec, tx, ty) && city.isRoad(tx, ty);
 }
 
+function intersectionAt(city: City, tx: number, ty: number): boolean {
+  const { block } = city.spec;
+  const width = roadWidth(city.spec);
+  return roadAt(city, tx, ty) && tx % block < width && ty % block < width;
+}
+
+function exitsIntersection(city: City, tx: number, ty: number, dir: Vec2): boolean {
+  let x = tx;
+  let y = ty;
+  for (let i = 0; i <= roadWidth(city.spec); i++) {
+    x += dir.x;
+    y += dir.y;
+    if (!roadAt(city, x, y)) return false;
+    if (!intersectionAt(city, x, y)) return true;
+  }
+  return false;
+}
+
 function roadWidth(spec: CitySpec): number {
   return Math.max(1, Math.min(spec.block, spec.roadWidth ?? 1));
 }
@@ -148,16 +166,20 @@ export function openDirections(city: City, tx: number, ty: number): Vec2[] {
  * treating the adjacent parallel lane as a "cross road" and sliding sideways out
  * of its lane between intersections. Pure.
  */
-export function routeDirections(city: City, tx: number, ty: number, dir: Vec2): Vec2[] {
-  const { block } = city.spec;
-  const width = roadWidth(city.spec);
-  const atJunction = tx % block < width && ty % block < width;
+export function routeDirections(
+  city: City,
+  tx: number,
+  ty: number,
+  dir: Vec2,
+  allowJunctionTurn = true,
+): Vec2[] {
+  const atJunction = intersectionAt(city, tx, ty);
   const straightOpen = roadAt(city, tx + dir.x, ty + dir.y);
   return CARDINALS.filter((d) => {
     if (!roadAt(city, tx + d.x, ty + d.y)) return false;
     if (isSameDir(d, dir)) return true;
     if (isOppositeDir(d, dir)) return !straightOpen; // reverse only when the road ahead has ended
-    return atJunction || !straightOpen; // perpendicular: only at a junction, or forced
+    return (atJunction && allowJunctionTurn && exitsIntersection(city, tx, ty, d)) || !straightOpen;
   });
 }
 
@@ -238,7 +260,7 @@ export function stepRoadVehicle(
   if (after.tx !== before.tx || after.ty !== before.ty) {
     const onRoad = roadAt(city, after.tx, after.ty);
     const tile = onRoad ? after : before;
-    const options = routeDirections(city, tile.tx, tile.ty, dir);
+    const options = routeDirections(city, tile.tx, tile.ty, dir, !intersectionAt(city, before.tx, before.ty));
     if (options.length === 0) {
       dir = vec2(-dir.x, -dir.y); // fully boxed in: reverse
       pos = pivotInTile(spec, pos, v.dir, before);

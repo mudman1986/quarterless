@@ -285,6 +285,21 @@ describe('stepRoadVehicle keeps its lane through a turn', () => {
     expect(options.some((o) => isSameDir(o, vec2(-1, 0)))).toBe(false);
   });
 
+  it('does not turn into a road that dead-ends before leaving the junction', () => {
+    const riverCity = buildCity({
+      cols: 70,
+      rows: 70,
+      tile: 64,
+      block: 7,
+      roadWidth: 4,
+      rivers: [{ orientation: 'horizontal', start: 32, span: 3, bridgeEvery: 2 }],
+    });
+    const options = routeDirections(riverCity, 21, 38, vec2(1, 0), true);
+
+    expect(options.some((o) => isSameDir(o, vec2(1, 0)))).toBe(true);
+    expect(options.some((o) => isSameDir(o, vec2(0, -1)))).toBe(false);
+  });
+
   it('only U-turns at a dead end, then settles into the opposite inner lane', () => {
     let v: RoadVehicle = { pos: tileCenter(spec, 23, 10), heading: 0, dir: vec2(1, 0) };
     const turnDir = vec2(-1, 0);
@@ -305,5 +320,38 @@ describe('stepRoadVehicle keeps its lane through a turn', () => {
     expect(maxStep).toBeLessThan(40);
     expect(v.dir).toEqual(turnDir);
     expect(laneCross(v.pos, turnDir)).toBeCloseTo(targetCross, 1);
+  });
+
+  it('does not chain several turns inside one wide intersection into a U-turn', () => {
+    let seed = 1;
+    const rng = (): number => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    let v = startVehicle(vec2(1, 0), 'inner');
+    const choose = wanderChooser(rng, 1); // turn whenever a turn is offered
+    let entered = false;
+    let exited = false;
+    let entryDir = v.dir;
+    let exitDir = v.dir;
+    let turnsInside = 0;
+
+    for (let i = 0; i < 300; i++) {
+      const before = v;
+      const wasInside = inJunction(before.pos);
+      v = stepRoadVehicle(v, grid, DT, 130, choose);
+      const nowInside = inJunction(v.pos);
+      if (!entered && !wasInside && nowInside) {
+        entered = true;
+        entryDir = before.dir;
+      }
+      if (entered && !isSameDir(before.dir, v.dir)) turnsInside++;
+      if (entered && wasInside && !nowInside) {
+        exited = true;
+        exitDir = v.dir;
+        break;
+      }
+    }
+
+    expect(exited).toBe(true);
+    expect(turnsInside).toBe(1);
+    expect(isOppositeDir(entryDir, exitDir)).toBe(false);
   });
 });
