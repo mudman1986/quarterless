@@ -6,8 +6,10 @@ import {
   nearestCardinal,
   laneCentersForRoad,
   openDirections,
+  routeDirections,
   roadAt,
   tileCoord,
+  laneCross,
   isSameDir,
   isOppositeDir,
   type RoadVehicle,
@@ -158,11 +160,41 @@ describe('stepRoadVehicle', () => {
 describe('stepRoadVehicle keeps its lane through a turn', () => {
   // A two-lanes-each-way grid with a clear block between junctions: road bands
   // run at columns/rows 0-3, 8-11 and 16-19, so rows 4-7 are a full block of
-  // plain road with no crossing and the junction sits at columns 8-11 × rows
-  // 8-11. The southbound lanes of the column-8 band are its eastern half,
-  // columns 10 (the right/kerb lane) and 11 (the left lane).
+  // plain road with no crossing and the junction sits at columns 8-11 x rows
+  // 8-11.
   const grid = buildCity({ cols: 24, rows: 24, tile: 64, block: 8, roadWidth: 4 });
   const spec = grid.spec;
+  const junctionBand = 8;
+
+  const rightTurn = (dir: Vec2): Vec2 => vec2(-dir.y, dir.x);
+  const leftTurn = (dir: Vec2): Vec2 => vec2(dir.y, -dir.x);
+
+  const rightHandLaneIndices = (dir: Vec2): number[] =>
+    dir.x > 0 || dir.y < 0 ? [2, 3] : [1, 0];
+
+  const lanePoint = (dir: Vec2, alongTile: number, laneIndex: number): Vec2 =>
+    dir.x !== 0
+      ? tileCenter(spec, alongTile, junctionBand + laneIndex)
+      : tileCenter(spec, junctionBand + laneIndex, alongTile);
+
+  const laneCrossFor = (dir: Vec2, laneIndex: number): number =>
+    laneCross(lanePoint(dir, 0, laneIndex), dir);
+
+  const startVehicle = (dir: Vec2, laneKind: 'inner' | 'kerb'): RoadVehicle => {
+    const lanes = rightHandLaneIndices(dir);
+    const laneIndex = laneKind === 'inner' ? lanes[0]! : lanes[lanes.length - 1]!;
+    const alongTile = dir.x > 0 || dir.y > 0 ? 4 : 15;
+    return {
+      pos: lanePoint(dir, alongTile, laneIndex),
+      heading: Math.atan2(dir.y, dir.x),
+      dir,
+    };
+  };
+
+  const inJunction = (p: Vec2): boolean => {
+    const { tx, ty } = tileCoord(spec, p);
+    return tx >= junctionBand && tx < junctionBand + 4 && ty >= junctionBand && ty < junctionBand + 4;
+  };
 
   // A driver that turns onto `turnDir` the moment that road is offered (which,
   // with junction-only turning, can only happen at the intersection) and
@@ -174,66 +206,104 @@ describe('stepRoadVehicle keeps its lane through a turn', () => {
       options.find((o) => isSameDir(o, current)) ??
       current;
 
-  it('drives a block then turns right, ending in the right lane', () => {
-    // Start in the right (kerb) southbound lane, column 10, a full block north of
-    // the junction.
-    const start = tileCenter(spec, 10, 4);
-    let v: RoadVehicle = { pos: { ...start }, heading: Math.PI / 2, dir: vec2(0, 1) };
-    const driveRight = forceTurn(vec2(-1, 0)); // south -> west is a right turn
-
+  const driveScenario = (startDir: Vec2, turnDir: Vec2, startLane: 'inner' | 'kerb') => {
+    let v = startVehicle(startDir, startLane);
+    const start = v.pos;
+    const targetLane = isOppositeDir(startDir, turnDir)
+      ? rightHandLaneIndices(turnDir)[0]!
+      : isSameDir(turnDir, rightTurn(startDir))
+        ? rightHandLaneIndices(turnDir).at(-1)!
+        : rightHandLaneIndices(turnDir)[0]!;
+    const targetCross = laneCrossFor(turnDir, targetLane);
     let turnedAt = -1;
-    let turnY = 0;
-    for (let i = 0; i < 240; i++) {
+    let settledAt = -1;
+    let firstTurnPos = start;
+    let maxPreTurnLaneDrift = 0;
+    let maxStep = 0;
+    for (let i = 0; i < 300; i++) {
+      const prev = v.pos;
       const prevDir = v.dir;
-      v = stepRoadVehicle(v, grid, DT, 130, driveRight);
+      v = stepRoadVehicle(v, grid, DT, 130, forceTurn(turnDir));
+      maxStep = Math.max(maxStep, Math.hypot(v.pos.x - prev.x, v.pos.y - prev.y));
       if (turnedAt < 0 && !isSameDir(v.dir, prevDir)) {
         turnedAt = i;
-        turnY = v.pos.y;
+        firstTurnPos = v.pos;
       }
-      // Down the whole block it holds its lane exactly — it never weaves into the
-      // neighbouring lane of its own band.
       if (turnedAt < 0) {
-        expect(v.pos.x).toBeCloseTo(start.x, 1);
-        expect(v.dir).toEqual(vec2(0, 1));
+        maxPreTurnLaneDrift = Math.max(
+          maxPreTurnLaneDrift,
+          Math.abs(laneCross(v.pos, startDir) - laneCross(start, startDir)),
+        );
+      }
+      if (turnedAt >= 0 && Math.abs(laneCross(v.pos, turnDir) - targetCross) < 1) {
+        settledAt = i;
+        break;
       }
     }
+    return { v, turnedAt, settledAt, firstTurnPos, maxPreTurnLaneDrift, maxStep, targetCross };
+  };
 
-    // It turned exactly once, and only after reaching the junction (row 8+).
-    expect(turnedAt).toBeGreaterThan(0);
-    expect(turnY).toBeGreaterThanOrEqual(8 * spec.tile);
-    expect(v.dir).toEqual(vec2(-1, 0)); // now westbound
-    // The right (kerb) lane of the new westbound road is its northern lane,
-    // row 8 — it has settled cleanly into it, not into oncoming or astride two.
-    expect(v.pos.y).toBeCloseTo(tileCenter(spec, 0, 8).y, 1);
+  it.each([
+    ['eastbound', vec2(1, 0)],
+    ['southbound', vec2(0, 1)],
+    ['westbound', vec2(-1, 0)],
+    ['northbound', vec2(0, -1)],
+  ])('drives a block then turns right from the kerb lane (%s)', (_label, startDir) => {
+    const turnDir = rightTurn(startDir);
+    const result = driveScenario(startDir, turnDir, 'kerb');
+
+    expect(result.turnedAt).toBeGreaterThan(0);
+    expect(inJunction(result.firstTurnPos)).toBe(true);
+    expect(result.maxPreTurnLaneDrift).toBeLessThan(1);
+    expect(result.maxStep).toBeLessThan(6);
+    expect(result.settledAt).toBeGreaterThan(result.turnedAt);
+    expect(isSameDir(result.v.dir, turnDir)).toBe(true);
+    expect(Math.abs(laneCross(result.v.pos, turnDir) - result.targetCross)).toBeLessThan(1);
   });
 
-  it('drives a block then turns left, ending in the right lane', () => {
-    // Start in the correct lane for a left turn: the left southbound lane,
-    // column 11, a full block north of the junction.
-    const start = tileCenter(spec, 11, 4);
-    let v: RoadVehicle = { pos: { ...start }, heading: Math.PI / 2, dir: vec2(0, 1) };
-    const driveLeft = forceTurn(vec2(1, 0)); // south -> east is a left turn
+  it.each([
+    ['eastbound', vec2(1, 0)],
+    ['southbound', vec2(0, 1)],
+    ['westbound', vec2(-1, 0)],
+    ['northbound', vec2(0, -1)],
+  ])('drives a block then turns left from the inner lane (%s)', (_label, startDir) => {
+    const turnDir = leftTurn(startDir);
+    const result = driveScenario(startDir, turnDir, 'inner');
 
+    expect(result.turnedAt).toBeGreaterThan(0);
+    expect(inJunction(result.firstTurnPos)).toBe(true);
+    expect(result.maxPreTurnLaneDrift).toBeLessThan(1);
+    expect(result.maxStep).toBeLessThan(6);
+    expect(result.settledAt).toBeGreaterThan(result.turnedAt);
+    expect(isSameDir(result.v.dir, turnDir)).toBe(true);
+    expect(Math.abs(laneCross(result.v.pos, turnDir) - result.targetCross)).toBeLessThan(1);
+  });
+
+  it('does not offer a U-turn on an ordinary continuing road', () => {
+    const options = routeDirections(grid, 5, 10, vec2(1, 0));
+    expect(options.some((o) => isSameDir(o, vec2(1, 0)))).toBe(true);
+    expect(options.some((o) => isSameDir(o, vec2(-1, 0)))).toBe(false);
+  });
+
+  it('only U-turns at a dead end, then settles into the opposite inner lane', () => {
+    let v: RoadVehicle = { pos: tileCenter(spec, 23, 10), heading: 0, dir: vec2(1, 0) };
+    const turnDir = vec2(-1, 0);
+    const targetCross = laneCrossFor(turnDir, rightHandLaneIndices(turnDir)[0]!);
     let turnedAt = -1;
-    let turnY = 0;
+    let maxStep = 0;
+
     for (let i = 0; i < 240; i++) {
-      const prevDir = v.dir;
-      v = stepRoadVehicle(v, grid, DT, 130, driveLeft);
-      if (turnedAt < 0 && !isSameDir(v.dir, prevDir)) {
-        turnedAt = i;
-        turnY = v.pos.y;
-      }
-      if (turnedAt < 0) {
-        expect(v.pos.x).toBeCloseTo(start.x, 1);
-        expect(v.dir).toEqual(vec2(0, 1));
-      }
+      const prev = v;
+      v = stepRoadVehicle(v, grid, DT, 130, forceTurn(turnDir));
+      maxStep = Math.max(maxStep, Math.hypot(v.pos.x - prev.pos.x, v.pos.y - prev.pos.y));
+      if (turnedAt < 0 && !isSameDir(v.dir, prev.dir)) turnedAt = i;
+      const { tx, ty } = tileCoord(spec, v.pos);
+      expect(roadAt(grid, tx, ty)).toBe(true);
     }
 
-    expect(turnedAt).toBeGreaterThan(0);
-    expect(turnY).toBeGreaterThanOrEqual(8 * spec.tile);
-    expect(v.dir).toEqual(vec2(1, 0)); // now eastbound
-    // The matching eastbound lane for that left turn is its northern lane,
-    // row 10 — it has settled cleanly into it.
-    expect(v.pos.y).toBeCloseTo(tileCenter(spec, 0, 10).y, 1);
+    expect(turnedAt).toBeGreaterThanOrEqual(0);
+    expect(maxStep).toBeLessThan(40);
+    expect(v.dir).toEqual(turnDir);
+    expect(laneCross(v.pos, turnDir)).toBeCloseTo(targetCross, 1);
   });
 });

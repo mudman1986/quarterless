@@ -289,8 +289,8 @@ export class CityScene extends Phaser.Scene {
     // lane changes instead of bunching into a single file.
     let n = 0;
     for (let tx = block; tx < cols; tx += block) {
-      const southLane = roadWidth - lanesPerDirection + (n % lanesPerDirection);
-      const northLane = lanesPerDirection - 1 - (n % lanesPerDirection);
+      const southLane = lanesPerDirection - 1 - (n % lanesPerDirection);
+      const northLane = roadWidth - lanesPerDirection + (n % lanesPerDirection);
       const southTx = tx + southLane;
       const northTx = tx + northLane;
       const southTy = block * 2;

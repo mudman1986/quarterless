@@ -62,7 +62,7 @@ function laneCenterPx(spec: CitySpec, bandStart: number, lane: number): number {
 function laneIndicesForDirection(spec: CitySpec, dir: Vec2): number[] {
   const width = roadWidth(spec);
   const perDirection = lanesPerDirection(spec);
-  if (dir.x > 0 || dir.y > 0) {
+  if (dir.x > 0 || dir.y < 0) {
     return Array.from({ length: perDirection }, (_, i) => width - perDirection + i);
   }
   return Array.from({ length: perDirection }, (_, i) => perDirection - 1 - i);
@@ -155,7 +155,8 @@ export function routeDirections(city: City, tx: number, ty: number, dir: Vec2): 
   const straightOpen = roadAt(city, tx + dir.x, ty + dir.y);
   return CARDINALS.filter((d) => {
     if (!roadAt(city, tx + d.x, ty + d.y)) return false;
-    if (isSameDir(d, dir) || isOppositeDir(d, dir)) return true; // along our own road
+    if (isSameDir(d, dir)) return true;
+    if (isOppositeDir(d, dir)) return !straightOpen; // reverse only when the road ahead has ended
     return atJunction || !straightOpen; // perpendicular: only at a junction, or forced
   });
 }

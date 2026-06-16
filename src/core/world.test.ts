@@ -602,7 +602,7 @@ describe('World traffic rerouting and lights', () => {
 
   it('keeps a wide-road NPC in its lane while waiting at a red light', () => {
     const city = buildCity({ cols: 18, rows: 18, tile: 64, block: 6, roadWidth: 4 });
-    const start = tileCenter(city.spec, 2, 4);
+    const start = tileCenter(city.spec, 1, 4);
     const npc: Car = { pos: start, heading: Math.PI / 2, speed: 0, radius: 12 };
     const w = new World({
       player: player(),
@@ -620,7 +620,7 @@ describe('World traffic rerouting and lights', () => {
 
   it('halts a wide-road NPC cleanly before the junction at a red light', () => {
     const city = buildCity({ cols: 21, rows: 21, tile: 64, block: 7, roadWidth: 4 });
-    const col = 7 + 3; // a southbound lane of the road band starting at column 7
+    const col = 7 + 1; // a southbound lane of the road band starting at column 7
     const start = tileCenter(city.spec, col, 7 + 4 + 1); // a few tiles north of junction row 14
     const junctionEdgeY = 14 * city.spec.tile;
     const w = new World({
