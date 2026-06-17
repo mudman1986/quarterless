@@ -250,8 +250,11 @@ export interface ServiceVehicle {
   radius: number;
   /** Current cardinal travel direction (for the shared road-following model). */
   dir: Vec2;
-  /** Where it is currently headed (its job, then the map edge to leave by). */
+  /** Where it is currently headed (a reachable road stop beside the job, then
+   * the on-foot pickup point, then the map edge to leave by). */
   target: Vec2;
+  /** Actual body / wreck location the crew must fetch on foot once parked. */
+  job?: Vec2;
   /** Which step of the pickup sequence it is in: driving out to the job
    * ('approach'), parked while the crew walk out to fetch the cargo ('collect'),
    * parked while they carry it back to the vehicle ('return'), or driving away
@@ -1119,12 +1122,13 @@ export class World {
       this.ambulance = this.dispatchService(corpse.pos, 'hospital');
     }
     const amb = this.ambulance;
+    const job = amb.job ?? amb.target;
 
     // Crew on foot: the medic is walking out to the body or carrying it back.
     if (amb.crew) {
       this.ambulance = this.stepCrew(amb, dt, () => {
         const idx = this.corpses.findIndex(
-          (c) => distance(c.pos, amb.target) <= AMBULANCE_PICKUP_RADIUS,
+          (c) => distance(c.pos, job) <= AMBULANCE_PICKUP_RADIUS,
         );
         if (idx !== -1) {
           const corpse = this.corpses[idx];
@@ -1146,10 +1150,17 @@ export class World {
       this.ambulance = null; // gave up
       return;
     }
-    if (distance(driven.pos, driven.target) <= driven.radius + AMBULANCE_PICKUP_RADIUS) {
+    if (distance(driven.pos, driven.target) <= this.serviceStopRadius(driven.radius)) {
       // Pull up beside the body and send the medic out on foot to fetch it.
-      this.ambulance = { ...driven, phase: 'collect', crew: driven.pos, pickupElapsed: 0, speed: 0 };
-    } else if (!this.corpses.some((c) => distance(c.pos, driven.target) <= AMBULANCE_PICKUP_RADIUS)) {
+      this.ambulance = {
+        ...driven,
+        phase: 'collect',
+        target: job,
+        crew: driven.pos,
+        pickupElapsed: 0,
+        speed: 0,
+      };
+    } else if (!this.corpses.some((c) => distance(c.pos, job) <= AMBULANCE_PICKUP_RADIUS)) {
       this.ambulance = null; // the body it was sent for is already gone: give up
     }
   }
@@ -1186,7 +1197,14 @@ export class World {
       if (tow.age >= SERVICE_TIMEOUT || this.towedCars[tow.targetCar]) continue; // gave up / gone
       if (distance(tow.pos, this.cars[tow.targetCar].pos) <= tow.radius + AMBULANCE_PICKUP_RADIUS) {
         // Pull up beside the wreck and send the operator out on foot to hook it.
-        alive.push({ ...tow, phase: 'collect', crew: tow.pos, pickupElapsed: 0, speed: 0 });
+        alive.push({
+          ...tow,
+          phase: 'collect',
+          target: tow.job ?? this.cars[tow.targetCar].pos,
+          crew: tow.pos,
+          pickupElapsed: 0,
+          speed: 0,
+        });
       } else {
         alive.push(tow);
       }
@@ -1228,12 +1246,14 @@ export class World {
     slot = 0,
   ): ServiceVehicle {
     const pos = this.serviceSpawnPoint(facilityKind, target, slot) ?? this.nearestCornerTile(target);
+    const approach = this.nearestRoadPoint(target) ?? target;
     return {
       pos,
       heading: 0,
       radius: 14,
-      dir: nearestCardinal(angle(sub(target, pos))),
-      target,
+      dir: nearestCardinal(angle(sub(approach, pos))),
+      target: approach,
+      job: target,
       phase: 'approach',
       crew: null,
       pickupElapsed: 0,
@@ -1276,6 +1296,24 @@ export class World {
     return verticalRoad
       ? vec2(facility.roadSpawn.x, facility.roadSpawn.y + offset)
       : vec2(facility.roadSpawn.x + offset, facility.roadSpawn.y);
+  }
+
+  /** Nearest road-tile centre a service vehicle can actually drive to beside a job. */
+  private nearestRoadPoint(target: Vec2): Vec2 | null {
+    if (!this.city) return null;
+    let best: Vec2 | null = null;
+    let bestDistance = Infinity;
+    for (let tx = 0; tx < this.city.spec.cols; tx++) {
+      for (let ty = 0; ty < this.city.spec.rows; ty++) {
+        if (!this.city.isRoad(tx, ty)) continue;
+        const candidate = tileCenter(this.city.spec, tx, ty);
+        const candidateDistance = distance(candidate, target);
+        if (candidateDistance >= bestDistance) continue;
+        best = candidate;
+        bestDistance = candidateDistance;
+      }
+    }
+    return best;
   }
 
   /**
@@ -1376,6 +1414,14 @@ export class World {
   /** Whether a (departing) service vehicle has reached the map edge it leaves by. */
   private serviceArrived(v: ServiceVehicle): boolean {
     return distance(v.pos, v.target) <= v.radius + this.city!.spec.tile;
+  }
+
+  /** How close a service vehicle must get to its chosen road-side stop point to
+   * park and send the crew out. Wide multi-lane roads allow stopping from the
+   * opposite half of the band; narrow roads keep the original pickup radius. */
+  private serviceStopRadius(vehicleRadius: number): number {
+    const roadWidth = Math.max(1, Math.min(this.city!.spec.block, this.city!.spec.roadWidth ?? 1));
+    return vehicleRadius + Math.max(AMBULANCE_PICKUP_RADIUS, (roadWidth * this.city!.spec.tile) / 2);
   }
 
   /** Centres of the four corner road tiles (always on the road network). */

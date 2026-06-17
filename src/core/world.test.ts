@@ -1998,6 +1998,26 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     expect(w.ambulance?.phase).toBe('return');
   });
 
+  it('reaches a corpse on a wide live-style sidewalk instead of timing out circling it', () => {
+    const city = buildCity({ cols: 21, rows: 21, tile: 64, block: 7, roadWidth: 4, margin: 42, sidewalkWidth: 42 });
+    const strip = city.sidewalks[0]!;
+    const bodyPos = vec2(strip.x + strip.w / 2, strip.y + strip.h / 2);
+    const w = new World({
+      player: player(),
+      city,
+      viewRadius: 4000,
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+
+    w.corpses = [{ pos: bodyPos, offscreenFor: 0, inFrameFor: AMBULANCE_DISPATCH_DELAY }];
+
+    advanceUntilAmbulanceLoading(w);
+
+    expect(w.ambulance?.phase).toBe('collect');
+    expect(w.ambulance?.crew).not.toBeNull();
+  });
+
   it('lets the player steal the parked ambulance while the medic is loading the body', () => {
     const city = miniCity();
     const parkedPos = tileCenter(city.spec, 3, 4);

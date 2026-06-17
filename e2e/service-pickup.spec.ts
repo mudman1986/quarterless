@@ -1,5 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { TEX } from '../src/game/art/textures';
+import { buildCity, tileCenter } from '../src/core/city';
+import { CITY_SPEC } from '../src/game/citySpec';
 
 interface Vec2 {
   x: number;
@@ -31,6 +33,7 @@ interface ServiceProbe {
   radius: number;
   dir: Vec2;
   target: Vec2;
+  job?: Vec2;
   phase: 'approach' | 'collect' | 'return' | 'depart';
   crew: Vec2 | null;
   pickupElapsed: number;
@@ -78,6 +81,23 @@ interface GameProbe {
 }
 
 const GAME = '() => window.__game';
+const LIVE_CITY = buildCity(CITY_SPEC);
+
+function nearestLiveRoadPoint(target: Vec2): Vec2 {
+  let best = tileCenter(LIVE_CITY.spec, 0, 0);
+  let bestDistance = Infinity;
+  for (let tx = 0; tx < LIVE_CITY.spec.cols; tx++) {
+    for (let ty = 0; ty < LIVE_CITY.spec.rows; ty++) {
+      if (!LIVE_CITY.isRoad(tx, ty)) continue;
+      const candidate = tileCenter(LIVE_CITY.spec, tx, ty);
+      const candidateDistance = Math.hypot(candidate.x - target.x, candidate.y - target.y);
+      if (candidateDistance >= bestDistance) continue;
+      best = candidate;
+      bestDistance = candidateDistance;
+    }
+  }
+  return best;
+}
 
 async function boot(page: Page): Promise<void> {
   await page.goto('/sindicate/');
@@ -186,6 +206,73 @@ async function seedTowLoading(page: Page, pickupElapsed = 0): Promise<void> {
       },
     ];
   }, { elapsed: pickupElapsed });
+}
+
+async function seedWideSidewalkCorpse(page: Page): Promise<void> {
+  const body = await page.evaluate(() => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const w = g.scene.getScene('City').world;
+    const nearFocus =
+      w.pedestrians
+        .filter((ped) => {
+          const dx = ped.pos.x - w.focus.x;
+          const dy = ped.pos.y - w.focus.y;
+          const d = Math.hypot(dx, dy);
+          return d >= 128 && d <= 640;
+        })
+        .sort(
+          (a, b) =>
+            Math.hypot(a.pos.x - w.focus.x, a.pos.y - w.focus.y) -
+            Math.hypot(b.pos.x - w.focus.x, b.pos.y - w.focus.y),
+        )[0] ?? w.pedestrians[0];
+    if (!nearFocus) throw new Error('expected a live sidewalk pedestrian to seed a corpse from');
+
+    return nearFocus.pos;
+  });
+  const approach = nearestLiveRoadPoint(body);
+
+  await page.evaluate(({ bodyPos, approachPos }) => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const w = g.scene.getScene('City').world;
+
+    w.status = 'playing';
+    w.health.current = w.health.max;
+    w.wanted.heat = 0;
+    w.police = [];
+    w.bullets = [];
+    w.policeBullets = [];
+    w.explosions = [];
+    w.tows = [];
+    w.drivingCarIndex = null;
+    w.player.pos = { x: 64, y: 64 };
+    w.player.angle = 0;
+    w.pedestrians = [];
+    w.corpses = [{ pos: bodyPos, offscreenFor: 0, inFrameFor: 3 }];
+
+    for (let i = 0; i < w.cars.length; i++) {
+      w.cars[i] = { ...w.cars[i], pos: { x: 4000 + i * 24, y: 4000 }, heading: 0, speed: 0 };
+      w.wreckedCars[i] = false;
+      w.towedCars[i] = false;
+      w.carDrivers[i] = null;
+      if (i < w.towDispatchCooldowns.length) w.towDispatchCooldowns[i] = 0;
+    }
+
+    w.ambulance = {
+      pos: approachPos,
+      heading: 0,
+      radius: 14,
+      dir: { x: 1, y: 0 },
+      target: approachPos,
+      job: bodyPos,
+      phase: 'approach',
+      crew: null,
+      pickupElapsed: 0,
+      age: 0,
+      speed: 0,
+      blocked: 0,
+      health: 60,
+    };
+  }, { bodyPos: body, approachPos: approach });
 }
 
 test('ambulance pickup waits 3 seconds before the body is removed', async ({ page }) => {
@@ -346,4 +433,35 @@ test('the player can steal the parked tow truck during the loading window', asyn
   expect(state.crewHeadingHome).toBe(true);
   expect(state.crewUniform).toBe('towWorker');
   expect(state.crewTexture).toBe(TEX.towWorker);
+});
+
+test('an ambulance reaches a corpse on a wide sidewalk in the live game instead of timing out', async ({ page }) => {
+  await boot(page);
+  await seedWideSidewalkCorpse(page);
+
+  await page.waitForFunction(() => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const amb = g.scene.getScene('City').world.ambulance;
+    return amb?.phase === 'collect' && amb.crew !== null && amb.speed === 0;
+  }, undefined, { timeout: 10000 });
+
+  const state = await page.evaluate(() => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const w = g.scene.getScene('City').world;
+    return {
+      corpses: w.corpses.length,
+      hasAmbulance: w.ambulance !== null,
+      phase: w.ambulance?.phase ?? null,
+      crew: w.ambulance?.crew ?? null,
+      speed: w.ambulance?.speed ?? 0,
+      target: w.ambulance?.target ?? null,
+    };
+  });
+
+  expect(state.corpses).toBe(1);
+  expect(state.hasAmbulance).toBe(true);
+  expect(state.phase).toBe('collect');
+  expect(state.crew).not.toBeNull();
+  expect(state.speed).toBe(0);
+  expect(state.target).not.toBeNull();
 });
