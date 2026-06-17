@@ -16,6 +16,8 @@ export interface Police {
   radius: number;
   /** Whether this unit is an officer on foot or a patrol car. */
   kind: 'foot' | 'car';
+  /** Police-station point this unit returns to when the chase ends. */
+  home?: Vec2;
   /** Cardinal travel direction of a patrol car following the road grid. Kept so
    * the car's grid steering is independent of its visual heading (which now
    * points along its actual diagonal travel through turns and lane changes). */

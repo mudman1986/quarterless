@@ -13,11 +13,12 @@ import {
   type CarTuning,
   DEFAULT_CAR_TUNING,
   stepCar,
+  carWallRetention,
   collideCarWithWalls,
   collideCars,
 } from './vehicle';
 import { type OnFootActor, walk } from './entity';
-import { type Pedestrian, stepPedestrian, wanderTarget } from './pedestrianAI';
+import { ARRIVE_RADIUS, type Pedestrian, stepPedestrian, wanderTarget } from './pedestrianAI';
 import { type Police, policeSpeedFor, stepPolice, stepPoliceCar, hasCaught } from './policeAI';
 import {
   type TrafficAI,
@@ -109,7 +110,7 @@ export interface WorldOptions {
   city?: City;
   /** Per-car NPC driver (or null for a parked car), parallel to `cars`. */
   carDrivers?: (TrafficAI | null)[];
-  /** Where the player respawns after being busted. Defaults to their start. */
+  /** Fallback player respawn point when the map has no matching facility. */
   spawn?: Vec2;
   /** The player's starting weapon. Defaults to a pistol. */
   weapon?: Weapon;
@@ -138,6 +139,10 @@ const RUN_OVER_SPEED = 45;
 const RESPAWN_DELAY = 10;
 /** A car moving faster than this outruns capture; slower or on foot you get busted. */
 const BUST_SPEED = 40;
+/** A player car must be effectively stopped to be arrested from it. */
+const CAR_BUST_STOP_SPEED = 1;
+/** Seconds the player car must stay stopped before a cop can complete the arrest. */
+const CAR_BUST_STOP_DELAY = 1;
 /** Default maximum player health. */
 export const PLAYER_MAX_HEALTH = 100;
 /** Collision radius (px) of a bullet, for stopping it at walls. */
@@ -216,6 +221,8 @@ export const SERVICE_SPAWN_SPACING = 36;
 export const CREW_WALK_SPEED = 55;
 /** How close the crew must get to the body/wreck (or back to their vehicle) to act. */
 export const CREW_REACH_RADIUS = 8;
+/** Seconds a medic or tow operator spends loading the cargo once they reach it. */
+export const SERVICE_PICKUP_DWELL = 3;
 /** Fraction of cruising speed a vehicle still rolls forward at while easing into
  * another lane, so a lane change is a natural diagonal swerve rather than a car
  * sliding straight sideways. */
@@ -233,6 +240,9 @@ export interface Corpse {
 /** The stage a dispatched service vehicle is at in its pickup sequence. */
 export type ServicePhase = 'approach' | 'collect' | 'return' | 'depart';
 
+/** Vehicle body rendered for a drivable world car slot. */
+export type VehicleKind = 'car' | 'ambulance' | 'tow';
+
 /** Common state for a dispatched service vehicle that follows the roads. */
 export interface ServiceVehicle {
   pos: Vec2;
@@ -240,8 +250,11 @@ export interface ServiceVehicle {
   radius: number;
   /** Current cardinal travel direction (for the shared road-following model). */
   dir: Vec2;
-  /** Where it is currently headed (its job, then the map edge to leave by). */
+  /** Where it is currently headed (a reachable road stop beside the job, then
+   * the on-foot pickup point, then the map edge to leave by). */
   target: Vec2;
+  /** Actual body / wreck location the crew must fetch on foot once parked. */
+  job?: Vec2;
   /** Which step of the pickup sequence it is in: driving out to the job
    * ('approach'), parked while the crew walk out to fetch the cargo ('collect'),
    * parked while they carry it back to the vehicle ('return'), or driving away
@@ -250,6 +263,8 @@ export interface ServiceVehicle {
   /** Position of the crew member while they are out of the vehicle on foot, or
    * null when they are aboard. The vehicle stays parked whenever this is set. */
   crew: Vec2 | null;
+  /** Seconds spent loading the body/wreck after the crew reaches it. */
+  pickupElapsed: number;
   /** Seconds since it was dispatched (it gives up after SERVICE_TIMEOUT). */
   age: number;
   /** Speed it is actually travelling this step (0 while yielding to someone in
@@ -356,8 +371,16 @@ export class World {
   private copFlow?: FlowField;
   private readonly spawn: Vec2;
   private carDrivers: (TrafficAI | null)[];
+  private carKinds: VehicleKind[];
+  /** Whether a recovered wreck at this slot should be recycled back into play
+   * from a tow yard (ordinary cars do; abandoned service vehicles do not). */
+  private carRespawnsAtTow: boolean[];
   /** Remaining hit points of each car, parallel to `cars`. */
   private carHealth: number[];
+  /** Seconds until each wreck may be claimed by a fresh tow dispatch again. */
+  private towDispatchCooldowns: number[];
+  /** Continuous time the player's current car has been stopped for a bust. */
+  private carStoppedForBusted = 0;
   private bustedTimer = 0;
   private prevAction = false;
   private prevConfirm = false;
@@ -398,7 +421,10 @@ export class World {
     this.navGrid = opts.city ? buildNavGrid(opts.city) : undefined;
     this.spawn = opts.spawn ?? opts.player.pos;
     this.carDrivers = this.cars.map((_, i) => opts.carDrivers?.[i] ?? null);
+    this.carKinds = this.cars.map(() => 'car');
+    this.carRespawnsAtTow = this.cars.map(() => true);
     this.carHealth = this.cars.map(() => CAR_MAX_HEALTH);
+    this.towDispatchCooldowns = this.cars.map(() => 0);
     this.wreckedCars = this.cars.map(() => false);
     this.towedCars = this.cars.map(() => false);
     this.health = createHealth(opts.maxHealth ?? PLAYER_MAX_HEALTH);
@@ -423,6 +449,10 @@ export class World {
     return this.drivingCarIndex === null ? null : this.cars[this.drivingCarIndex];
   }
 
+  carKind(index: number): VehicleKind {
+    return this.carKinds[index] ?? 'car';
+  }
+
   /** Current wanted-level star rating (0..6). */
   get wantedStars(): number {
     return stars(this.wanted);
@@ -431,6 +461,11 @@ export class World {
   /** World point the camera should follow. */
   get focus(): Vec2 {
     return this.drivingCar?.pos ?? this.player.pos;
+  }
+
+  /** Whether the given world point is currently visible to the player. */
+  private inFrame(pos: Vec2): boolean {
+    return distance(this.focus, pos) <= this.viewRadius;
   }
 
   /** Whether the busted screen is showing. */
@@ -493,6 +528,7 @@ export class World {
     this.lights = tickLights(this.lights, dt);
     this.updateTraffic(dt);
     this.resolveVehicleCollisions(dt);
+    this.updateCarBustTimer(dt);
     this.updatePedestrians(dt);
     this.updateNpcDriving(dt);
     this.checkRoadKill();
@@ -519,6 +555,10 @@ export class World {
     // Entering a car takes priority over being blocked by it, so the player can
     // get into a car they are standing on top of.
     if (actionPressed) {
+      if (this.hijackNearbyServiceVehicle(moved.pos, this.enterRadius)) {
+        this.player = moved;
+        return;
+      }
       const idx = this.nearestCarIndex(moved.pos, this.enterRadius);
       if (idx !== null) {
         this.drivingCarIndex = idx;
@@ -541,7 +581,59 @@ export class World {
 
   /** Cars solid enough to block actors on foot (a faster car runs them over). */
   private blockingCars(): readonly Car[] {
-    return this.cars.filter((car) => Math.abs(car.speed) < RUN_OVER_SPEED);
+    return this.cars.filter((car, i) => !(this.wreckedCars[i] && this.towedCars[i]) && Math.abs(car.speed) < RUN_OVER_SPEED);
+  }
+
+  /** Wrecks that still physically exist in the world and block movement. */
+  private wreckObstacles(): readonly Car[] {
+    return this.cars.filter((_, i) => this.wreckedCars[i] && !this.towedCars[i]);
+  }
+
+  private nearestCrewedServiceVehicle(
+    p: Vec2,
+    within: number,
+  ): { kind: 'ambulance'; vehicle: Ambulance } | { kind: 'tow'; vehicle: TowTruck; index: number } | null {
+    let best: { kind: 'ambulance'; vehicle: Ambulance } | { kind: 'tow'; vehicle: TowTruck; index: number } | null = null;
+    let bestDist = within;
+    if (this.ambulance?.crew) {
+      const d = distance(p, this.ambulance.pos);
+      if (d <= bestDist) {
+        best = { kind: 'ambulance', vehicle: this.ambulance };
+        bestDist = d;
+      }
+    }
+    this.tows.forEach((tow, index) => {
+      if (!tow.crew) return;
+      const d = distance(p, tow.pos);
+      if (d <= bestDist) {
+        best = { kind: 'tow', vehicle: tow, index };
+        bestDist = d;
+      }
+    });
+    return best;
+  }
+
+  private hijackNearbyServiceVehicle(p: Vec2, within: number): boolean {
+    const target = this.nearestCrewedServiceVehicle(p, within);
+    if (!target) return false;
+    const crew = target.vehicle.crew;
+    if (!crew) return false;
+    this.sendServiceCrewHome(crew, target.kind, target.vehicle.pos);
+    const idx = this.materializeServiceVehicle(target.vehicle, target.kind, false);
+    this.drivingCarIndex = idx;
+    this.wanted = addHeat(this.wanted, CRIME_HEAT.hitPedestrian);
+    if (target.kind === 'ambulance') {
+      this.corpses = this.corpses.map((corpse) =>
+        distance(corpse.pos, target.vehicle.target) <= AMBULANCE_PICKUP_RADIUS
+          ? { ...corpse, inFrameFor: 0 }
+          : corpse,
+      );
+      this.ambulance = null;
+    } else {
+      this.towDispatchCooldowns[target.vehicle.targetCar] = TOW_DISPATCH_DELAY;
+      this.tows.splice(target.index, 1);
+    }
+    return true;
   }
 
   /** Every vehicle that can currently run an actor over — player, NPC and police
@@ -681,6 +773,20 @@ export class World {
     this.corpses.push({ pos, offscreenFor: 0, inFrameFor: 0 });
   }
 
+  private sendServiceCrewHome(crew: Vec2, kind: 'ambulance' | 'tow', near: Vec2): void {
+    const facilityKind = kind === 'ambulance' ? 'hospital' : 'towYard';
+    const home = this.nearestFacility(facilityKind, near)?.spawn ?? this.spawn;
+    this.pedestrians.push({
+      pos: crew,
+      heading: angle(sub(home, crew)),
+      radius: 7,
+      state: 'wander',
+      target: home,
+      returningTo: home,
+      uniform: kind === 'ambulance' ? 'medic' : 'towWorker',
+    });
+  }
+
   /** Resolve an on-foot NPC death into a body left in the world, crediting the
    * player only when they caused it. Shared by pedestrians, foot police, and
    * any service crew member currently out of their vehicle. */
@@ -695,7 +801,7 @@ export class World {
     const crew = amb?.crew;
     if (!amb || !crew) return;
     this.killOnFootNpc(crew, 'pedestrian', byPlayer);
-    this.abandonServiceVehicle(amb);
+    this.abandonServiceVehicle(amb, 'ambulance');
     this.ambulance = null;
   }
 
@@ -705,18 +811,30 @@ export class World {
     const tow = this.tows[index];
     if (!tow?.crew) return;
     this.killOnFootNpc(tow.crew, 'pedestrian', byPlayer);
-    this.abandonServiceVehicle(tow);
+    this.abandonServiceVehicle(tow, 'tow');
     this.tows.splice(index, 1);
   }
 
   /** Leave an unused service vehicle behind as a towable wreck instead of
    * making it vanish when its crew dies on foot. */
-  private abandonServiceVehicle(v: ServiceVehicle): void {
+  private abandonServiceVehicle(v: ServiceVehicle, kind: 'ambulance' | 'tow'): void {
+    this.materializeServiceVehicle(v, kind, true);
+  }
+
+  private materializeServiceVehicle(
+    v: ServiceVehicle,
+    kind: 'ambulance' | 'tow',
+    wrecked: boolean,
+  ): number {
     this.cars.push({ pos: v.pos, heading: v.heading, speed: 0, radius: v.radius });
     this.carDrivers.push(null);
-    this.carHealth.push(0);
-    this.wreckedCars.push(true);
+    this.carKinds.push(kind);
+    this.carRespawnsAtTow.push(false);
+    this.carHealth.push(wrecked ? 0 : v.health);
+    this.towDispatchCooldowns.push(0);
+    this.wreckedCars.push(wrecked);
     this.towedCars.push(false);
+    return this.cars.length - 1;
   }
 
   /** Record that the player destroyed a vehicle, using the same reward/heat rule
@@ -732,7 +850,7 @@ export class World {
   private damageableVehicles(): DamageableVehicleRef[] {
     const refs: DamageableVehicleRef[] = [];
     for (let i = 0; i < this.cars.length; i++) {
-      if (this.wreckedCars[i] || this.towedCars[i]) continue;
+      if (this.wreckedCars[i]) continue;
       refs.push({ kind: 'car', index: i });
     }
     if (this.ambulance) refs.push({ kind: 'ambulance', vehicle: this.ambulance });
@@ -746,7 +864,7 @@ export class World {
   /** Current physical body of a damageable vehicle, or null if it no longer exists. */
   private vehicleBody(ref: DamageableVehicleRef): Car | null {
     if (ref.kind === 'car') {
-      if (this.wreckedCars[ref.index] || this.towedCars[ref.index]) return null;
+      if (this.wreckedCars[ref.index]) return null;
       return this.cars[ref.index];
     }
     if (ref.kind === 'ambulance') {
@@ -943,19 +1061,19 @@ export class World {
   }
 
   /** Age corpses; one left out of frame long enough is cleared and a fresh
-   * pedestrian respawns elsewhere so the streets stay populated. */
+   * NPC emerges from the nearest hospital so the streets stay populated. */
   private updateCorpses(dt: number): void {
     if (this.corpses.length === 0) return;
     const survivors: Corpse[] = [];
     for (const corpse of this.corpses) {
-      const inFrame = distance(this.focus, corpse.pos) <= this.viewRadius;
+      const inFrame = this.inFrame(corpse.pos);
       const next: Corpse = {
         pos: corpse.pos,
         inFrameFor: inFrame ? corpse.inFrameFor + dt : 0,
         offscreenFor: inFrame ? 0 : corpse.offscreenFor + dt,
       };
       if (next.offscreenFor >= CORPSE_RESPAWN_DELAY) {
-        this.respawnPedestrian(); // out of sight: the body is gone, life goes on
+        this.respawnPedestrian(corpse.pos); // out of sight: they reappear at the hospital
         continue;
       }
       survivors.push(next);
@@ -963,11 +1081,34 @@ export class World {
     this.corpses = survivors;
   }
 
-  /** Spawn a fresh wandering pedestrian on a sidewalk to keep the population up. */
-  private respawnPedestrian(): void {
-    const ctx = { threats: [], bounds: this.bounds, sidewalks: this.sidewalks };
-    const pos = wanderTarget(ctx, this.spawn, this.rng);
+  /** Spawn a fresh wandering pedestrian at the nearest hospital doorway. When a
+   * map has no hospital (e.g. tiny ad hoc tests), fall back to the old general
+   * sidewalk wandering spawn so the world still repopulates. */
+  private respawnPedestrian(target: Vec2): void {
+    const pos = this.nearestFacility('hospital', target)?.spawn ?? wanderTarget(
+      { threats: [], bounds: this.bounds, sidewalks: this.sidewalks },
+      this.spawn,
+      this.rng,
+    );
     this.pedestrians.push({ pos, heading: 0, radius: 7, state: 'wander', target: pos });
+  }
+
+  /** Recycle an exploded ordinary car back into play at the nearest tow yard's
+   * road spawn. Recovered service-vehicle wrecks are excluded. */
+  private respawnCarAtTowYard(idx: number, slot = 0): void {
+    if (!this.city || !this.carRespawnsAtTow[idx]) return;
+    const wreck = this.cars[idx];
+    const pos = this.serviceSpawnPoint('towYard', wreck.pos, slot);
+    if (!pos) return;
+    const { tx, ty } = tileCoord(this.city.spec, pos);
+    const dirs = openDirections(this.city, tx, ty);
+    if (dirs.length === 0) return;
+    const dir = dirs[Math.floor(this.rng() * dirs.length)] ?? dirs[0];
+    this.cars[idx] = { ...wreck, pos, heading: angle(dir), speed: 0 };
+    this.carDrivers[idx] = { dir };
+    this.carHealth[idx] = CAR_MAX_HEALTH;
+    this.towDispatchCooldowns[idx] = 0;
+    this.wreckedCars[idx] = false;
   }
 
   /** Dispatch and drive an ambulance to collect a body that lingers on screen.
@@ -981,14 +1122,19 @@ export class World {
       this.ambulance = this.dispatchService(corpse.pos, 'hospital');
     }
     const amb = this.ambulance;
+    const job = amb.job ?? amb.target;
 
     // Crew on foot: the medic is walking out to the body or carrying it back.
     if (amb.crew) {
       this.ambulance = this.stepCrew(amb, dt, () => {
         const idx = this.corpses.findIndex(
-          (c) => distance(c.pos, amb.target) <= AMBULANCE_PICKUP_RADIUS,
+          (c) => distance(c.pos, job) <= AMBULANCE_PICKUP_RADIUS,
         );
-        if (idx !== -1) this.corpses.splice(idx, 1); // body loaded aboard
+        if (idx !== -1) {
+          const corpse = this.corpses[idx];
+          this.corpses.splice(idx, 1); // body loaded aboard
+          this.respawnPedestrian(corpse.pos);
+        }
       });
       return;
     }
@@ -1004,10 +1150,17 @@ export class World {
       this.ambulance = null; // gave up
       return;
     }
-    if (distance(driven.pos, driven.target) <= driven.radius + AMBULANCE_PICKUP_RADIUS) {
+    if (distance(driven.pos, driven.target) <= this.serviceStopRadius(driven.radius)) {
       // Pull up beside the body and send the medic out on foot to fetch it.
-      this.ambulance = { ...driven, phase: 'collect', crew: driven.pos, speed: 0 };
-    } else if (!this.corpses.some((c) => distance(c.pos, driven.target) <= AMBULANCE_PICKUP_RADIUS)) {
+      this.ambulance = {
+        ...driven,
+        phase: 'collect',
+        target: job,
+        crew: driven.pos,
+        pickupElapsed: 0,
+        speed: 0,
+      };
+    } else if (!this.corpses.some((c) => distance(c.pos, job) <= AMBULANCE_PICKUP_RADIUS)) {
       this.ambulance = null; // the body it was sent for is already gone: give up
     }
   }
@@ -1020,6 +1173,7 @@ export class World {
    */
   private updateTow(dt: number): void {
     if (!this.city) return;
+    this.towDispatchCooldowns = this.towDispatchCooldowns.map((cooldown) => Math.max(0, cooldown - dt));
 
     // Advance the trucks already on the job, reaping those that finish or give up.
     const alive: TowTruck[] = [];
@@ -1029,6 +1183,8 @@ export class World {
         alive.push(
           this.stepCrew(prev, dt, () => {
             this.towedCars[prev.targetCar] = true; // hooked up; removed from play
+            const slot = Math.max(0, this.tows.indexOf(prev));
+            this.respawnCarAtTowYard(prev.targetCar, slot);
           }),
         );
         continue;
@@ -1041,7 +1197,14 @@ export class World {
       if (tow.age >= SERVICE_TIMEOUT || this.towedCars[tow.targetCar]) continue; // gave up / gone
       if (distance(tow.pos, this.cars[tow.targetCar].pos) <= tow.radius + AMBULANCE_PICKUP_RADIUS) {
         // Pull up beside the wreck and send the operator out on foot to hook it.
-        alive.push({ ...tow, phase: 'collect', crew: tow.pos, speed: 0 });
+        alive.push({
+          ...tow,
+          phase: 'collect',
+          target: tow.job ?? this.cars[tow.targetCar].pos,
+          crew: tow.pos,
+          pickupElapsed: 0,
+          speed: 0,
+        });
       } else {
         alive.push(tow);
       }
@@ -1064,7 +1227,7 @@ export class World {
     let best = -1;
     let bestDist = Infinity;
     for (let i = 0; i < this.cars.length; i++) {
-      if (!this.wreckedCars[i] || this.towedCars[i] || claimed.has(i)) continue;
+      if (!this.wreckedCars[i] || this.towedCars[i] || claimed.has(i) || this.towDispatchCooldowns[i] > 0) continue;
       const d = distance(this.focus, this.cars[i].pos);
       if (d < bestDist) {
         bestDist = d;
@@ -1074,22 +1237,26 @@ export class World {
     return best;
   }
 
-  /** A fresh service vehicle, spawned on the nearest corner road tile and aimed
-   * (via the road grid) at `target`. */
+  /** A fresh service vehicle, spawned outside the closest matching service
+   * building when the city has one and otherwise on the nearest corner road
+   * tile, then aimed (via the road grid) at `target`. */
   private dispatchService(
     target: Vec2,
     facilityKind: 'hospital' | 'towYard',
     slot = 0,
   ): ServiceVehicle {
-    const pos = this.serviceSpawnPoint(facilityKind, slot) ?? this.nearestCornerTile(target);
+    const pos = this.serviceSpawnPoint(facilityKind, target, slot) ?? this.nearestCornerTile(target);
+    const approach = this.nearestRoadPoint(target) ?? target;
     return {
       pos,
       heading: 0,
       radius: 14,
-      dir: nearestCardinal(angle(sub(target, pos))),
-      target,
+      dir: nearestCardinal(angle(sub(approach, pos))),
+      target: approach,
+      job: target,
       phase: 'approach',
       crew: null,
+      pickupElapsed: 0,
       age: 0,
       speed: 0,
       blocked: 0,
@@ -1097,10 +1264,29 @@ export class World {
     };
   }
 
-  /** Spawn point outside the named service building, or null if the city has
-   * no such facility (tiny test maps can still fall back to corner dispatch). */
-  private serviceSpawnPoint(kind: 'hospital' | 'towYard', slot = 0): Vec2 | null {
-    const facility = this.city?.facilities.find((f) => f.kind === kind);
+  /** Spawn point outside the named service building nearest the job, or null if
+   * the city has no such facility (tiny test maps can still fall back to
+   * corner dispatch). */
+  private nearestFacility(
+    kind: 'policeStation' | 'hospital' | 'towYard',
+    target: Vec2,
+  ): City['facilities'][number] | null {
+    const facilities = this.city?.facilities.filter((f) => f.kind === kind);
+    if (!facilities || facilities.length === 0) return null;
+    let facility = facilities[0];
+    let bestDistance = distance(facility.roadSpawn, target);
+    for (let i = 1; i < facilities.length; i++) {
+      const candidate = facilities[i];
+      const candidateDistance = distance(candidate.roadSpawn, target);
+      if (candidateDistance >= bestDistance) continue;
+      facility = candidate;
+      bestDistance = candidateDistance;
+    }
+    return facility;
+  }
+
+  private serviceSpawnPoint(kind: 'hospital' | 'towYard', target: Vec2, slot = 0): Vec2 | null {
+    const facility = this.nearestFacility(kind, target);
     if (!facility) return null;
     const offsetRank = Math.ceil(slot / 2);
     const offset = slot === 0 ? 0 : (slot % 2 === 1 ? 1 : -1) * offsetRank * SERVICE_SPAWN_SPACING;
@@ -1110,6 +1296,24 @@ export class World {
     return verticalRoad
       ? vec2(facility.roadSpawn.x, facility.roadSpawn.y + offset)
       : vec2(facility.roadSpawn.x + offset, facility.roadSpawn.y);
+  }
+
+  /** Nearest road-tile centre a service vehicle can actually drive to beside a job. */
+  private nearestRoadPoint(target: Vec2): Vec2 | null {
+    if (!this.city) return null;
+    let best: Vec2 | null = null;
+    let bestDistance = Infinity;
+    for (let tx = 0; tx < this.city.spec.cols; tx++) {
+      for (let ty = 0; ty < this.city.spec.rows; ty++) {
+        if (!this.city.isRoad(tx, ty)) continue;
+        const candidate = tileCenter(this.city.spec, tx, ty);
+        const candidateDistance = distance(candidate, target);
+        if (candidateDistance >= bestDistance) continue;
+        best = candidate;
+        bestDistance = candidateDistance;
+      }
+    }
+    return best;
   }
 
   /**
@@ -1182,23 +1386,42 @@ export class World {
     };
     if (v.phase === 'collect') {
       const crew = advance(v.crew!, v.target); // walk out to the body/wreck
-      if (distance(crew, v.target) <= CREW_REACH_RADIUS) {
-        onCollect(); // reached it: pick the body up / hook the wreck
-        return { ...v, crew, phase: 'return', speed: 0 };
+      if (distance(crew, v.target) > CREW_REACH_RADIUS) {
+        return { ...v, crew, pickupElapsed: 0, speed: 0 };
       }
-      return { ...v, crew, speed: 0 };
+      const pickupElapsed = v.pickupElapsed + dt;
+      if (pickupElapsed < SERVICE_PICKUP_DWELL) {
+        return { ...v, crew, pickupElapsed, speed: 0 };
+      }
+      onCollect(); // finished loading it: pick the body up / hook the wreck
+      return { ...v, crew, phase: 'return', pickupElapsed: 0, speed: 0 };
     }
     // 'return': carry it back to the vehicle, then climb in and prepare to leave.
     const crew = advance(v.crew!, v.pos);
     if (distance(crew, v.pos) <= CREW_REACH_RADIUS) {
-      return { ...v, crew: null, phase: 'depart', target: this.farthestCornerTile(v.pos), speed: 0 };
+      return {
+        ...v,
+        crew: null,
+        phase: 'depart',
+        target: this.farthestCornerTile(v.pos),
+        pickupElapsed: 0,
+        speed: 0,
+      };
     }
-    return { ...v, crew, speed: 0 };
+    return { ...v, crew, pickupElapsed: 0, speed: 0 };
   }
 
   /** Whether a (departing) service vehicle has reached the map edge it leaves by. */
   private serviceArrived(v: ServiceVehicle): boolean {
     return distance(v.pos, v.target) <= v.radius + this.city!.spec.tile;
+  }
+
+  /** How close a service vehicle must get to its chosen road-side stop point to
+   * park and send the crew out. Wide multi-lane roads allow stopping from the
+   * opposite half of the band; narrow roads keep the original pickup radius. */
+  private serviceStopRadius(vehicleRadius: number): number {
+    const roadWidth = Math.max(1, Math.min(this.city!.spec.block, this.city!.spec.roadWidth ?? 1));
+    return vehicleRadius + Math.max(AMBULANCE_PICKUP_RADIUS, (roadWidth * this.city!.spec.tile) / 2);
   }
 
   /** Centres of the four corner road tiles (always on the road network). */
@@ -1226,7 +1449,21 @@ export class World {
   private yieldObstacles(): Vec2[] {
     const obstacles = this.pedestrians.map((p) => p.pos);
     if (!this.isDriving) obstacles.push(this.player.pos);
+    obstacles.push(...this.wreckObstacles().map((wreck) => wreck.pos));
     return obstacles;
+  }
+
+  /** Push a live vehicle out of any wrecks it overlapped this tick. Wrecks are
+   * static obstacles, so unlike live car-vs-car contacts the wreck does not move. */
+  private resolveVehicleAgainstWrecks(body: Car): Car {
+    const resolved = resolveCircleCircles(body.pos, body.radius, this.wreckObstacles());
+    const pushOut = sub(resolved, body.pos);
+    if (length(pushOut) <= 1e-6) return body;
+    if (body.speed === 0) return { ...body, pos: resolved };
+
+    const normal = normalize(pushOut);
+    const travelDir = scale(fromAngle(body.heading), Math.sign(body.speed) || 1);
+    return { ...body, pos: resolved, speed: body.speed * carWallRetention(travelDir, normal) };
   }
 
   /** Push overlapping vehicles apart so they collide instead of passing through,
@@ -1275,6 +1512,11 @@ export class World {
           this.vehicleImpactCooldowns.set(pairKey, VEHICLE_IMPACT_COOLDOWN);
         }
       }
+    }
+    for (const ref of refs) {
+      const body = this.vehicleBody(ref);
+      if (!body) continue;
+      this.setVehicleBody(ref, this.resolveVehicleAgainstWrecks(body));
     }
   }
 
@@ -1339,6 +1581,10 @@ export class World {
     const survivors: Pedestrian[] = [];
 
     for (const ped of this.pedestrians) {
+      const returningTo = ped.returningTo;
+      if (returningTo && distance(ped.pos, returningTo) <= ARRIVE_RADIUS) {
+        continue; // reached the building entrance: disappear inside
+      }
       // Any vehicle moving fast enough runs the pedestrian over; only when the
       // player is at the wheel do they earn heat for it.
       const hit = this.runningOver(ped.pos, ped.radius);
@@ -1347,9 +1593,16 @@ export class World {
         this.addCorpse(ped.pos); // leave a body in the road
         continue; // pedestrian is run over and removed
       }
+      const homeTarget = (() => {
+        if (!returningTo) return ped.target;
+        const sightBlocked = this.walls.some((wll) => segmentIntersectsRect(ped.pos, returningTo, wll));
+        if (!sightBlocked || !this.navGrid) return returningTo;
+        const homeFlow = computeFlowField(this.navGrid, returningTo);
+        return flowWaypoint(this.navGrid, homeFlow, ped.pos) ?? returningTo;
+      })();
       const stepped = stepPedestrian(
-        ped,
-        { threats, bounds: this.bounds, sidewalks: this.sidewalks },
+        { ...ped, target: homeTarget },
+        { threats: returningTo ? [] : threats, bounds: this.bounds, sidewalks: this.sidewalks },
         dt,
         this.rng,
       );
@@ -1359,7 +1612,7 @@ export class World {
       let pos = resolveCircleRects(offCars, stepped.radius, this.walls);
       // When calm, a pedestrian keeps to the pavement and only steps onto the
       // road at a crosswalk; a fleeing pedestrian will bolt across anywhere.
-      if (stepped.state === 'wander' && this.onForbiddenRoad(pos)) {
+      if (!returningTo && stepped.state === 'wander' && this.onForbiddenRoad(pos)) {
         pos = ped.pos; // hold at the kerb instead of jaywalking
       }
       const blocked = pos.x !== stepped.pos.x || pos.y !== stepped.pos.y;
@@ -1367,9 +1620,14 @@ export class World {
       // turns around (picks a new target) rather than grinding against it.
       const target =
         blocked && stepped.state === 'wander'
-          ? wanderTarget({ threats, bounds: this.bounds, sidewalks: this.sidewalks }, pos, this.rng)
+          ? (returningTo
+              ? returningTo
+              : wanderTarget({ threats, bounds: this.bounds, sidewalks: this.sidewalks }, pos, this.rng))
           : stepped.target;
-      survivors.push({ ...stepped, pos, target });
+      if (returningTo && distance(pos, returningTo) <= ARRIVE_RADIUS) {
+        continue;
+      }
+      survivors.push({ ...stepped, pos, target, returningTo });
     }
     this.pedestrians = survivors;
   }
@@ -1509,8 +1767,10 @@ export class World {
    */
   private explodeCar(idx: number, byPlayer: boolean): void {
     if (this.wreckedCars[idx]) return;
+    this.towedCars[idx] = false; // a fresh wreck can be recovered again later
     this.wreckedCars[idx] = true;
     this.carHealth[idx] = 0;
+    this.towDispatchCooldowns[idx] = 0;
     this.carDrivers[idx] = null;
     const center = this.cars[idx].pos;
     this.cars[idx] = { ...this.cars[idx], speed: 0 };
@@ -1584,11 +1844,72 @@ export class World {
     return { kills: this.kills, collected: this.collected, elapsed: this.elapsed };
   }
 
+  /** Police station nearest a point, or null on atypical maps without any. */
+  private nearestPoliceSpawn(p: Vec2): Vec2 | null {
+    if (this.policeSpawns.length === 0) return null;
+    return this.policeSpawns.reduce((best, spawn) => (distance(p, spawn) < distance(p, best) ? spawn : best));
+  }
+
+  /** Home station a police unit returns to once the wanted level is gone. */
+  private policeHome(cop: Police): Vec2 | null {
+    return cop.home ?? this.nearestPoliceSpawn(cop.pos);
+  }
+
+  /** A speeding player car still runs over officers on foot, even if they are
+   * currently returning to the station after the chase has ended. */
+  private runDownFootPolice(): void {
+    const car = this.drivingCar;
+    if (!car || Math.abs(car.speed) < RUN_OVER_SPEED) return;
+    const survivors: Police[] = [];
+    for (const cop of this.police) {
+      if (cop.kind === 'foot' && distance(car.pos, cop.pos) <= car.radius + cop.radius) {
+        this.registerKill('police'); // the player ran them down
+      } else {
+        survivors.push(cop);
+      }
+    }
+    this.police = survivors;
+  }
+
+  /** Move a single police unit back to its station. Returns null once it has
+   * effectively reached home and can be removed from the world. */
+  private returnPoliceToStation(cop: Police, dt: number): Police | null {
+    const home = this.policeHome(cop);
+    if (!home) return null;
+
+    if (cop.kind === 'car' && this.city) {
+      const speed = policeSpeedFor('car', 1);
+      const stepped = { ...stepPoliceCar(cop, home, this.city, dt, speed), speed, fireCooldown: 0 };
+      return distance(stepped.pos, home) <= stepped.radius + this.city.spec.tile ? null : stepped;
+    }
+
+    const speed = policeSpeedFor(cop.kind, 1);
+    const sightBlocked = this.walls.some((wll) => segmentIntersectsRect(cop.pos, home, wll));
+    const homeFlow = sightBlocked && this.navGrid ? computeFlowField(this.navGrid, home) : undefined;
+    const waypoint =
+      sightBlocked && this.navGrid && homeFlow
+        ? (flowWaypoint(this.navGrid, homeFlow, cop.pos) ?? home)
+        : home;
+    const stepped = stepPolice(cop, waypoint, dt, speed);
+    const resolved = {
+      ...stepped,
+      pos: resolveCircleRects(stepped.pos, stepped.radius, this.walls),
+      speed: cop.kind === 'car' ? speed : 0,
+      fireCooldown: 0,
+    };
+    return hasCaught(resolved, home) ? null : resolved;
+  }
+
   private updateWantedAndPolice(dt: number): void {
     this.wanted = decay(this.wanted, dt);
 
     if (!isWanted(this.wanted)) {
-      this.police = []; // crime cleared: police disperse
+      this.policeBullets = []; // chase over: stop any remaining incoming fire
+      this.runDownFootPolice();
+      this.police = this.police.flatMap((cop) => {
+        const next = this.returnPoliceToStation(cop, dt);
+        return next ? [next] : [];
+      });
       return;
     }
 
@@ -1602,24 +1923,13 @@ export class World {
         heading: 0,
         radius: kind === 'car' ? 14 : 12,
         kind,
+        home: spawn,
         speed: 0,
         health: kind === 'car' ? CAR_MAX_HEALTH : undefined,
       });
     }
 
-    // A speeding car mows down officers on foot (patrol cars are immune).
-    const car = this.drivingCar;
-    if (car && Math.abs(car.speed) >= RUN_OVER_SPEED) {
-      const survivors: Police[] = [];
-      for (const cop of this.police) {
-        if (cop.kind === 'foot' && distance(car.pos, cop.pos) <= car.radius + cop.radius) {
-          this.registerKill('police'); // the player ran them down
-        } else {
-          survivors.push(cop);
-        }
-      }
-      this.police = survivors;
-    }
+    this.runDownFootPolice();
 
     // Police pursue the player. Patrol cars follow the road grid (when a city is
     // present); officers on foot follow a flow field through the streets so they
@@ -1655,10 +1965,17 @@ export class World {
     this.updatePoliceShooting(dt);
   }
 
-  /** Whether the player can currently be arrested: on foot, or in a car too slow
-   * to escape. (A fast car outruns the law.) */
+  /** Whether the player is pinned enough that police begin an arrest attempt:
+   * on foot, or in a car too slow to escape. (A fast car outruns the law.) */
   private get arrestable(): boolean {
     return !this.isDriving || Math.abs(this.drivingCar!.speed) < BUST_SPEED;
+  }
+
+  /** Whether a pursuing officer may actually complete the arrest right now. On
+   * foot this is immediate; in a car the player must have been fully stopped for
+   * a full second first. */
+  private get bustable(): boolean {
+    return !this.isDriving || this.carStoppedForBusted >= CAR_BUST_STOP_DELAY;
   }
 
   /** Whether a patrol car is near enough to pull up and drop an officer to make
@@ -1716,13 +2033,19 @@ export class World {
    * the player like any cop on foot, so cars never make the arrest by ramming.
    */
   private updateArrest(): void {
-    if (this.status !== 'playing' || !this.arrestable) return;
+    if (this.status !== 'playing' || !isWanted(this.wanted) || !this.arrestable) return;
     const deployed: Police[] = [];
     this.police = this.police.map((cop) => {
       if (cop.kind !== 'car' || cop.deployed) return cop;
       if (this.patrolAtDeployRange(cop)) {
         const side = fromAngle(cop.heading + Math.PI / 2, cop.radius + 12);
-        deployed.push({ pos: add(cop.pos, side), heading: cop.heading, radius: 12, kind: 'foot' });
+        deployed.push({
+          pos: add(cop.pos, side),
+          heading: cop.heading,
+          radius: 12,
+          kind: 'foot',
+          home: this.policeHome(cop) ?? cop.pos,
+        });
         return { ...cop, deployed: true };
       }
       return cop;
@@ -1735,12 +2058,22 @@ export class World {
   private checkBusted(): void {
     if (this.status !== 'playing') return; // already busted or wasted this tick
     if (!isWanted(this.wanted) || this.police.length === 0) return;
-    if (!this.arrestable) return; // a fast car outruns the law
+    if (!this.bustable) return; // in a car, you must have been stopped long enough
     if (this.police.some((cop) => cop.kind === 'foot' && hasCaught(cop, this.focus))) {
       this.status = 'busted';
       this.bustedTimer = RESPAWN_DELAY;
       this.endChase(); // the arrest ends the chase: clear the wanted level now
     }
+  }
+
+  /** Track how long the current player car has been fully stopped for arrest. */
+  private updateCarBustTimer(dt: number): void {
+    if (!this.isDriving) {
+      this.carStoppedForBusted = 0;
+      return;
+    }
+    this.carStoppedForBusted =
+      Math.abs(this.drivingCar!.speed) <= CAR_BUST_STOP_SPEED ? this.carStoppedForBusted + dt : 0;
   }
 
   /** Count down the busted/wasted screen; respawn on confirm or when time runs out. */
@@ -1750,9 +2083,25 @@ export class World {
     if (confirmPressed || this.bustedTimer <= 0) this.respawn();
   }
 
-  /** Reset the player to the start, clear the heat, and resume play. */
+  /** Hospital for wasted, police station for busted, or the fallback spawn. */
+  private playerRespawnPoint(): Vec2 {
+    const anchor = this.focus;
+    if (this.status === 'wasted') {
+      return this.nearestFacility('hospital', anchor)?.spawn ?? this.spawn;
+    }
+    if (this.status === 'busted') {
+      return (
+        this.nearestFacility('policeStation', anchor)?.spawn ??
+        this.nearestPoliceSpawn(anchor) ??
+        this.spawn
+      );
+    }
+    return this.spawn;
+  }
+
+  /** Reset the player to the appropriate respawn point, clear the heat, and resume play. */
   private respawn(): void {
-    this.player = { ...this.player, pos: this.spawn, angle: 0 };
+    this.player = { ...this.player, pos: this.playerRespawnPoint(), angle: 0 };
     this.wanted = createWanted();
     this.police = [];
     this.bullets = [];
@@ -1763,6 +2112,7 @@ export class World {
     this.tows = [];
     this.health = createHealth(this.health.max);
     this.drivingCarIndex = null;
+    this.carStoppedForBusted = 0;
     this.bustedTimer = 0;
     this.status = 'playing';
   }

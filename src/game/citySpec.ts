@@ -5,7 +5,7 @@ import type { CitySpec } from '../core/city';
  *
  * Each 7-tile block is a 4-tile road band (two lanes each way) plus a 3-tile
  * building strip. `margin === sidewalkWidth`, so the pavement exactly fills the
- * gap between a building and the road — wide enough to walk two abreast, with no
+ * gap between a building and the road — wide enough to walk three abreast, with no
  * spill onto the carriageway. The river sits on a building-row band (rows 32–34)
  * so the wide streets run alongside it rather than into it, crossed by bridges
  * on every other vertical road.
@@ -16,7 +16,7 @@ export const CITY_SPEC: CitySpec = {
   tile: 64,
   block: 7,
   roadWidth: 4,
-  margin: 28,
-  sidewalkWidth: 28,
+  margin: 42,
+  sidewalkWidth: 42,
   rivers: [{ orientation: 'horizontal', start: 32, span: 3, bridgeEvery: 2 }],
 };

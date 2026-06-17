@@ -43,6 +43,15 @@ describe('buildCity', () => {
   it('assigns custom service buildings with road-adjacent spawn points', () => {
     const kinds = new Set(city.facilities.map((f) => f.kind));
     expect(kinds).toEqual(new Set(['policeStation', 'hospital', 'towYard']));
+    expect(
+      city.facilities.reduce(
+        (counts, facility) => {
+          counts[facility.kind] += 1;
+          return counts;
+        },
+        { policeStation: 0, hospital: 0, towYard: 0 },
+      ),
+    ).toEqual({ policeStation: 2, hospital: 2, towYard: 2 });
     expect(new Set(city.facilities.map((f) => f.buildingIndex)).size).toBe(city.facilities.length);
     for (const facility of city.facilities) {
       // The on-foot spawn is the doorstep on the pavement: on a sidewalk strip,
@@ -137,6 +146,30 @@ describe('buildCity with the live wide river layout', () => {
   it('keeps crosswalks off the sidewalks', () => {
     const overlapping = city.crosswalks.some((crosswalk) => city.sidewalks.some((sidewalk) => overlapsRect(crosswalk, sidewalk)));
     expect(overlapping).toBe(false);
+  });
+
+  it('does not let crosswalks extend into the water band', () => {
+    const wetCrosswalk = city.crosswalks.some((crosswalk) => city.water.some((water) => overlapsRect(crosswalk, water)));
+    expect(wetCrosswalk).toBe(false);
+  });
+
+  it('keeps every in-bounds crosswalk exit on dry land', () => {
+    const { cols, rows, tile } = city.spec;
+    for (const crosswalk of city.crosswalks) {
+      const centerTx = Math.floor((crosswalk.x + crosswalk.w / 2) / tile);
+      const centerTy = Math.floor((crosswalk.y + crosswalk.h / 2) / tile);
+      if (crosswalk.w > crosswalk.h) {
+        const leftTx = Math.floor((crosswalk.x - 1) / tile);
+        const rightTx = Math.floor((crosswalk.x + crosswalk.w + 1) / tile);
+        if (leftTx >= 0 && leftTx < cols) expect(city.isWater(leftTx, centerTy)).toBe(false);
+        if (rightTx >= 0 && rightTx < cols) expect(city.isWater(rightTx, centerTy)).toBe(false);
+      } else {
+        const topTy = Math.floor((crosswalk.y - 1) / tile);
+        const bottomTy = Math.floor((crosswalk.y + crosswalk.h + 1) / tile);
+        if (topTy >= 0 && topTy < rows) expect(city.isWater(centerTx, topTy)).toBe(false);
+        if (bottomTy >= 0 && bottomTy < rows) expect(city.isWater(centerTx, bottomTy)).toBe(false);
+      }
+    }
   });
 
   it('never runs a road tile through the water, so traffic cannot drive into the river', () => {
