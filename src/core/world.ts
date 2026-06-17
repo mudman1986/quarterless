@@ -13,6 +13,7 @@ import {
   type CarTuning,
   DEFAULT_CAR_TUNING,
   stepCar,
+  carWallRetention,
   collideCarWithWalls,
   collideCars,
 } from './vehicle';
@@ -571,6 +572,11 @@ export class World {
   /** Cars solid enough to block actors on foot (a faster car runs them over). */
   private blockingCars(): readonly Car[] {
     return this.cars.filter((car, i) => !(this.wreckedCars[i] && this.towedCars[i]) && Math.abs(car.speed) < RUN_OVER_SPEED);
+  }
+
+  /** Wrecks that still physically exist in the world and block movement. */
+  private wreckObstacles(): readonly Car[] {
+    return this.cars.filter((_, i) => this.wreckedCars[i] && !this.towedCars[i]);
   }
 
   private nearestCrewedServiceVehicle(
@@ -1387,7 +1393,21 @@ export class World {
   private yieldObstacles(): Vec2[] {
     const obstacles = this.pedestrians.map((p) => p.pos);
     if (!this.isDriving) obstacles.push(this.player.pos);
+    obstacles.push(...this.wreckObstacles().map((wreck) => wreck.pos));
     return obstacles;
+  }
+
+  /** Push a live vehicle out of any wrecks it overlapped this tick. Wrecks are
+   * static obstacles, so unlike live car-vs-car contacts the wreck does not move. */
+  private resolveVehicleAgainstWrecks(body: Car): Car {
+    const resolved = resolveCircleCircles(body.pos, body.radius, this.wreckObstacles());
+    const pushOut = sub(resolved, body.pos);
+    if (length(pushOut) <= 1e-6) return body;
+    if (body.speed === 0) return { ...body, pos: resolved };
+
+    const normal = normalize(pushOut);
+    const travelDir = scale(fromAngle(body.heading), Math.sign(body.speed) || 1);
+    return { ...body, pos: resolved, speed: body.speed * carWallRetention(travelDir, normal) };
   }
 
   /** Push overlapping vehicles apart so they collide instead of passing through,
@@ -1436,6 +1456,11 @@ export class World {
           this.vehicleImpactCooldowns.set(pairKey, VEHICLE_IMPACT_COOLDOWN);
         }
       }
+    }
+    for (const ref of refs) {
+      const body = this.vehicleBody(ref);
+      if (!body) continue;
+      this.setVehicleBody(ref, this.resolveVehicleAgainstWrecks(body));
     }
   }
 

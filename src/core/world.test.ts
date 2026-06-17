@@ -510,6 +510,49 @@ describe('World car collisions', () => {
     expect(gap).toBeLessThan(40); // they actually met
     expect(gap).toBeGreaterThanOrEqual(w.cars[0].radius + w.cars[1].radius - 1); // never overlapped
   });
+
+  it('stops a driven car from passing through a wreck', () => {
+    const w = new World({
+      player: player(),
+      cars: [carAt(20, 0), carAt(140, 0)], // hijack the first; the second is a wreck ahead
+      bounds: { width: 4000, height: 4000 },
+    });
+    w.wreckedCars[1] = true;
+
+    w.tick(controls({ action: true }), 1 / 60);
+    for (let i = 0; i < 240; i++) w.tick(controls({ up: true }), 1 / 60);
+
+    const gap = distance(w.cars[0].pos, w.cars[1].pos);
+    expect(w.cars[0].pos.x).toBeLessThan(w.cars[1].pos.x);
+    expect(gap).toBeGreaterThanOrEqual(w.cars[0].radius + w.cars[1].radius - 1);
+  });
+
+  it('makes NPC traffic stop short of a wreck instead of driving through it', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    const npc: Car = { pos: tileCenter(city.spec, 0, 4), heading: 0, speed: 0, radius: 12 };
+    const wreck: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 };
+    const w = new World({
+      player: { pos: vec2(-9999, -9999), angle: 0, radius: 8 },
+      cars: [npc, wreck],
+      city,
+      carDrivers: [{ dir: vec2(1, 0) }, null],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+    w.wreckedCars[1] = true;
+
+    let yielded = false;
+    for (let i = 0; i < 240; i++) {
+      w.tick(controls(), 1 / 60);
+      yielded ||= w.cars[0].speed === 0;
+      expect(distance(w.cars[0].pos, w.cars[1].pos)).toBeGreaterThanOrEqual(
+        w.cars[0].radius + w.cars[1].radius - 1,
+      );
+    }
+
+    expect(yielded).toBe(true);
+    expect(w.cars[0].pos.x).toBeLessThan(w.cars[1].pos.x);
+  });
 });
 
 describe('World actor-car collision', () => {
