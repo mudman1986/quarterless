@@ -541,7 +541,6 @@ export class World {
     this.lights = tickLights(this.lights, dt);
     this.updateTraffic(dt);
     this.resolveVehicleCollisions(dt);
-    this.updateCarBustTimer(dt);
     this.updatePedestrians(dt);
     this.updateNpcDriving(dt);
     this.checkRoadKill();
@@ -551,6 +550,7 @@ export class World {
     this.updateBullets(dt);
     this.updateWantedAndPolice(dt);
     this.updateArrest();
+    this.updateCarBustTimer(dt);
     this.updatePoliceBullets(dt);
     this.stepExplosions(dt);
     this.updateCorpses(dt);
@@ -2173,6 +2173,13 @@ export class World {
   /** Track how long the current player car has been fully stopped for arrest. */
   private updateCarBustTimer(dt: number): void {
     if (!this.isDriving) {
+      this.carStoppedForBusted = 0;
+      return;
+    }
+    const underArrestAttempt = this.police.some(
+      (cop) => cop.kind === 'foot' && !cop.returningHome && hasCaught(cop, this.focus),
+    );
+    if (!underArrestAttempt) {
       this.carStoppedForBusted = 0;
       return;
     }

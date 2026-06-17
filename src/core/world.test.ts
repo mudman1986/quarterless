@@ -1403,6 +1403,31 @@ describe('World patrol car arrest', () => {
     expect(w.isBusted).toBe(true);
   });
 
+  it('does not preload the in-car arrest timer before an officer reaches the stopped car', () => {
+    const w = new World({
+      player: player(),
+      cars: [carAt(20, 0)],
+      police: [{ pos: vec2(200, 0), heading: Math.PI, radius: 12, kind: 'foot' }],
+      bounds: { width: 4000, height: 4000 },
+    });
+    w.wanted = addHeat(createWanted(), CRIME_HEAT.hitPolice);
+
+    w.tick(controls({ action: true }), 1 / 60); // enter the parked car and wait
+
+    for (let i = 0; i < 70; i++) w.tick(controls(), 1 / 60); // the player has been stopped for >1s
+    expect(w.isBusted).toBe(false);
+
+    w.police[0] = { ...w.police[0], pos: w.focus, heading: 0 }; // the officer finally reaches the car
+    w.tick(controls(), 1 / 60);
+    expect(w.isBusted).toBe(false); // contact starts the timer; it must not arrest immediately
+
+    for (let i = 0; i < 58; i++) w.tick(controls(), 1 / 60);
+    expect(w.isBusted).toBe(false);
+
+    w.tick(controls(), 1 / 60);
+    expect(w.isBusted).toBe(true);
+  });
+
   it('drops an officer to bust a player it has pinned in a stopped car', () => {
     const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
     const w = new World({
