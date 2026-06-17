@@ -1640,11 +1640,72 @@ export class World {
     return { kills: this.kills, collected: this.collected, elapsed: this.elapsed };
   }
 
+  /** Police station nearest a point, or null on atypical maps without any. */
+  private nearestPoliceSpawn(p: Vec2): Vec2 | null {
+    if (this.policeSpawns.length === 0) return null;
+    return this.policeSpawns.reduce((best, spawn) => (distance(p, spawn) < distance(p, best) ? spawn : best));
+  }
+
+  /** Home station a police unit returns to once the wanted level is gone. */
+  private policeHome(cop: Police): Vec2 | null {
+    return cop.home ?? this.nearestPoliceSpawn(cop.pos);
+  }
+
+  /** A speeding player car still runs over officers on foot, even if they are
+   * currently returning to the station after the chase has ended. */
+  private runDownFootPolice(): void {
+    const car = this.drivingCar;
+    if (!car || Math.abs(car.speed) < RUN_OVER_SPEED) return;
+    const survivors: Police[] = [];
+    for (const cop of this.police) {
+      if (cop.kind === 'foot' && distance(car.pos, cop.pos) <= car.radius + cop.radius) {
+        this.registerKill('police'); // the player ran them down
+      } else {
+        survivors.push(cop);
+      }
+    }
+    this.police = survivors;
+  }
+
+  /** Move a single police unit back to its station. Returns null once it has
+   * effectively reached home and can be removed from the world. */
+  private returnPoliceToStation(cop: Police, dt: number): Police | null {
+    const home = this.policeHome(cop);
+    if (!home) return null;
+
+    if (cop.kind === 'car' && this.city) {
+      const speed = policeSpeedFor('car', 1);
+      const stepped = { ...stepPoliceCar(cop, home, this.city, dt, speed), speed, fireCooldown: 0 };
+      return distance(stepped.pos, home) <= stepped.radius + this.city.spec.tile ? null : stepped;
+    }
+
+    const speed = policeSpeedFor(cop.kind, 1);
+    const sightBlocked = this.walls.some((wll) => segmentIntersectsRect(cop.pos, home, wll));
+    const homeFlow = sightBlocked && this.navGrid ? computeFlowField(this.navGrid, home) : undefined;
+    const waypoint =
+      sightBlocked && this.navGrid && homeFlow
+        ? (flowWaypoint(this.navGrid, homeFlow, cop.pos) ?? home)
+        : home;
+    const stepped = stepPolice(cop, waypoint, dt, speed);
+    const resolved = {
+      ...stepped,
+      pos: resolveCircleRects(stepped.pos, stepped.radius, this.walls),
+      speed: cop.kind === 'car' ? speed : 0,
+      fireCooldown: 0,
+    };
+    return hasCaught(resolved, home) ? null : resolved;
+  }
+
   private updateWantedAndPolice(dt: number): void {
     this.wanted = decay(this.wanted, dt);
 
     if (!isWanted(this.wanted)) {
-      this.police = []; // crime cleared: police disperse
+      this.policeBullets = []; // chase over: stop any remaining incoming fire
+      this.runDownFootPolice();
+      this.police = this.police.flatMap((cop) => {
+        const next = this.returnPoliceToStation(cop, dt);
+        return next ? [next] : [];
+      });
       return;
     }
 
@@ -1658,24 +1719,13 @@ export class World {
         heading: 0,
         radius: kind === 'car' ? 14 : 12,
         kind,
+        home: spawn,
         speed: 0,
         health: kind === 'car' ? CAR_MAX_HEALTH : undefined,
       });
     }
 
-    // A speeding car mows down officers on foot (patrol cars are immune).
-    const car = this.drivingCar;
-    if (car && Math.abs(car.speed) >= RUN_OVER_SPEED) {
-      const survivors: Police[] = [];
-      for (const cop of this.police) {
-        if (cop.kind === 'foot' && distance(car.pos, cop.pos) <= car.radius + cop.radius) {
-          this.registerKill('police'); // the player ran them down
-        } else {
-          survivors.push(cop);
-        }
-      }
-      this.police = survivors;
-    }
+    this.runDownFootPolice();
 
     // Police pursue the player. Patrol cars follow the road grid (when a city is
     // present); officers on foot follow a flow field through the streets so they
@@ -1772,13 +1822,19 @@ export class World {
    * the player like any cop on foot, so cars never make the arrest by ramming.
    */
   private updateArrest(): void {
-    if (this.status !== 'playing' || !this.arrestable) return;
+    if (this.status !== 'playing' || !isWanted(this.wanted) || !this.arrestable) return;
     const deployed: Police[] = [];
     this.police = this.police.map((cop) => {
       if (cop.kind !== 'car' || cop.deployed) return cop;
       if (this.patrolAtDeployRange(cop)) {
         const side = fromAngle(cop.heading + Math.PI / 2, cop.radius + 12);
-        deployed.push({ pos: add(cop.pos, side), heading: cop.heading, radius: 12, kind: 'foot' });
+        deployed.push({
+          pos: add(cop.pos, side),
+          heading: cop.heading,
+          radius: 12,
+          kind: 'foot',
+          home: this.policeHome(cop) ?? cop.pos,
+        });
         return { ...cop, deployed: true };
       }
       return cop;

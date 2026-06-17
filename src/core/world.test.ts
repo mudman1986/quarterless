@@ -202,21 +202,41 @@ describe('World police and wanted level', () => {
     expect(after).toBeLessThan(before); // the cop closed the distance
   });
 
-  it('decays the wanted level over time and disperses police when clear', () => {
+  it('sends a foot officer back to the station instead of dispersing when clear', () => {
     const w = new World({
       player: player(),
-      cars: [carAt(20, 0)],
-      pedestrians: [pedAt(60, 0)],
-      policeSpawns: [vec2(800, 800)],
+      police: [{ pos: vec2(0, 0), heading: 0, radius: 12, kind: 'foot' }],
+      policeSpawns: [vec2(200, 0)],
+      bounds: { width: 4000, height: 4000 },
     });
-    w.tick(controls({ action: true }), 1 / 60);
-    for (let i = 0; i < 120; i++) w.tick(controls({ up: true }), 1 / 60);
-    expect(w.wantedStars).toBeGreaterThanOrEqual(1);
+    const before = distance(w.police[0].pos, vec2(200, 0));
 
-    // Coast for a long while committing no further crimes.
-    for (let i = 0; i < 60 * 120; i++) w.tick(controls(), 1 / 60);
-    expect(w.wantedStars).toBe(0);
-    expect(w.police).toHaveLength(0);
+    w.tick(controls(), 1);
+
+    expect(w.police).toHaveLength(1);
+    expect(distance(w.police[0].pos, vec2(200, 0))).toBeLessThan(before);
+
+    w.tick(controls(), 1);
+    expect(w.police).toHaveLength(0); // reached the station and stood down
+  });
+
+  it('sends a patrol car back to the station along the roads instead of dispersing when clear', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    const station = tileCenter(city.spec, 0, 4);
+    const start = tileCenter(city.spec, 8, 4);
+    const w = new World({
+      player: player(),
+      city,
+      police: [{ pos: start, heading: Math.PI, radius: 14, kind: 'car', speed: 0 }],
+      policeSpawns: [station],
+      bounds: { width: city.width, height: city.height },
+    });
+
+    const before = distance(w.police[0].pos, station);
+    for (let i = 0; i < 60; i++) w.tick(controls(), 1 / 60);
+
+    expect(w.police).toHaveLength(1);
+    expect(distance(w.police[0].pos, station)).toBeLessThan(before);
   });
 
   it('dispatches a mix of officers on foot and patrol cars', () => {
