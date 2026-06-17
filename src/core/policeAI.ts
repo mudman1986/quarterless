@@ -31,6 +31,8 @@ export interface Police {
   fireCooldown?: number;
   /** Whether a patrol car has already dropped an officer to make an arrest. */
   deployed?: boolean;
+  /** Whether this officer is leaving the scene and returning to the station. */
+  returningHome?: boolean;
 }
 
 /** Base pursuit speed (px/s) of an officer on foot at one wanted star. */

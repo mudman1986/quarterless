@@ -173,6 +173,8 @@ export const PIN_GAP = 12;
 export const POLICE_DEPLOY_RANGE = 72;
 /** Hit points a car has before it is destroyed. */
 export const CAR_MAX_HEALTH = 60;
+/** Seconds a destroyed vehicle burns before it finally explodes. */
+export const VEHICLE_BURN_DURATION = 5;
 /** Radius (px) of a car explosion's blast. */
 export const EXPLOSION_RADIUS = 72;
 /** Damage an explosion does to the player caught in the blast. */
@@ -241,7 +243,7 @@ export interface Corpse {
 export type ServicePhase = 'approach' | 'collect' | 'return' | 'depart';
 
 /** Vehicle body rendered for a drivable world car slot. */
-export type VehicleKind = 'car' | 'ambulance' | 'tow';
+export type VehicleKind = 'car' | 'ambulance' | 'tow' | 'police';
 
 /** Common state for a dispatched service vehicle that follows the roads. */
 export interface ServiceVehicle {
@@ -377,6 +379,10 @@ export class World {
   private carRespawnsAtTow: boolean[];
   /** Remaining hit points of each car, parallel to `cars`. */
   private carHealth: number[];
+  /** Seconds each intact car has left on its burning fuse, or 0 when not on fire. */
+  private carBurnTimers: number[];
+  /** Whether each burning car's eventual explosion should be credited to the player. */
+  private carBurnByPlayer: boolean[];
   /** Seconds until each wreck may be claimed by a fresh tow dispatch again. */
   private towDispatchCooldowns: number[];
   /** Continuous time the player's current car has been stopped for a bust. */
@@ -424,6 +430,8 @@ export class World {
     this.carKinds = this.cars.map(() => 'car');
     this.carRespawnsAtTow = this.cars.map(() => true);
     this.carHealth = this.cars.map(() => CAR_MAX_HEALTH);
+    this.carBurnTimers = this.cars.map(() => 0);
+    this.carBurnByPlayer = this.cars.map(() => false);
     this.towDispatchCooldowns = this.cars.map(() => 0);
     this.wreckedCars = this.cars.map(() => false);
     this.towedCars = this.cars.map(() => false);
@@ -451,6 +459,11 @@ export class World {
 
   carKind(index: number): VehicleKind {
     return this.carKinds[index] ?? 'car';
+  }
+
+  /** Whether a car slot is currently burning down toward an explosion. */
+  carIsBurning(index: number): boolean {
+    return !this.wreckedCars[index] && (this.carBurnTimers[index] ?? 0) > 0;
   }
 
   /** Current wanted-level star rating (0..6). */
@@ -543,6 +556,7 @@ export class World {
     this.updateCorpses(dt);
     this.updateAmbulance(dt);
     this.updateTow(dt);
+    this.stepBurningCars(dt);
     this.updateMissionProgress();
     this.checkBusted();
     this.prevAction = c.action;
@@ -679,7 +693,7 @@ export class World {
     const obstacles = this.yieldObstacles();
     for (let i = 0; i < this.cars.length; i++) {
       const ai = this.carDrivers[i];
-      if (!ai || i === this.drivingCarIndex || this.wreckedCars[i]) continue;
+      if (!ai || i === this.drivingCarIndex || this.wreckedCars[i] || this.carIsBurning(i)) continue;
       const car = this.cars[i];
 
       let dir = ai.dir;
@@ -762,7 +776,7 @@ export class World {
   /** Index of a parked (driverless, intact) car within reach of a point, or null. */
   private parkedCarNear(p: Vec2): number | null {
     for (let i = 0; i < this.cars.length; i++) {
-      if (i === this.drivingCarIndex || this.carDrivers[i] || this.wreckedCars[i]) continue;
+      if (i === this.drivingCarIndex || this.carDrivers[i] || this.wreckedCars[i] || this.carIsBurning(i)) continue;
       if (distance(p, this.cars[i].pos) <= PED_ENTER_RADIUS + this.cars[i].radius) return i;
     }
     return null;
@@ -784,6 +798,24 @@ export class World {
       target: home,
       returningTo: home,
       uniform: kind === 'ambulance' ? 'medic' : 'towWorker',
+    });
+  }
+
+  private sendPatrolOfficerHome(pos: Vec2, home: Vec2 | null): void {
+    const station =
+      home ??
+      this.nearestFacility('policeStation', pos)?.spawn ??
+      this.nearestPoliceSpawn(pos) ??
+      this.spawn;
+    this.police.push({
+      pos,
+      heading: angle(sub(station, pos)),
+      radius: 12,
+      kind: 'foot',
+      home: station,
+      speed: 0,
+      fireCooldown: 0,
+      returningHome: true,
     });
   }
 
@@ -821,20 +853,35 @@ export class World {
     this.materializeServiceVehicle(v, kind, true);
   }
 
+  private appendVehicleSlot(
+    car: Car,
+    kind: VehicleKind,
+    opts: { health: number; wrecked?: boolean; respawnsAtTow?: boolean },
+  ): number {
+    const wrecked = opts.wrecked ?? false;
+    this.cars.push(car);
+    this.carDrivers.push(null);
+    this.carKinds.push(kind);
+    this.carRespawnsAtTow.push(opts.respawnsAtTow ?? false);
+    this.carHealth.push(wrecked ? 0 : opts.health);
+    this.carBurnTimers.push(0);
+    this.carBurnByPlayer.push(false);
+    this.towDispatchCooldowns.push(0);
+    this.wreckedCars.push(wrecked);
+    this.towedCars.push(false);
+    return this.cars.length - 1;
+  }
+
   private materializeServiceVehicle(
     v: ServiceVehicle,
     kind: 'ambulance' | 'tow',
     wrecked: boolean,
   ): number {
-    this.cars.push({ pos: v.pos, heading: v.heading, speed: 0, radius: v.radius });
-    this.carDrivers.push(null);
-    this.carKinds.push(kind);
-    this.carRespawnsAtTow.push(false);
-    this.carHealth.push(wrecked ? 0 : v.health);
-    this.towDispatchCooldowns.push(0);
-    this.wreckedCars.push(wrecked);
-    this.towedCars.push(false);
-    return this.cars.length - 1;
+    return this.appendVehicleSlot(
+      { pos: v.pos, heading: v.heading, speed: 0, radius: v.radius },
+      kind,
+      { health: v.health, wrecked, respawnsAtTow: false },
+    );
   }
 
   /** Record that the player destroyed a vehicle, using the same reward/heat rule
@@ -934,7 +981,7 @@ export class World {
     return ref.kind === 'car' && ref.index === this.drivingCarIndex;
   }
 
-  /** Apply damage to any vehicle type, exploding it once its health runs out. */
+  /** Apply damage to any vehicle type, igniting it once its health runs out. */
   private damageVehicle(ref: DamageableVehicleRef, amount: number, byPlayer: boolean): void {
     if (ref.kind === 'car') {
       this.damageCar(ref.index, amount, byPlayer);
@@ -944,7 +991,7 @@ export class World {
       if (this.ambulance !== ref.vehicle) return;
       const health = ref.vehicle.health - amount;
       if (health <= 0) {
-        this.explodeServiceVehicle(ref, byPlayer);
+        this.igniteServiceVehicle(ref, byPlayer);
       } else {
         const next = { ...ref.vehicle, health };
         this.ambulance = next;
@@ -957,7 +1004,7 @@ export class World {
       if (idx === -1) return;
       const health = ref.vehicle.health - amount;
       if (health <= 0) {
-        this.explodeServiceVehicle(ref, byPlayer);
+        this.igniteServiceVehicle(ref, byPlayer);
       } else {
         const next = { ...ref.vehicle, health };
         this.tows[idx] = next;
@@ -969,7 +1016,7 @@ export class World {
     if (idx === -1 || ref.vehicle.kind !== 'car') return;
     const health = (ref.vehicle.health ?? CAR_MAX_HEALTH) - amount;
     if (health <= 0) {
-      this.explodePatrolCar(ref, byPlayer);
+      this.ignitePatrolCar(ref, byPlayer);
     } else {
       const next = { ...ref.vehicle, health };
       this.police[idx] = next;
@@ -977,8 +1024,8 @@ export class World {
     }
   }
 
-  /** Destroy a service vehicle in an explosion and remove it from play. */
-  private explodeServiceVehicle(
+  /** Abort a burning service call, send the crew home, and leave the vehicle to burn down. */
+  private igniteServiceVehicle(
     ref: Extract<DamageableVehicleRef, { kind: 'ambulance' | 'tow' }>,
     byPlayer: boolean,
   ): void {
@@ -991,8 +1038,7 @@ export class World {
           ? ref.vehicle
           : null;
     if (!vehicle) return;
-    const center = vehicle.pos;
-    const crew = vehicle.crew;
+    const crew = vehicle.crew ?? vehicle.pos;
     if (ref.kind === 'ambulance') {
       this.ambulance = null;
     } else {
@@ -1000,20 +1046,33 @@ export class World {
       if (idx === -1) return;
       this.tows.splice(idx, 1);
     }
-    if (crew) this.killOnFootNpc(crew, 'pedestrian', byPlayer);
-    this.triggerExplosion(center, byPlayer);
+    this.sendServiceCrewHome(crew, ref.kind, vehicle.pos);
+    const idx = this.materializeServiceVehicle(vehicle, ref.kind, false);
+    this.igniteCar(idx, byPlayer);
   }
 
-  /** Destroy a patrol car in an explosion and remove it from play. */
-  private explodePatrolCar(
+  /** Abandon a burning patrol car, send the officer home, and leave the cruiser to burn down. */
+  private ignitePatrolCar(
     ref: Extract<DamageableVehicleRef, { kind: 'patrol' }>,
     byPlayer: boolean,
   ): void {
     const idx = this.police.indexOf(ref.vehicle);
     if (idx === -1 || ref.vehicle.kind !== 'car') return;
     const center = ref.vehicle.pos;
+    const home = this.policeHome(ref.vehicle);
+    const body = {
+      pos: ref.vehicle.pos,
+      heading: ref.vehicle.heading,
+      speed: 0,
+      radius: ref.vehicle.radius,
+    };
     this.police.splice(idx, 1);
-    this.triggerExplosion(center, byPlayer);
+    this.sendPatrolOfficerHome(center, home);
+    const slot = this.appendVehicleSlot(body, 'police', {
+      health: ref.vehicle.health ?? CAR_MAX_HEALTH,
+      respawnsAtTow: false,
+    });
+    this.igniteCar(slot, byPlayer);
   }
 
   /** Spawn an explosion and apply its blast uniformly to actors and vehicles. */
@@ -1107,6 +1166,8 @@ export class World {
     this.cars[idx] = { ...wreck, pos, heading: angle(dir), speed: 0 };
     this.carDrivers[idx] = { dir };
     this.carHealth[idx] = CAR_MAX_HEALTH;
+    this.carBurnTimers[idx] = 0;
+    this.carBurnByPlayer[idx] = false;
     this.towDispatchCooldowns[idx] = 0;
     this.wreckedCars[idx] = false;
   }
@@ -1567,6 +1628,11 @@ export class World {
       return;
     }
 
+    if (this.carIsBurning(idx)) {
+      this.cars[idx] = { ...car, speed: 0 };
+      return;
+    }
+
     const stepped = stepCar(car, c, dt, this.tuning);
     const collided = collideCarWithWalls(stepped, this.walls);
     this.cars[idx] = { ...collided, pos: this.wrapPos(collided.pos) };
@@ -1755,9 +1821,21 @@ export class World {
    * `byPlayer` carries whether the player caused this damage, so only the player's
    * own havoc earns them heat (NPC pile-ups do not). */
   private damageCar(idx: number, amount: number, byPlayer: boolean): void {
-    if (this.wreckedCars[idx]) return;
+    if (this.wreckedCars[idx] || this.carIsBurning(idx)) return;
     this.carHealth[idx] -= amount;
-    if (this.carHealth[idx] <= 0) this.explodeCar(idx, byPlayer);
+    if (this.carHealth[idx] <= 0) this.igniteCar(idx, byPlayer);
+  }
+
+  /** Start a car burning in place; it explodes after a short escape window. */
+  private igniteCar(idx: number, byPlayer: boolean): void {
+    if (this.wreckedCars[idx] || this.carIsBurning(idx)) return;
+    this.towedCars[idx] = false;
+    this.carHealth[idx] = 0;
+    this.carBurnTimers[idx] = VEHICLE_BURN_DURATION;
+    this.carBurnByPlayer[idx] = byPlayer;
+    this.towDispatchCooldowns[idx] = 0;
+    this.carDrivers[idx] = null;
+    this.cars[idx] = { ...this.cars[idx], speed: 0 };
   }
 
   /**
@@ -1770,11 +1848,30 @@ export class World {
     this.towedCars[idx] = false; // a fresh wreck can be recovered again later
     this.wreckedCars[idx] = true;
     this.carHealth[idx] = 0;
+    this.carBurnTimers[idx] = 0;
+    this.carBurnByPlayer[idx] = false;
     this.towDispatchCooldowns[idx] = 0;
     this.carDrivers[idx] = null;
     const center = this.cars[idx].pos;
     this.cars[idx] = { ...this.cars[idx], speed: 0 };
     this.triggerExplosion(center, byPlayer);
+  }
+
+  /** Count burning fuses down and detonate any vehicles whose timer has expired. */
+  private stepBurningCars(dt: number): void {
+    const exploding: { index: number; byPlayer: boolean }[] = [];
+    for (let i = 0; i < this.carBurnTimers.length; i++) {
+      const remaining = this.carBurnTimers[i] ?? 0;
+      if (remaining <= 0 || this.wreckedCars[i]) continue;
+      const next = remaining - dt;
+      this.carBurnTimers[i] = next;
+      if (next <= 0) {
+        exploding.push({ index: i, byPlayer: this.carBurnByPlayer[i] ?? false });
+      }
+    }
+    for (const { index, byPlayer } of exploding) {
+      this.explodeCar(index, byPlayer);
+    }
   }
 
   /** Advance active explosions, dropping those whose visual has finished. */
@@ -1880,7 +1977,9 @@ export class World {
     if (cop.kind === 'car' && this.city) {
       const speed = policeSpeedFor('car', 1);
       const stepped = { ...stepPoliceCar(cop, home, this.city, dt, speed), speed, fireCooldown: 0 };
-      return distance(stepped.pos, home) <= stepped.radius + this.city.spec.tile ? null : stepped;
+      return distance(stepped.pos, home) <= stepped.radius + this.city.spec.tile
+        ? null
+        : { ...stepped, returningHome: cop.returningHome };
     }
 
     const speed = policeSpeedFor(cop.kind, 1);
@@ -1896,6 +1995,7 @@ export class World {
       pos: resolveCircleRects(stepped.pos, stepped.radius, this.walls),
       speed: cop.kind === 'car' ? speed : 0,
       fireCooldown: 0,
+      returningHome: cop.returningHome,
     };
     return hasCaught(resolved, home) ? null : resolved;
   }
@@ -1914,7 +2014,7 @@ export class World {
     }
 
     const desired = this.wantedStars;
-    while (this.police.length < desired && this.policeSpawns.length > 0) {
+    while (this.police.filter((cop) => !cop.returningHome).length < desired && this.policeSpawns.length > 0) {
       const spawn = this.policeSpawns[this.police.length % this.policeSpawns.length];
       // Alternate between officers on foot and patrol cars.
       const kind: 'foot' | 'car' = this.police.length % 2 === 0 ? 'foot' : 'car';
@@ -1939,14 +2039,18 @@ export class World {
     const arrestable = this.arrestable;
     // One BFS toward the player, shared by every officer on foot this tick.
     this.copFlow =
-      this.navGrid && this.police.some((c) => c.kind === 'foot')
+      this.navGrid && this.police.some((c) => c.kind === 'foot' && !c.returningHome)
         ? computeFlowField(this.navGrid, this.focus)
         : undefined;
-    this.police = this.police.map((cop) => {
+    this.police = this.police.flatMap((cop) => {
+      if (cop.returningHome) {
+        const next = this.returnPoliceToStation(cop, dt);
+        return next ? [next] : [];
+      }
       if (cop.kind === 'car' && this.city) {
-        if (arrestable && this.patrolAtDeployRange(cop)) return { ...cop, speed: 0 }; // pull up, don't ram
+        if (arrestable && this.patrolAtDeployRange(cop)) return [{ ...cop, speed: 0 }]; // pull up, don't ram
         const speed = policeSpeedFor('car', this.wantedStars);
-        return { ...stepPoliceCar(cop, this.focus, this.city, dt, speed), speed };
+        return [{ ...stepPoliceCar(cop, this.focus, this.city, dt, speed), speed }];
       }
       // An officer on foot charges straight at the player whenever no building
       // blocks the line of sight; the flow field is only needed to route around
@@ -1959,7 +2063,7 @@ export class World {
           ? (flowWaypoint(this.navGrid, this.copFlow, cop.pos) ?? this.focus)
           : this.focus;
       const stepped = stepPolice(cop, waypoint, dt, policeSpeedFor(cop.kind, this.wantedStars));
-      return { ...stepped, pos: resolveCircleRects(stepped.pos, stepped.radius, this.walls), speed: 0 };
+      return [{ ...stepped, pos: resolveCircleRects(stepped.pos, stepped.radius, this.walls), speed: 0 }];
     });
 
     this.updatePoliceShooting(dt);
@@ -1989,7 +2093,7 @@ export class World {
     const shooting = this.wantedStars >= POLICE_SHOOT_MIN_STARS;
     const target = this.focus;
     this.police = this.police.map((cop) => {
-      if (cop.kind !== 'foot') return cop;
+      if (cop.kind !== 'foot' || cop.returningHome) return cop;
       const cooldown = (cop.fireCooldown ?? 0) - dt;
       if (shooting && cooldown <= 0 && distance(cop.pos, target) <= POLICE_SHOOT_RANGE) {
         const heading = angle(sub(target, cop.pos));
@@ -2059,7 +2163,7 @@ export class World {
     if (this.status !== 'playing') return; // already busted or wasted this tick
     if (!isWanted(this.wanted) || this.police.length === 0) return;
     if (!this.bustable) return; // in a car, you must have been stopped long enough
-    if (this.police.some((cop) => cop.kind === 'foot' && hasCaught(cop, this.focus))) {
+    if (this.police.some((cop) => cop.kind === 'foot' && !cop.returningHome && hasCaught(cop, this.focus))) {
       this.status = 'busted';
       this.bustedTimer = RESPAWN_DELAY;
       this.endChase(); // the arrest ends the chase: clear the wanted level now
@@ -2121,7 +2225,7 @@ export class World {
     let best: number | null = null;
     let bestDist = within;
     this.cars.forEach((car, i) => {
-      if (this.wreckedCars[i]) return; // can't get into a wreck
+      if (this.wreckedCars[i] || this.carIsBurning(i)) return; // can't get into a wreck or a burning car
       const d = distance(p, car.pos);
       if (d <= bestDist) {
         best = i;

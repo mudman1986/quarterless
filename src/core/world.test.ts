@@ -2,10 +2,10 @@ import { describe, it, expect } from 'vitest';
 import {
   World,
   AMBULANCE_DISPATCH_DELAY,
-  CAR_MAX_HEALTH,
   SCORE_PER_PEDESTRIAN,
   SCORE_PER_POLICE,
   PLAYER_MAX_HEALTH,
+  VEHICLE_BURN_DURATION,
 } from './world';
 import { type OnFootActor } from './entity';
 import { type Car } from './vehicle';
@@ -33,6 +33,9 @@ const pedAt = (x: number, y: number): Pedestrian => ({
   state: 'wander',
   target: vec2(x, y),
 });
+const advance = (w: World, seconds: number, c = controls()): void => {
+  for (let i = 0; i < Math.ceil(seconds * 60); i++) w.tick(c, 1 / 60);
+};
 
 describe('World on foot', () => {
   it('starts on foot with the camera focused on the player', () => {
@@ -1490,51 +1493,107 @@ describe('World busts a player on the sidewalk', () => {
 
 
 describe('World car explosions', () => {
-  it('destroys a car after enough shots, leaving a wreck and a blast', () => {
+  it('sets a shot-up car on fire before it explodes into a wreck', () => {
     const w = new World({
       player: player(), // origin, facing +x
       cars: [carAt(140, 0)], // far enough that the blast does not reach the player
       bounds: { width: 4000, height: 4000 },
     });
-    for (let i = 0; i < 180 && !w.wreckedCars[0]; i++) w.tick(controls({ fire: true }), 1 / 60);
+    for (let i = 0; i < 180 && !w.carIsBurning(0); i++) w.tick(controls({ fire: true }), 1 / 60);
+    expect(w.carIsBurning(0)).toBe(true);
+    expect(w.wreckedCars[0]).toBe(false);
+    expect(w.explosionsTriggered).toBe(0);
+
+    advance(w, VEHICLE_BURN_DURATION - 1);
+    expect(w.wreckedCars[0]).toBe(false);
+
+    advance(w, 2);
     expect(w.wreckedCars[0]).toBe(true);
     expect(w.explosionsTriggered).toBeGreaterThanOrEqual(1);
     expect(w.isWasted).toBe(false); // the player was clear of the blast
     expect(w.wantedStars).toBeGreaterThanOrEqual(1); // blowing up a car is a crime
   });
 
-  it('chains the blast to a nearby car', () => {
+  it('sets a nearby car on fire, then chains the later blast to it', () => {
     const w = new World({
       player: player(),
       cars: [carAt(140, 0), carAt(184, 0)], // the second sits inside the first's blast
       bounds: { width: 4000, height: 4000 },
     });
-    for (let i = 0; i < 180 && !w.wreckedCars[0]; i++) w.tick(controls({ fire: true }), 1 / 60);
+    for (let i = 0; i < 180 && !w.carIsBurning(0); i++) w.tick(controls({ fire: true }), 1 / 60);
+    expect(w.carIsBurning(0)).toBe(true);
+
+    advance(w, VEHICLE_BURN_DURATION + 1);
     expect(w.wreckedCars[0]).toBe(true);
-    expect(w.wreckedCars[1]).toBe(true); // detonated by the chain reaction
+    expect(w.carIsBurning(1)).toBe(true); // ignited by the chain reaction
+    expect(w.wreckedCars[1]).toBe(false);
+
+    advance(w, VEHICLE_BURN_DURATION + 1);
+    expect(w.wreckedCars[1]).toBe(true);
   });
 
-  it('does not let the player drive a wrecked car', () => {
+  it('does not let the player drive a burning or wrecked car', () => {
     const w = new World({
       player: { pos: vec2(120, 0), angle: 0, radius: 8 },
       cars: [carAt(140, 0)],
       bounds: { width: 4000, height: 4000 },
     });
-    for (let i = 0; i < 180 && !w.wreckedCars[0]; i++) w.tick(controls({ fire: true }), 1 / 60);
-    expect(w.wreckedCars[0]).toBe(true);
+    for (let i = 0; i < 180 && !w.carIsBurning(0); i++) w.tick(controls({ fire: true }), 1 / 60);
+    expect(w.carIsBurning(0)).toBe(true);
     w.tick(controls({ action: true }), 1 / 60); // try to get in
+    expect(w.isDriving).toBe(false);
+
+    advance(w, VEHICLE_BURN_DURATION + 1);
+    expect(w.wreckedCars[0]).toBe(true);
+    w.tick(controls({ action: true }), 1 / 60);
     expect(w.isDriving).toBe(false);
   });
 
-  it('wounds the player caught in the blast of a car they shoot', () => {
+  it('only hurts the player once the delayed blast actually goes off', () => {
     const w = new World({
       player: player(), // origin, within blast range of the car
       cars: [carAt(60, 0)],
       bounds: { width: 4000, height: 4000 },
     });
-    for (let i = 0; i < 180 && !w.wreckedCars[0]; i++) w.tick(controls({ fire: true }), 1 / 60);
+    for (let i = 0; i < 180 && !w.carIsBurning(0); i++) w.tick(controls({ fire: true }), 1 / 60);
+    expect(w.carIsBurning(0)).toBe(true);
+    expect(w.health.current).toBe(PLAYER_MAX_HEALTH);
+
+    advance(w, VEHICLE_BURN_DURATION - 1);
+    expect(w.health.current).toBe(PLAYER_MAX_HEALTH);
+
+    advance(w, 2);
     expect(w.wreckedCars[0]).toBe(true);
     expect(w.health.current).toBeLessThan(PLAYER_MAX_HEALTH); // singed by the explosion
+  });
+
+  it('lets the player get out of a burning car before the delayed explosion', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    const playerCar: Car = { pos: tileCenter(city.spec, 3, 4), heading: 0, speed: 0, radius: 12 };
+    const rammer: Car = { pos: tileCenter(city.spec, 1, 4), heading: 0, speed: 0, radius: 12 };
+    const w = new World({
+      player: { pos: playerCar.pos, angle: 0, radius: 8 },
+      cars: [playerCar, rammer],
+      city,
+      carDrivers: [null, { dir: vec2(1, 0) }],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+    w.lights = createTrafficLights(0);
+
+    w.tick(controls({ action: true }), 1 / 60); // get into the car
+    (w as unknown as { carHealth: number[] }).carHealth[0] = 1;
+
+    for (let i = 0; i < 900 && !w.carIsBurning(0); i++) w.tick(controls(), 1 / 60);
+    expect(w.carIsBurning(0)).toBe(true);
+    expect(w.isWasted).toBe(false);
+
+    w.tick(controls({ action: true }), 1 / 60); // bail out
+    expect(w.isDriving).toBe(false);
+
+    advance(w, VEHICLE_BURN_DURATION + 1, controls({ up: true }));
+    expect(w.wreckedCars[0]).toBe(true);
+    expect(w.isWasted).toBe(false);
   });
 
   it('blows up a car that is repeatedly rammed by another car', () => {
@@ -1600,79 +1659,126 @@ describe('World car explosions', () => {
     expect(w.explosionsTriggered).toBe(0); // the first crash is messy, but not instant fireball city
   });
 
-  it('blows up an ambulance that is repeatedly rammed by a car', () => {
+  it('sets an ambulance on fire, sends the medic home, and only explodes after the fuse', () => {
     const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
-    const laneY = tileCenter(city.spec, 0, 4).y;
+    const ambulancePos = tileCenter(city.spec, 3, 4);
+    const hospital = city.facilities
+      .filter((facility) => facility.kind === 'hospital')
+      .sort((a, b) => distance(a.roadSpawn, ambulancePos) - distance(b.roadSpawn, ambulancePos))[0];
+    expect(hospital).toBeDefined();
     const w = new World({
-      player: player(),
-      cars: [{ pos: tileCenter(city.spec, 1, 4), heading: 0, speed: 0, radius: 12 }],
+      player: { pos: tileCenter(city.spec, 0, 4), angle: 0, radius: 8 },
+      cars: [],
       city,
-      carDrivers: [{ dir: vec2(1, 0) }],
       bounds: { width: city.width, height: city.height },
-      rng: () => 0.9,
     });
-    w.lights = createTrafficLights(0); // east-west green: the rammer keeps going
     w.ambulance = {
-      pos: tileCenter(city.spec, 3, 4),
+      pos: ambulancePos,
       heading: 0,
       radius: 14,
       dir: vec2(1, 0),
-      target: vec2(tileCenter(city.spec, 3, 4).x + 600, laneY),
-      phase: 'collect',
-      crew: tileCenter(city.spec, 3, 4),
+      target: vec2(ambulancePos.x + 800, ambulancePos.y),
+      phase: 'depart',
+      crew: null,
       pickupElapsed: 0,
       age: 0,
       speed: 0,
       blocked: 0,
-      health: CAR_MAX_HEALTH,
+      health: 1,
     };
 
-    for (let i = 0; i < 2400 && w.ambulance; i++) w.tick(controls(), 1 / 60);
+    for (let i = 0; i < 120 && w.ambulance; i++) w.tick(controls({ fire: true }), 1 / 60);
     expect(w.ambulance).toBeNull();
+    const medic = w.pedestrians.find((ped) => ped.uniform === 'medic');
+    expect(medic?.returningTo).toEqual(hospital!.spawn);
+    const idx = w.cars.findIndex((_, i) => w.carKind(i) === 'ambulance' && w.carIsBurning(i));
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(w.explosionsTriggered).toBe(0);
+
+    advance(w, VEHICLE_BURN_DURATION - 1);
+    expect(w.wreckedCars[idx]).toBe(false);
+
+    advance(w, 2);
+    expect(w.wreckedCars[idx]).toBe(true);
     expect(w.explosionsTriggered).toBeGreaterThanOrEqual(1);
   });
 
-  it('destroys a tow truck after enough shots, leaving an explosion', () => {
+  it('sets a tow truck on fire, sends the operator home, and only explodes after the fuse', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    const towPos = tileCenter(city.spec, 3, 4);
+    const towYard = city.facilities
+      .filter((facility) => facility.kind === 'towYard')
+      .sort((a, b) => distance(a.roadSpawn, towPos) - distance(b.roadSpawn, towPos))[0];
+    expect(towYard).toBeDefined();
     const w = new World({
-      player: player(),
+      player: { pos: tileCenter(city.spec, 0, 4), angle: 0, radius: 8 },
       cars: [carAt(400, 400)],
-      bounds: { width: 4000, height: 4000 },
+      city,
+      bounds: { width: city.width, height: city.height },
     });
     w.tows = [
       {
-        pos: vec2(140, 0),
-        heading: Math.PI,
+        pos: towPos,
+        heading: 0,
         radius: 14,
-        dir: vec2(-1, 0),
-        target: vec2(0, 0),
-        phase: 'approach',
+        dir: vec2(1, 0),
+        target: vec2(towPos.x + 800, towPos.y),
+        phase: 'depart',
         crew: null,
         pickupElapsed: 0,
         age: 0,
         speed: 0,
         blocked: 0,
-        health: CAR_MAX_HEALTH,
+        health: 1,
         targetCar: 0,
       },
     ];
 
-    for (let i = 0; i < 180 && w.tows.length > 0; i++) w.tick(controls({ fire: true }), 1 / 60);
+    for (let i = 0; i < 120 && w.tows.length > 0; i++) w.tick(controls({ fire: true }), 1 / 60);
     expect(w.tows).toHaveLength(0);
+    const worker = w.pedestrians.find((ped) => ped.uniform === 'towWorker');
+    expect(worker?.returningTo).toEqual(towYard!.spawn);
+    const idx = w.cars.findIndex((_, i) => w.carKind(i) === 'tow' && w.carIsBurning(i));
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(w.explosionsTriggered).toBe(0);
+
+    advance(w, VEHICLE_BURN_DURATION - 1);
+    expect(w.wreckedCars[idx]).toBe(false);
+
+    advance(w, 2);
+    expect(w.wreckedCars[idx]).toBe(true);
     expect(w.explosionsTriggered).toBeGreaterThanOrEqual(1);
   });
 
-  it('destroys a patrol car after enough shots, leaving an explosion', () => {
+  it('sets a patrol car on fire, sends the officer back to the station, and only explodes after the fuse', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    const station = city.facilities.find((facility) => facility.kind === 'policeStation');
+    expect(station).toBeDefined();
     const w = new World({
-      player: player(),
-      police: [{ pos: vec2(140, 0), heading: Math.PI, radius: 14, kind: 'car' }],
-      bounds: { width: 4000, height: 4000 },
+      player: { pos: tileCenter(city.spec, 0, 4), angle: 0, radius: 8 },
+      city,
+      police: [{ pos: tileCenter(city.spec, 3, 4), heading: Math.PI, radius: 14, kind: 'car', home: station!.spawn, health: 1 }],
+      bounds: { width: city.width, height: city.height },
     });
     w.wanted = addHeat(createWanted(), CRIME_HEAT.hitPolice); // keep the patrol car active
 
-    for (let i = 0; i < 180 && w.police.some((c) => c.kind === 'car'); i++) {
+    for (let i = 0; i < 120 && w.police.some((c) => c.kind === 'car'); i++) {
       w.tick(controls({ fire: true }), 1 / 60);
     }
     expect(w.police.some((c) => c.kind === 'car')).toBe(false);
+    const officer = w.police.find((cop) => cop.kind === 'foot' && cop.returningHome);
+    expect(officer?.home).toEqual(station!.spawn);
+    const before = distance(officer!.pos, station!.spawn);
+    advance(w, 0.5);
+    const returning = w.police.find((cop) => cop.kind === 'foot' && cop.returningHome);
+    expect(returning).toBeDefined();
+    expect(distance(returning!.pos, station!.spawn)).toBeLessThan(before);
+    const idx = w.cars.findIndex((_, i) => w.carKind(i) === 'police' && w.carIsBurning(i));
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(w.explosionsTriggered).toBe(0);
+
+    advance(w, VEHICLE_BURN_DURATION + 1);
+    expect(w.wreckedCars[idx]).toBe(true);
     expect(w.explosionsTriggered).toBeGreaterThanOrEqual(1);
   });
 });
@@ -1693,7 +1799,9 @@ describe('World tow truck', () => {
     });
 
     // Shoot the car until it is destroyed into a wreck.
-    for (let i = 0; i < 200 && !w.wreckedCars[0]; i++) w.tick(controls({ fire: true }), 1 / 60);
+    for (let i = 0; i < 200 && !w.carIsBurning(0); i++) w.tick(controls({ fire: true }), 1 / 60);
+    expect(w.carIsBurning(0)).toBe(true);
+    advance(w, VEHICLE_BURN_DURATION + 1);
     expect(w.wreckedCars[0]).toBe(true);
 
     let dispatched = false;
@@ -1769,7 +1877,9 @@ describe('World tow truck', () => {
       rng: () => 0,
     });
 
-    for (let i = 0; i < 200 && !w.wreckedCars[0]; i++) w.tick(controls({ fire: true }), 1 / 60);
+    for (let i = 0; i < 200 && !w.carIsBurning(0); i++) w.tick(controls({ fire: true }), 1 / 60);
+    expect(w.carIsBurning(0)).toBe(true);
+    advance(w, VEHICLE_BURN_DURATION + 1);
     expect(w.wreckedCars[0]).toBe(true);
 
     for (let i = 0; i < 1500 && !w.towedCars[0]; i++) w.tick(controls(), 1 / 60);
