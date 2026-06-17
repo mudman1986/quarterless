@@ -9,6 +9,8 @@ export interface Pedestrian {
   state: 'wander' | 'flee';
   /** Current point the pedestrian is walking toward while wandering. */
   target: Vec2;
+  /** Optional fixed destination for a special-case pedestrian returning home. */
+  returningTo?: Vec2;
 }
 
 export interface PedestrianContext {

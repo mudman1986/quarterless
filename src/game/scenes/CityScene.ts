@@ -627,8 +627,8 @@ export class CityScene extends Phaser.Scene {
       .setDepth(3)
       .setVisible(false);
 
-    this.carSprites = this.world.cars.map((car) =>
-      this.add.image(car.pos.x, car.pos.y, TEX.npcCar).setDepth(4).setRotation(car.heading),
+    this.carSprites = this.world.cars.map((car, i) =>
+      this.add.image(car.pos.x, car.pos.y, this.carTexture(i)).setDepth(4).setRotation(car.heading),
     );
 
     this.pedSprites = this.world.pedestrians.map((ped) =>
@@ -1218,9 +1218,20 @@ export class CityScene extends Phaser.Scene {
     this.announceRemaining = ANNOUNCE_SECONDS;
   }
 
+  private carTexture(index: number): string {
+    const kind = this.world.carKind(index);
+    if (kind === 'ambulance') return TEX.ambulance;
+    if (kind === 'tow') return TEX.tow;
+    return index === this.world.drivingCarIndex ? TEX.playerCar : TEX.npcCar;
+  }
+
   private syncSprites(): void {
     this.world.cars.forEach((car, i) => {
-      const sprite = this.carSprites[i];
+      let sprite = this.carSprites[i];
+      if (!sprite) {
+        sprite = this.add.image(car.pos.x, car.pos.y, this.carTexture(i)).setDepth(4);
+        this.carSprites[i] = sprite;
+      }
       if (this.world.towedCars[i] && this.world.wreckedCars[i]) {
         sprite.setVisible(false); // hauled away by a tow truck
         return;
@@ -1232,17 +1243,24 @@ export class CityScene extends Phaser.Scene {
       }
       sprite
         .clearTint()
-        .setTexture(i === this.world.drivingCarIndex ? TEX.playerCar : TEX.npcCar)
+        .setVisible(true)
+        .setTexture(this.carTexture(i))
         .setPosition(car.pos.x, car.pos.y)
         .setRotation(car.heading);
     });
 
     // Pedestrians can be removed (run over): hide any surplus sprites.
-    this.pedSprites.forEach((sprite, i) => {
-      const ped = this.world.pedestrians[i];
-      if (ped) sprite.setVisible(true).setPosition(ped.pos.x, ped.pos.y);
-      else sprite.setVisible(false);
+    this.world.pedestrians.forEach((ped, i) => {
+      let sprite = this.pedSprites[i];
+      if (!sprite) {
+        sprite = this.add.image(ped.pos.x, ped.pos.y, TEX.pedestrian).setDepth(5);
+        this.pedSprites[i] = sprite;
+      }
+      sprite.setVisible(true).setPosition(ped.pos.x, ped.pos.y);
     });
+    for (let i = this.world.pedestrians.length; i < this.pedSprites.length; i++) {
+      this.pedSprites[i].setVisible(false);
+    }
 
     // Ammo crates disappear once their specific pickup is collected.
     for (const { sprite, pickup } of this.ammoSprites) {
