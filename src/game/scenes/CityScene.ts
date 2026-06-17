@@ -54,6 +54,9 @@ const COLORS = {
   lightGreen: 0x22c55e,
   lightRed: 0xef4444,
   parkingLine: 0xca8a04,
+  fireGlow: 0xf97316,
+  fireCore: 0xfacc15,
+  smoke: 0x111827,
   // Minimap.
   mmBg: 0x0b0f17,
   mmRoad: 0x334155,
@@ -138,6 +141,7 @@ export class CityScene extends Phaser.Scene {
   private ammoSprites: { sprite: Phaser.GameObjects.Image; pickup: AmmoPickup }[] = [];
   private missionMarker!: Phaser.GameObjects.Arc;
   private explosionGfx!: Phaser.GameObjects.Graphics;
+  private burningGfx!: Phaser.GameObjects.Graphics;
   private lightsGfx!: Phaser.GameObjects.Graphics;
   private corpseGfx!: Phaser.GameObjects.Graphics;
   private ambulanceSprite!: Phaser.GameObjects.Image;
@@ -645,6 +649,8 @@ export class CityScene extends Phaser.Scene {
 
     // A graphics layer for drawing explosion blasts above everything else.
     this.explosionGfx = this.add.graphics().setDepth(11);
+    // Burning vehicles need a persistent flame/smoke treatment before they explode.
+    this.burningGfx = this.add.graphics().setDepth(5.5);
     // Traffic-light indicators sit above the road but below entities.
     this.lightsGfx = this.add.graphics().setDepth(7);
     // Corpses and their blood puddles sit just above the road, below the living.
@@ -737,6 +743,43 @@ export class CityScene extends Phaser.Scene {
       g.fillStyle(0xf97316, (1 - t) * 0.6); // orange core
       g.fillCircle(e.pos.x, e.pos.y, r * 0.6);
     }
+  }
+
+  /** Draw a flickering fire + smoke overlay on cars that are currently burning. */
+  private syncBurningCars(): void {
+    const g = this.burningGfx;
+    g.clear();
+    const t = this.time.now / 120;
+    this.world.cars.forEach((car, i) => {
+      if (!this.world.carIsBurning(i)) return;
+
+      const pulse = 0.55 + 0.45 * Math.sin(t + i * 1.1);
+      const jitterX = Math.sin(t * 0.8 + i) * 2.5;
+      const jitterY = Math.cos(t * 0.65 + i * 0.7) * 1.5;
+      const rearX = car.pos.x - Math.cos(car.heading) * (car.radius * 0.45);
+      const rearY = car.pos.y - Math.sin(car.heading) * (car.radius * 0.45);
+
+      g.fillStyle(COLORS.smoke, 0.14 + pulse * 0.08);
+      g.fillCircle(rearX - 3 + jitterX, rearY - 8 + jitterY, car.radius * (0.9 + pulse * 0.15));
+      g.fillCircle(rearX + 4 - jitterX * 0.4, rearY - 13 - jitterY, car.radius * 0.7);
+
+      g.fillStyle(COLORS.fireGlow, 0.24 + pulse * 0.12);
+      g.fillCircle(car.pos.x, car.pos.y, car.radius * (1.05 + pulse * 0.18));
+
+      g.fillStyle(COLORS.fireGlow, 0.75);
+      g.fillCircle(car.pos.x + jitterX * 0.35, car.pos.y + jitterY * 0.35, car.radius * (0.55 + pulse * 0.12));
+
+      g.fillStyle(COLORS.fireCore, 0.85);
+      g.fillCircle(car.pos.x - jitterX * 0.2, car.pos.y - jitterY * 0.15, car.radius * (0.26 + pulse * 0.08));
+    });
+  }
+
+  private burningCarTint(index: number): number {
+    const pulse = 0.5 + 0.5 * Math.sin(this.time.now / 90 + index * 1.7);
+    const red = Math.round(132 + pulse * 123);
+    const green = Math.round(42 + pulse * 118);
+    const blue = Math.round(18 + (1 - pulse) * 20);
+    return Phaser.Display.Color.GetColor(red, green, blue);
   }
 
   /** Draw the traffic lights: a green/red bar for each travel axis at every
@@ -1228,6 +1271,7 @@ export class CityScene extends Phaser.Scene {
     const kind = this.world.carKind(index);
     if (kind === 'ambulance') return TEX.ambulance;
     if (kind === 'tow') return TEX.tow;
+    if (kind === 'police') return TEX.policeCar;
     return index === this.world.drivingCarIndex ? TEX.playerCar : TEX.npcCar;
   }
 
@@ -1245,6 +1289,15 @@ export class CityScene extends Phaser.Scene {
       if (this.world.wreckedCars[i]) {
         // A destroyed car is a charred, static wreck.
         sprite.setVisible(true).setTexture(TEX.npcCar).setTint(0x3a3a3a).setPosition(car.pos.x, car.pos.y).setRotation(car.heading);
+        return;
+      }
+      if (this.world.carIsBurning(i)) {
+        sprite
+          .setVisible(true)
+          .setTexture(this.carTexture(i))
+          .setTint(this.burningCarTint(i))
+          .setPosition(car.pos.x, car.pos.y)
+          .setRotation(car.heading);
         return;
       }
       sprite
@@ -1294,6 +1347,7 @@ export class CityScene extends Phaser.Scene {
       this.policeSprites[i].setVisible(false);
     }
 
+    this.syncBurningCars();
     this.syncBullets();
     this.syncExplosions();
     this.syncLights();
