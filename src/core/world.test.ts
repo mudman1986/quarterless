@@ -1357,6 +1357,49 @@ describe('World police shooting', () => {
 });
 
 describe('World patrol car arrest', () => {
+  it('waits one second before a foot officer busts a player sitting still in a car', () => {
+    const w = new World({
+      player: player(),
+      cars: [carAt(20, 0)],
+      police: [{ pos: vec2(20, 0), heading: 0, radius: 12, kind: 'foot' }],
+      bounds: { width: 4000, height: 4000 },
+    });
+    w.wanted = addHeat(createWanted(), CRIME_HEAT.hitPolice);
+
+    w.tick(controls({ action: true }), 1 / 60); // enter the parked car under the officer
+    expect(w.isDriving).toBe(true);
+    expect(w.isBusted).toBe(false);
+
+    for (let i = 0; i < 58; i++) w.tick(controls(), 1 / 60);
+    expect(w.isBusted).toBe(false);
+
+    w.tick(controls(), 1 / 60);
+    expect(w.isBusted).toBe(true);
+  });
+
+  it('resets the in-car arrest timer if the player moves before one second passes', () => {
+    const w = new World({
+      player: player(),
+      cars: [carAt(20, 0)],
+      police: [{ pos: vec2(20, 0), heading: 0, radius: 12, kind: 'foot' }],
+      bounds: { width: 4000, height: 4000 },
+    });
+    w.wanted = addHeat(createWanted(), CRIME_HEAT.hitPolice);
+
+    w.tick(controls({ action: true }), 1 / 60); // enter the parked car under the officer
+    for (let i = 0; i < 30; i++) w.tick(controls(), 1 / 60);
+    expect(w.isBusted).toBe(false);
+
+    w.tick(controls({ up: true }), 1 / 60); // nudge the car: the stop timer must reset
+    expect(w.isBusted).toBe(false);
+
+    for (let i = 0; i < 55; i++) w.tick(controls(), 1 / 60);
+    expect(w.isBusted).toBe(false);
+
+    for (let i = 0; i < 10 && !w.isBusted; i++) w.tick(controls(), 1 / 60);
+    expect(w.isBusted).toBe(true);
+  });
+
   it('drops an officer to bust a player it has pinned in a stopped car', () => {
     const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
     const w = new World({

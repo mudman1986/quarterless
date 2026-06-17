@@ -139,6 +139,10 @@ const RUN_OVER_SPEED = 45;
 const RESPAWN_DELAY = 10;
 /** A car moving faster than this outruns capture; slower or on foot you get busted. */
 const BUST_SPEED = 40;
+/** A player car must be effectively stopped to be arrested from it. */
+const CAR_BUST_STOP_SPEED = 1;
+/** Seconds the player car must stay stopped before a cop can complete the arrest. */
+const CAR_BUST_STOP_DELAY = 1;
 /** Default maximum player health. */
 export const PLAYER_MAX_HEALTH = 100;
 /** Collision radius (px) of a bullet, for stopping it at walls. */
@@ -372,6 +376,8 @@ export class World {
   private carHealth: number[];
   /** Seconds until each wreck may be claimed by a fresh tow dispatch again. */
   private towDispatchCooldowns: number[];
+  /** Continuous time the player's current car has been stopped for a bust. */
+  private carStoppedForBusted = 0;
   private bustedTimer = 0;
   private prevAction = false;
   private prevConfirm = false;
@@ -519,6 +525,7 @@ export class World {
     this.lights = tickLights(this.lights, dt);
     this.updateTraffic(dt);
     this.resolveVehicleCollisions(dt);
+    this.updateCarBustTimer(dt);
     this.updatePedestrians(dt);
     this.updateNpcDriving(dt);
     this.checkRoadKill();
@@ -1909,10 +1916,17 @@ export class World {
     this.updatePoliceShooting(dt);
   }
 
-  /** Whether the player can currently be arrested: on foot, or in a car too slow
-   * to escape. (A fast car outruns the law.) */
+  /** Whether the player is pinned enough that police begin an arrest attempt:
+   * on foot, or in a car too slow to escape. (A fast car outruns the law.) */
   private get arrestable(): boolean {
     return !this.isDriving || Math.abs(this.drivingCar!.speed) < BUST_SPEED;
+  }
+
+  /** Whether a pursuing officer may actually complete the arrest right now. On
+   * foot this is immediate; in a car the player must have been fully stopped for
+   * a full second first. */
+  private get bustable(): boolean {
+    return !this.isDriving || this.carStoppedForBusted >= CAR_BUST_STOP_DELAY;
   }
 
   /** Whether a patrol car is near enough to pull up and drop an officer to make
@@ -1995,12 +2009,22 @@ export class World {
   private checkBusted(): void {
     if (this.status !== 'playing') return; // already busted or wasted this tick
     if (!isWanted(this.wanted) || this.police.length === 0) return;
-    if (!this.arrestable) return; // a fast car outruns the law
+    if (!this.bustable) return; // in a car, you must have been stopped long enough
     if (this.police.some((cop) => cop.kind === 'foot' && hasCaught(cop, this.focus))) {
       this.status = 'busted';
       this.bustedTimer = RESPAWN_DELAY;
       this.endChase(); // the arrest ends the chase: clear the wanted level now
     }
+  }
+
+  /** Track how long the current player car has been fully stopped for arrest. */
+  private updateCarBustTimer(dt: number): void {
+    if (!this.isDriving) {
+      this.carStoppedForBusted = 0;
+      return;
+    }
+    this.carStoppedForBusted =
+      Math.abs(this.drivingCar!.speed) <= CAR_BUST_STOP_SPEED ? this.carStoppedForBusted + dt : 0;
   }
 
   /** Count down the busted/wasted screen; respawn on confirm or when time runs out. */
@@ -2039,6 +2063,7 @@ export class World {
     this.tows = [];
     this.health = createHealth(this.health.max);
     this.drivingCarIndex = null;
+    this.carStoppedForBusted = 0;
     this.bustedTimer = 0;
     this.status = 'playing';
   }
