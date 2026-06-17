@@ -1074,14 +1074,15 @@ export class World {
     return best;
   }
 
-  /** A fresh service vehicle, spawned on the nearest corner road tile and aimed
-   * (via the road grid) at `target`. */
+  /** A fresh service vehicle, spawned outside the closest matching service
+   * building when the city has one and otherwise on the nearest corner road
+   * tile, then aimed (via the road grid) at `target`. */
   private dispatchService(
     target: Vec2,
     facilityKind: 'hospital' | 'towYard',
     slot = 0,
   ): ServiceVehicle {
-    const pos = this.serviceSpawnPoint(facilityKind, slot) ?? this.nearestCornerTile(target);
+    const pos = this.serviceSpawnPoint(facilityKind, target, slot) ?? this.nearestCornerTile(target);
     return {
       pos,
       heading: 0,
@@ -1097,11 +1098,21 @@ export class World {
     };
   }
 
-  /** Spawn point outside the named service building, or null if the city has
-   * no such facility (tiny test maps can still fall back to corner dispatch). */
-  private serviceSpawnPoint(kind: 'hospital' | 'towYard', slot = 0): Vec2 | null {
-    const facility = this.city?.facilities.find((f) => f.kind === kind);
-    if (!facility) return null;
+  /** Spawn point outside the named service building nearest the job, or null if
+   * the city has no such facility (tiny test maps can still fall back to
+   * corner dispatch). */
+  private serviceSpawnPoint(kind: 'hospital' | 'towYard', target: Vec2, slot = 0): Vec2 | null {
+    const facilities = this.city?.facilities.filter((f) => f.kind === kind);
+    if (!facilities || facilities.length === 0) return null;
+    let facility = facilities[0];
+    let bestDistance = distance(facility.roadSpawn, target);
+    for (let i = 1; i < facilities.length; i++) {
+      const candidate = facilities[i];
+      const candidateDistance = distance(candidate.roadSpawn, target);
+      if (candidateDistance >= bestDistance) continue;
+      facility = candidate;
+      bestDistance = candidateDistance;
+    }
     const offsetRank = Math.ceil(slot / 2);
     const offset = slot === 0 ? 0 : (slot % 2 === 1 ? 1 : -1) * offsetRank * SERVICE_SPAWN_SPACING;
     const verticalRoad =

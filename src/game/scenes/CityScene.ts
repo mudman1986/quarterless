@@ -89,6 +89,8 @@ const FIXED_STEP = 1 / 60;
 const MAX_SUBSTEPS = 5;
 const PLAYER_SIZE = 14;
 const PED_SIZE = 10;
+/** Every Nth sidewalk strip gets a starting pedestrian. Lower means denser crowds. */
+const PEDESTRIAN_SIDEWALK_STRIDE = 6;
 /** Roughly how many of the city's parking bays actually hold a parked car. */
 const PARKED_CAR_BUDGET = 90;
 /** A focus jump larger than this (px) means the player wrapped a map edge:
@@ -333,7 +335,7 @@ export class CityScene extends Phaser.Scene {
   private spawnPedestrians(): Pedestrian[] {
     const peds: Pedestrian[] = [];
     this.city.sidewalks.forEach((s, i) => {
-      if (i % 12 !== 0) return; // a manageable scattering across the city
+      if (i % PEDESTRIAN_SIDEWALK_STRIDE !== 0) return; // a denser but still manageable scattering across the city
       const pos = vec2(s.x + s.w / 2, s.y + s.h / 2);
       peds.push({ pos, heading: 0, radius: PED_SIZE / 2, state: 'wander', target: pos });
     });

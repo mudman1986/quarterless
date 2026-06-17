@@ -996,9 +996,12 @@ describe('World living world', () => {
     expect(w.corpses).toHaveLength(0); // and it took the body away
   });
 
-  it('dispatches the ambulance from the hospital building', () => {
+  it('dispatches the ambulance from the nearest hospital building', () => {
     const city = miniCity();
-    const hospital = city.facilities.find((f) => f.kind === 'hospital');
+    const corpsePos = tileCenter(city.spec, 2, 4);
+    const hospital = city.facilities
+      .filter((f) => f.kind === 'hospital')
+      .sort((a, b) => distance(a.roadSpawn, corpsePos) - distance(b.roadSpawn, corpsePos))[0];
     expect(hospital).toBeDefined();
     const w = new World({
       player: player(),
@@ -1006,7 +1009,7 @@ describe('World living world', () => {
       bounds: { width: city.width, height: city.height },
     });
     w.corpses = [
-      { pos: tileCenter(city.spec, 2, 4), offscreenFor: 0, inFrameFor: AMBULANCE_DISPATCH_DELAY },
+      { pos: corpsePos, offscreenFor: 0, inFrameFor: AMBULANCE_DISPATCH_DELAY },
     ];
 
     w.tick(controls(), 0); // dispatch without advancing away from the spawn point
@@ -1559,13 +1562,16 @@ describe('World tow truck', () => {
     expect(w.towedCars.every(Boolean)).toBe(true); // every wreck was hauled away
   });
 
-  it('dispatches the tow truck from the tow yard building', () => {
+  it('dispatches the tow truck from the nearest tow yard building', () => {
     const city = miniCity();
-    const towYard = city.facilities.find((f) => f.kind === 'towYard');
+    const wreckPos = tileCenter(city.spec, 2, 4);
+    const towYard = city.facilities
+      .filter((f) => f.kind === 'towYard')
+      .sort((a, b) => distance(a.roadSpawn, wreckPos) - distance(b.roadSpawn, wreckPos))[0];
     expect(towYard).toBeDefined();
     const w = new World({
       player: player(),
-      cars: [{ pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 }],
+      cars: [{ pos: wreckPos, heading: 0, speed: 0, radius: 12 }],
       city,
       carDrivers: [null],
       bounds: { width: city.width, height: city.height },

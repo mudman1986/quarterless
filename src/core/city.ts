@@ -164,8 +164,8 @@ function subtractBand(r: TileRect, river: RiverSpec): TileRect[] {
   return pieces;
 }
 
-/** Pick three distinct building blocks to act as the police station, hospital,
- * and tow yard, favouring the city corners so they read as deliberate landmarks.
+/** Pick two distinct building blocks per service type, favouring the city
+ * corners and edges so they read as deliberate landmarks spread across town.
  * Each facility also gets a road-adjacent spawn point on a preferred frontage,
  * with fallbacks if that side is missing (e.g. the map edge or a cropped block).
  */
@@ -205,10 +205,15 @@ function buildFacilities(
     return null;
   };
 
+  const east = cols * tile;
+  const south = rows * tile;
   const plans: { kind: FacilityKind; target: Vec2; prefs: FacilitySide[] }[] = [
     { kind: 'policeStation', target: vec2(0, 0), prefs: ['top', 'left', 'right', 'bottom'] },
-    { kind: 'hospital', target: vec2(cols * tile, 0), prefs: ['right', 'top', 'bottom', 'left'] },
-    { kind: 'towYard', target: vec2(0, rows * tile), prefs: ['left', 'bottom', 'top', 'right'] },
+    { kind: 'policeStation', target: vec2(east, south), prefs: ['bottom', 'right', 'left', 'top'] },
+    { kind: 'hospital', target: vec2(east, 0), prefs: ['right', 'top', 'bottom', 'left'] },
+    { kind: 'hospital', target: vec2(east, south / 2), prefs: ['right', 'bottom', 'top', 'left'] },
+    { kind: 'towYard', target: vec2(0, south), prefs: ['left', 'bottom', 'top', 'right'] },
+    { kind: 'towYard', target: vec2(east / 2, south), prefs: ['bottom', 'left', 'right', 'top'] },
   ];
 
   const used = new Set<number>();
@@ -364,9 +369,11 @@ function buildSidewalks(buildings: readonly Rect[], sidewalkWidth: number, water
  * Striped pedestrian crossings around every intersection. Each crossing spans
  * the full width of the road it crosses — kerb to kerb, i.e. exactly the road
  * band — and sits just outside the junction square on each open approach, so it
- * starts at the block corner / sidewalk edge rather than over the pavement. Its
- * short dimension is the {@link CROSSWALK_BELT_WIDTH} belt the pedestrian steps
- * across. Pure.
+ * starts at the block corner / sidewalk edge rather than over the pavement. A
+ * crossing is only kept when its in-bounds exits land on dry ground, so bridge
+ * approaches over a river do not paint zebra stripes that spill out into the
+ * water. Its short dimension is the {@link CROSSWALK_BELT_WIDTH} belt the
+ * pedestrian steps across. Pure.
  */
 function buildCrosswalks(
   spec: CitySpec,
@@ -377,6 +384,8 @@ function buildCrosswalks(
   const roadWidth = roadWidthFor(spec);
   const belt = CROSSWALK_BELT_WIDTH;
   const roadSpan = roadWidth * tile;
+  const dryIfInBounds = (tx: number, ty: number): boolean =>
+    tx < 0 || ty < 0 || tx >= cols || ty >= rows || !isWater(tx, ty);
   const dry = (tx: number, ty: number): boolean =>
     tx >= 0 && ty >= 0 && tx < cols && ty < rows && isRoad(tx, ty) && !isWater(tx, ty);
   const zones: Rect[] = [];
@@ -388,11 +397,27 @@ function buildCrosswalks(
       const x1 = (bx + roadWidth) * tile;
       const y1 = (by + roadWidth) * tile;
       // North / south crossings span the vertical road band (full width in x).
-      if (dry(bx, by - 1)) zones.push(rect(x0, y0 - belt, roadSpan, belt));
-      if (dry(bx, by + roadWidth)) zones.push(rect(x0, y1, roadSpan, belt));
+      if (dry(bx, by - 1) && dryIfInBounds(bx - 1, by - 1) && dryIfInBounds(bx + roadWidth, by - 1)) {
+        zones.push(rect(x0, y0 - belt, roadSpan, belt));
+      }
+      if (
+        dry(bx, by + roadWidth) &&
+        dryIfInBounds(bx - 1, by + roadWidth) &&
+        dryIfInBounds(bx + roadWidth, by + roadWidth)
+      ) {
+        zones.push(rect(x0, y1, roadSpan, belt));
+      }
       // East / west crossings span the horizontal road band (full width in y).
-      if (dry(bx - 1, by)) zones.push(rect(x0 - belt, y0, belt, roadSpan));
-      if (dry(bx + roadWidth, by)) zones.push(rect(x1, y0, belt, roadSpan));
+      if (dry(bx - 1, by) && dryIfInBounds(bx - 1, by - 1) && dryIfInBounds(bx - 1, by + roadWidth)) {
+        zones.push(rect(x0 - belt, y0, belt, roadSpan));
+      }
+      if (
+        dry(bx + roadWidth, by) &&
+        dryIfInBounds(bx + roadWidth, by - 1) &&
+        dryIfInBounds(bx + roadWidth, by + roadWidth)
+      ) {
+        zones.push(rect(x1, y0, belt, roadSpan));
+      }
     }
   }
   return zones;
