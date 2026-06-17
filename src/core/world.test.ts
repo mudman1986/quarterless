@@ -1279,6 +1279,24 @@ describe('World combat', () => {
     expect(w.score.current).toBe(SCORE_PER_POLICE);
   });
 
+  it('runs over a foot officer into a corpse instead of making them vanish', () => {
+    const w = new World({
+      player: player(),
+      cars: [carAt(20, 0)],
+      police: [{ pos: vec2(70, 0), heading: 0, radius: 12, kind: 'foot' }],
+      bounds: { width: 4000, height: 4000 },
+    });
+    w.wanted = addHeat(createWanted(), CRIME_HEAT.hitPolice);
+
+    w.tick(controls({ action: true }), 1 / 60);
+    for (let i = 0; i < 120 && w.police.length > 0; i++) w.tick(controls({ up: true }), 1 / 60);
+
+    expect(w.police).toHaveLength(0);
+    expect(w.corpses).toHaveLength(1);
+    expect(w.kills).toBe(1);
+    expect(w.score.current).toBe(SCORE_PER_POLICE);
+  });
+
   it('expires a bullet after its range without a hit', () => {
     const w = new World({ player: player() });
     w.tick(controls({ fire: true }), 1 / 60);
@@ -2005,6 +2023,7 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     });
 
     w.tick(controls(), 1 / 60); // create the corpse that summons the ambulance
+    w.cars[0] = { ...w.cars[0], pos: vec2(-1000, -1000), speed: 0 };
     for (let i = 0; i < 3000; i++) {
       w.tick(controls(), 1 / 60);
       if (w.ambulance?.crew && w.ambulance.phase === 'return' && w.corpses.length === 0) break;
@@ -2023,6 +2042,39 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     expect(w.wreckedCars[1]).toBe(true); // the abandoned ambulance stays behind for recovery
     expect(w.towedCars[1]).toBe(false);
     expect(w.kills).toBe(1);
+  });
+
+  it('leaves a corpse when the medic is run over on foot', () => {
+    const city = miniCity();
+    const spot = tileCenter(city.spec, 2, 4);
+    const runner: Car = { pos: vec2(spot.x - 10, spot.y), heading: 0, speed: 100, radius: 12 };
+    const w = new World({
+      player: player(),
+      cars: [runner],
+      city,
+      carDrivers: [null],
+      pedestrians: [pedAt(spot.x, spot.y)],
+      viewRadius: 4000,
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+
+    w.tick(controls(), 1 / 60);
+    for (let i = 0; i < 3000; i++) {
+      w.tick(controls(), 1 / 60);
+      if (w.ambulance?.crew && w.ambulance.phase === 'return' && w.corpses.length === 0) break;
+    }
+    expect(w.ambulance?.crew).not.toBeNull();
+    expect(w.ambulance?.phase).toBe('return');
+
+    const crew = w.ambulance!.crew!;
+    w.cars[0] = { ...w.cars[0], pos: vec2(crew.x - 16, crew.y), heading: 0, speed: 100 };
+    w.tick(controls(), 1 / 60);
+
+    expect(w.ambulance).toBeNull();
+    expect(w.corpses).toHaveLength(1);
+    const abandoned = w.cars.findIndex((_, i) => w.carKind(i) === 'ambulance' && w.wreckedCars[i]);
+    expect(abandoned).toBeGreaterThanOrEqual(0);
   });
 
   it('has a tow truck recover an abandoned ambulance after the medic is killed', () => {
@@ -2118,6 +2170,7 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     });
 
     w.tick(controls(), 1 / 60);
+  w.cars[0] = { ...w.cars[0], pos: vec2(-1000, -1000), speed: 0 };
     advanceUntilAmbulanceLoading(w);
 
     expect(w.corpses).toHaveLength(1);
@@ -2362,6 +2415,38 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     for (let i = 0; i < 4000 && !w.towedCars[1]; i++) w.tick(controls(), 1 / 60);
     expect(w.towedCars[1]).toBe(true); // another tow eventually recovers the abandoned truck
     expect(w.kills).toBe(1);
+  });
+
+  it('leaves a corpse when the tow operator is run over on foot', () => {
+    const city = miniCity();
+    const wreck: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 };
+    const w = new World({
+      player: player(),
+      cars: [wreck],
+      city,
+      carDrivers: [null],
+      viewRadius: 4000,
+      bounds: { width: city.width, height: city.height },
+    });
+    w.wreckedCars[0] = true;
+
+    for (let i = 0; i < 3000; i++) {
+      w.tick(controls(), 1 / 60);
+      if (w.tows[0]?.crew && w.tows[0].phase === 'return' && w.towedCars[0]) break;
+    }
+    expect(w.tows[0]?.crew).not.toBeNull();
+    expect(w.tows[0]?.phase).toBe('return');
+
+    const crew = w.tows[0].crew!;
+    w.cars.push({ pos: vec2(crew.x - 16, crew.y), heading: 0, speed: 100, radius: 12 });
+    w.wreckedCars.push(false);
+    w.towedCars.push(false);
+    w.tick(controls(), 1 / 60);
+
+    expect(w.corpses).toHaveLength(1);
+    expect(w.cars).toHaveLength(3);
+    expect(w.wreckedCars[2]).toBe(true);
+    expect(w.towedCars[2]).toBe(false);
   });
 });
 

@@ -1710,7 +1710,10 @@ export class World {
 
   /** Kill the player if a fast vehicle strikes them while on foot. */
   private checkRoadKill(): void {
-    if (this.status !== 'playing' || this.isDriving) return; // safe inside a car
+    if (this.status !== 'playing') return;
+    this.runOverFootPolice();
+    this.runOverServiceCrews();
+    if (this.isDriving) return; // safe inside a car
     const hit = this.runningOver(this.player.pos, this.player.radius);
     if (hit) this.applyPlayerDamage(hit.speed);
   }
@@ -1952,20 +1955,40 @@ export class World {
     return cop.home ?? this.nearestPoliceSpawn(cop.pos);
   }
 
-  /** A speeding player car still runs over officers on foot, even if they are
-   * currently returning to the station after the chase has ended. */
-  private runDownFootPolice(): void {
-    const car = this.drivingCar;
-    if (!car || Math.abs(car.speed) < RUN_OVER_SPEED) return;
+  /** Any lethal vehicle striking an officer on foot turns them into a corpse.
+   * Player-caused impacts still award the higher police kill score and heat. */
+  private runOverFootPolice(): void {
     const survivors: Police[] = [];
     for (const cop of this.police) {
-      if (cop.kind === 'foot' && distance(car.pos, cop.pos) <= car.radius + cop.radius) {
-        this.registerKill('police'); // the player ran them down
-      } else {
+      if (cop.kind !== 'foot') {
         survivors.push(cop);
+        continue;
       }
+      const hit = this.runningOver(cop.pos, cop.radius);
+      if (!hit) {
+        survivors.push(cop);
+        continue;
+      }
+      this.killOnFootNpc(cop.pos, 'police', hit.byPlayer);
     }
     this.police = survivors;
+  }
+
+  /** Any lethal vehicle striking a medic or tow operator on foot kills them,
+   * leaving a corpse and abandoning the service vehicle for later recovery. */
+  private runOverServiceCrews(): void {
+    const crewRadius = 7;
+    const ambCrew = this.ambulance?.crew;
+    if (ambCrew) {
+      const hit = this.runningOver(ambCrew, crewRadius);
+      if (hit) this.killAmbulanceCrew(hit.byPlayer);
+    }
+    for (let i = this.tows.length - 1; i >= 0; i--) {
+      const crew = this.tows[i].crew;
+      if (!crew) continue;
+      const hit = this.runningOver(crew, crewRadius);
+      if (hit) this.killTowCrew(i, hit.byPlayer);
+    }
   }
 
   /** Move a single police unit back to its station. Returns null once it has
@@ -2005,7 +2028,6 @@ export class World {
 
     if (!isWanted(this.wanted)) {
       this.policeBullets = []; // chase over: stop any remaining incoming fire
-      this.runDownFootPolice();
       this.police = this.police.flatMap((cop) => {
         const next = this.returnPoliceToStation(cop, dt);
         return next ? [next] : [];
@@ -2028,8 +2050,6 @@ export class World {
         health: kind === 'car' ? CAR_MAX_HEALTH : undefined,
       });
     }
-
-    this.runDownFootPolice();
 
     // Police pursue the player. Patrol cars follow the road grid (when a city is
     // present); officers on foot follow a flow field through the streets so they
