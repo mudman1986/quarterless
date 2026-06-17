@@ -5,6 +5,7 @@ import {
   type RoadVehicle,
   laneCentersForRoad,
   roadAt,
+  seekChooser,
   wanderChooser,
   stepRoadVehicle,
 } from './roadVehicle';
@@ -22,6 +23,8 @@ export interface TrafficAI {
   /** Cross-travel coordinate of the lane it is committing to during a lane
    * change, or undefined when it is simply keeping its current lane. */
   laneTarget?: number;
+  /** Temporary road target while a panicked driver is trying to get away. */
+  escapeTarget?: Vec2;
 }
 
 /** Cruising speed (px/s) of NPC traffic. */
@@ -97,7 +100,8 @@ export function stepTraffic(
   rng: () => number = Math.random,
 ): { car: Car; ai: TrafficAI } {
   const v: RoadVehicle = { pos: car.pos, heading: car.heading, dir: ai.dir };
-  const next = stepRoadVehicle(v, city, dt, speed, wanderChooser(rng, TRAFFIC_TURN_CHANCE), ai.laneTarget);
+  const chooser = ai.escapeTarget ? seekChooser(ai.escapeTarget) : wanderChooser(rng, TRAFFIC_TURN_CHANCE);
+  const next = stepRoadVehicle(v, city, dt, speed, chooser, ai.laneTarget);
   return {
     car: { ...car, pos: next.pos, heading: next.heading, speed },
     ai: { ...ai, dir: next.dir },

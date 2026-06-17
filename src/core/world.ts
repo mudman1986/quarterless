@@ -18,7 +18,7 @@ import {
   collideCars,
 } from './vehicle';
 import { type OnFootActor, walk } from './entity';
-import { ARRIVE_RADIUS, type Pedestrian, stepPedestrian, wanderTarget } from './pedestrianAI';
+import { ARRIVE_RADIUS, PANIC_RADIUS, type Pedestrian, stepPedestrian, wanderTarget } from './pedestrianAI';
 import { type Police, policeSpeedFor, stepPolice, stepPoliceCar, hasCaught } from './policeAI';
 import {
   type TrafficAI,
@@ -699,6 +699,10 @@ export class World {
       let dir = ai.dir;
       let blocked = ai.blocked ?? 0;
       let speed = TRAFFIC_SPEED;
+      let escapeTarget = ai.escapeTarget;
+      if (escapeTarget && distance(car.pos, escapeTarget) <= this.city.spec.tile) {
+        escapeTarget = undefined;
+      }
       // Drop a finished lane change once the car has reached the chosen lane.
       let laneTarget = ai.laneTarget;
       if (laneTarget !== undefined && Math.abs(laneCross(car.pos, ai.dir) - laneTarget) < 1.5) {
@@ -730,7 +734,7 @@ export class World {
         blocked = 0; // path cleared
       }
 
-      const out = stepTraffic(car, { dir, blocked, laneTarget }, this.city, dt, speed, this.rng);
+      const out = stepTraffic(car, { dir, blocked, laneTarget, escapeTarget }, this.city, dt, speed, this.rng);
       const turned = out.ai.dir.x !== ai.dir.x || out.ai.dir.y !== ai.dir.y;
       this.cars[i] = out.car;
       this.carDrivers[i] = turned ? { ...out.ai, laneTarget: undefined } : out.ai;
@@ -1222,7 +1226,8 @@ export class World {
         speed: 0,
       };
     } else if (!this.corpses.some((c) => distance(c.pos, job) <= AMBULANCE_PICKUP_RADIUS)) {
-      this.ambulance = null; // the body it was sent for is already gone: give up
+      const nextCorpse = this.nearestCorpse(driven.pos);
+      this.ambulance = nextCorpse ? this.redirectServiceVehicle(driven, nextCorpse.pos) : this.departServiceVehicle(driven);
     }
   }
 
@@ -1255,7 +1260,17 @@ export class World {
         if (!this.serviceArrived(tow)) alive.push(tow); // still hauling it off-map
         continue;
       }
-      if (tow.age >= SERVICE_TIMEOUT || this.towedCars[tow.targetCar]) continue; // gave up / gone
+      if (tow.age >= SERVICE_TIMEOUT) continue; // gave up / gone
+      if (this.towedCars[tow.targetCar]) {
+        const claimed = new Set(
+          this.tows
+            .filter((other) => other !== prev && other.phase !== 'depart')
+            .map((other) => other.targetCar),
+        );
+        const nextTarget = this.nearestUntowedWreckFrom(tow.pos, claimed);
+        alive.push(nextTarget === -1 ? this.departTowTruck(tow) : this.redirectTowTruck(tow, nextTarget));
+        continue;
+      }
       if (distance(tow.pos, this.cars[tow.targetCar].pos) <= tow.radius + AMBULANCE_PICKUP_RADIUS) {
         // Pull up beside the wreck and send the operator out on foot to hook it.
         alive.push({
@@ -1273,7 +1288,7 @@ export class World {
     this.tows = alive;
 
     // Dispatch fresh trucks to any wrecks not yet claimed, up to the cap.
-    const claimed = new Set(this.tows.map((t) => t.targetCar));
+    const claimed = new Set(this.tows.filter((t) => t.phase !== 'depart').map((t) => t.targetCar));
     while (this.tows.length < MAX_TOWS) {
       const idx = this.nearestUntowedWreck(claimed);
       if (idx === -1) break;
@@ -1296,6 +1311,63 @@ export class World {
       }
     }
     return best;
+  }
+
+  private nearestUntowedWreckFrom(from: Vec2, claimed: ReadonlySet<number>): number {
+    let best = -1;
+    let bestDist = Infinity;
+    for (let i = 0; i < this.cars.length; i++) {
+      if (!this.wreckedCars[i] || this.towedCars[i] || claimed.has(i) || this.towDispatchCooldowns[i] > 0) continue;
+      const d = distance(from, this.cars[i].pos);
+      if (d < bestDist) {
+        bestDist = d;
+        best = i;
+      }
+    }
+    return best;
+  }
+
+  private nearestCorpse(from: Vec2): Corpse | null {
+    if (this.corpses.length === 0) return null;
+    return this.corpses.reduce((best, corpse) => (distance(corpse.pos, from) < distance(best.pos, from) ? corpse : best));
+  }
+
+  private redirectServiceVehicle<T extends ServiceVehicle>(vehicle: T, job: Vec2): T {
+    const approach = this.nearestRoadPoint(job) ?? job;
+    return {
+      ...vehicle,
+      target: approach,
+      job,
+      phase: 'approach',
+      crew: null,
+      pickupElapsed: 0,
+      age: 0,
+      speed: 0,
+      blocked: 0,
+      laneTarget: undefined,
+    };
+  }
+
+  private departServiceVehicle<T extends ServiceVehicle>(vehicle: T): T {
+    return {
+      ...vehicle,
+      target: this.farthestCornerTile(vehicle.pos),
+      phase: 'depart',
+      crew: null,
+      pickupElapsed: 0,
+      age: 0,
+      speed: 0,
+      blocked: 0,
+      laneTarget: undefined,
+    };
+  }
+
+  private redirectTowTruck(vehicle: TowTruck, targetCar: number): TowTruck {
+    return { ...this.redirectServiceVehicle(vehicle, this.cars[targetCar].pos), targetCar };
+  }
+
+  private departTowTruck(vehicle: TowTruck): TowTruck {
+    return this.departServiceVehicle(vehicle);
   }
 
   /** A fresh service vehicle, spawned outside the closest matching service
@@ -1506,6 +1578,32 @@ export class World {
     return this.cornerTiles().reduce((a, b) => (distance(p, b) > distance(p, a) ? b : a));
   }
 
+  private burningCarThreats(): Vec2[] {
+    const threats: Vec2[] = [];
+    for (let i = 0; i < this.cars.length; i++) {
+      if (this.carIsBurning(i)) threats.push(this.cars[i].pos);
+    }
+    return threats;
+  }
+
+  private nearestThreat(from: Vec2, threats: readonly Vec2[], within = Infinity): Vec2 | null {
+    let best: Vec2 | null = null;
+    let bestDistance = within;
+    for (const threat of threats) {
+      const threatDistance = distance(from, threat);
+      if (threatDistance > bestDistance) continue;
+      best = threat;
+      bestDistance = threatDistance;
+    }
+    return best;
+  }
+
+  private panicTarget(from: Vec2, threat: Vec2, panicDistance = PANIC_RADIUS): Vec2 {
+    const delta = sub(from, threat);
+    const dir = length(delta) > 1e-6 ? normalize(delta) : vec2(1, 0);
+    return add(from, scale(dir, panicDistance));
+  }
+
   /** Positions NPC traffic brakes for: pedestrians and the player when on foot. */
   private yieldObstacles(): Vec2[] {
     const obstacles = this.pedestrians.map((p) => p.pos);
@@ -1641,13 +1739,15 @@ export class World {
   private updatePedestrians(dt: number): void {
     if (this.pedestrians.length === 0) return;
 
-    // A fast-moving player car is a threat pedestrians flee from.
+    // A fast-moving player car and any burning vehicle are threats pedestrians flee from.
     const drivingCar = this.drivingCar;
-    const threats: Vec2[] = drivingCar ? [drivingCar.pos] : [];
+    const playerThreats: Vec2[] = drivingCar ? [drivingCar.pos] : [];
+    const fireThreats = this.burningCarThreats();
     const survivors: Pedestrian[] = [];
 
     for (const ped of this.pedestrians) {
       const returningTo = ped.returningTo;
+      const threats = returningTo ? fireThreats : [...playerThreats, ...fireThreats];
       if (returningTo && distance(ped.pos, returningTo) <= ARRIVE_RADIUS) {
         continue; // reached the building entrance: disappear inside
       }
@@ -1668,7 +1768,7 @@ export class World {
       })();
       const stepped = stepPedestrian(
         { ...ped, target: homeTarget },
-        { threats: returningTo ? [] : threats, bounds: this.bounds, sidewalks: this.sidewalks },
+        { threats, bounds: this.bounds, sidewalks: this.sidewalks },
         dt,
         this.rng,
       );
@@ -1812,6 +1912,7 @@ export class World {
           bulletHits(stepped, car.pos, car.radius),
       );
       if (carIdx !== -1) {
+        this.redirectNpcDriverFromShot(carIdx, stepped.velocity);
         this.damageCar(carIdx, stepped.damage, true); // the player shot it
         continue;
       }
@@ -1829,6 +1930,36 @@ export class World {
     if (this.carHealth[idx] <= 0) this.igniteCar(idx, byPlayer);
   }
 
+  private redirectNpcDriverFromShot(idx: number, travel: Vec2): void {
+    if (!this.city || idx === this.drivingCarIndex || this.carKind(idx) !== 'car') return;
+    const driver = this.carDrivers[idx];
+    if (!driver) return;
+    const escapeDir = length(travel) > 1e-6 ? nearestCardinal(angle(travel)) : driver.dir;
+    const escapeTarget = add(this.cars[idx].pos, scale(escapeDir, this.city.spec.tile * 4));
+    this.carDrivers[idx] = {
+      ...driver,
+      dir: escapeDir,
+      blocked: 0,
+      laneTarget: undefined,
+      escapeTarget,
+    };
+  }
+
+  private evacuateNpcDriver(idx: number): void {
+    if (idx === this.drivingCarIndex || this.carKind(idx) !== 'car') return;
+    const driver = this.carDrivers[idx];
+    if (!driver) return;
+    const car = this.cars[idx];
+    const exitPos = add(car.pos, fromAngle(angle(driver.dir) + Math.PI / 2, car.radius + 10));
+    this.pedestrians.push({
+      pos: exitPos,
+      heading: angle(driver.dir),
+      radius: 7,
+      state: 'wander',
+      target: this.panicTarget(exitPos, car.pos),
+    });
+  }
+
   /** Start a car burning in place; it explodes after a short escape window. */
   private igniteCar(idx: number, byPlayer: boolean): void {
     if (this.wreckedCars[idx] || this.carIsBurning(idx)) return;
@@ -1837,6 +1968,7 @@ export class World {
     this.carBurnTimers[idx] = VEHICLE_BURN_DURATION;
     this.carBurnByPlayer[idx] = byPlayer;
     this.towDispatchCooldowns[idx] = 0;
+    this.evacuateNpcDriver(idx);
     this.carDrivers[idx] = null;
     this.cars[idx] = { ...this.cars[idx], speed: 0 };
   }
@@ -2006,10 +2138,12 @@ export class World {
     }
 
     const speed = policeSpeedFor(cop.kind, 1);
-    const sightBlocked = this.walls.some((wll) => segmentIntersectsRect(cop.pos, home, wll));
-    const homeFlow = sightBlocked && this.navGrid ? computeFlowField(this.navGrid, home) : undefined;
-    const waypoint =
-      sightBlocked && this.navGrid && homeFlow
+    const fireThreat = this.nearestThreat(cop.pos, this.burningCarThreats(), PANIC_RADIUS);
+    const sightBlocked = !fireThreat && this.walls.some((wll) => segmentIntersectsRect(cop.pos, home, wll));
+    const homeFlow = !fireThreat && sightBlocked && this.navGrid ? computeFlowField(this.navGrid, home) : undefined;
+    const waypoint = fireThreat
+      ? this.panicTarget(cop.pos, fireThreat)
+      : sightBlocked && this.navGrid && homeFlow
         ? (flowWaypoint(this.navGrid, homeFlow, cop.pos) ?? home)
         : home;
     const stepped = stepPolice(cop, waypoint, dt, speed);
@@ -2077,9 +2211,11 @@ export class World {
       // buildings. Homing directly closes the final step onto a player loitering
       // on the pavement, whose tile sits off the walkable nav-grid (so a flow-
       // field-only officer is steered to a road tile and never quite reaches).
-      const sightBlocked = this.walls.some((wll) => segmentIntersectsRect(cop.pos, this.focus, wll));
-      const waypoint =
-        sightBlocked && this.navGrid && this.copFlow
+      const fireThreat = this.nearestThreat(cop.pos, this.burningCarThreats(), PANIC_RADIUS);
+      const sightBlocked = !fireThreat && this.walls.some((wll) => segmentIntersectsRect(cop.pos, this.focus, wll));
+      const waypoint = fireThreat
+        ? this.panicTarget(cop.pos, fireThreat)
+        : sightBlocked && this.navGrid && this.copFlow
           ? (flowWaypoint(this.navGrid, this.copFlow, cop.pos) ?? this.focus)
           : this.focus;
       const stepped = stepPolice(cop, waypoint, dt, policeSpeedFor(cop.kind, this.wantedStars));
@@ -2139,6 +2275,14 @@ export class World {
       if (!stepped) continue; // expired
       if (this.walls.some((w) => circleIntersectsRect(stepped.pos, BULLET_RADIUS, w))) {
         continue; // stopped by a building
+      }
+      const carIdx = this.cars.findIndex(
+        (car, i) => !this.wreckedCars[i] && i !== this.drivingCarIndex && bulletHits(stepped, car.pos, car.radius),
+      );
+      if (carIdx !== -1) {
+        this.redirectNpcDriverFromShot(carIdx, stepped.velocity);
+        this.damageCar(carIdx, stepped.damage, false);
+        continue;
       }
       const hitRadius = this.drivingCar?.radius ?? this.player.radius;
       if (this.status === 'playing' && bulletHits(stepped, this.focus, hitRadius)) {

@@ -329,6 +329,26 @@ describe('World NPC traffic', () => {
     for (let i = 0; i < 60; i++) w.tick(controls(), 1 / 60); // no input: must not auto-drive
     expect(w.cars[0].pos).toEqual(posAfterEnter);
   });
+
+  it('makes an NPC driver turn the car away after the vehicle is shot', () => {
+    const city = miniCity();
+    const npcCar: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 };
+    const shooter = vec2(npcCar.pos.x + 120, npcCar.pos.y + 40);
+    const w = new World({
+      player: { pos: shooter, angle: Math.atan2(npcCar.pos.y - shooter.y, npcCar.pos.x - shooter.x), radius: 8 },
+      cars: [npcCar],
+      city,
+      carDrivers: [{ dir: vec2(1, 0) }],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+
+    const startX = w.cars[0].pos.x;
+    for (let i = 0; i < 30; i++) w.tick(controls({ fire: i === 0 }), 1 / 60);
+    for (let i = 0; i < 60; i++) w.tick(controls(), 1 / 60);
+
+    expect(w.cars[0].pos.x).toBeLessThan(startX);
+  });
 });
 
 describe('World busted and respawn', () => {
@@ -1639,6 +1659,48 @@ describe('World car explosions', () => {
     expect(w.isWasted).toBe(false);
   });
 
+  it('makes the driver bail out and flee when a shot-up NPC car catches fire', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    const npcCar: Car = { pos: tileCenter(city.spec, 3, 4), heading: 0, speed: 0, radius: 12 };
+    const w = new World({
+      player: { pos: tileCenter(city.spec, 0, 4), angle: 0, radius: 8 },
+      cars: [npcCar],
+      city,
+      carDrivers: [{ dir: vec2(1, 0) }],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+
+    for (let i = 0; i < 180 && !w.carIsBurning(0); i++) w.tick(controls({ fire: true }), 1 / 60);
+    expect(w.carIsBurning(0)).toBe(true);
+    expect(w.pedestrians).toHaveLength(1);
+
+    const before = distance(w.pedestrians[0].pos, w.cars[0].pos);
+    for (let i = 0; i < 30; i++) w.tick(controls(), 1 / 60);
+    expect(distance(w.pedestrians[0].pos, w.cars[0].pos)).toBeGreaterThan(before);
+  });
+
+  it('makes nearby pedestrians flee from a burning car even when the player is not driving it', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    const firePos = tileCenter(city.spec, 3, 4);
+    const bystander = pedAt(firePos.x + 20, firePos.y);
+    const w = new World({
+      player: player(),
+      cars: [{ pos: firePos, heading: 0, speed: 0, radius: 12 }],
+      city,
+      pedestrians: [bystander],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+
+    (w as unknown as { carBurnTimers: number[] }).carBurnTimers[0] = VEHICLE_BURN_DURATION;
+    const before = distance(w.pedestrians[0].pos, w.cars[0].pos);
+    w.tick(controls(), 1 / 60);
+
+    expect(distance(w.pedestrians[0].pos, w.cars[0].pos)).toBeGreaterThan(before);
+    expect(w.pedestrians[0].state).toBe('flee');
+  });
+
   it('blows up a car that is repeatedly rammed by another car', () => {
     const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
     // A stopped car sits in the lane; an NPC keeps driving into it.
@@ -1812,7 +1874,7 @@ describe('World car explosions', () => {
     const officer = w.police.find((cop) => cop.kind === 'foot' && cop.returningHome);
     expect(officer?.home).toEqual(station!.spawn);
     const before = distance(officer!.pos, station!.spawn);
-    advance(w, 0.5);
+    advance(w, 2);
     const returning = w.police.find((cop) => cop.kind === 'foot' && cop.returningHome);
     expect(returning).toBeDefined();
     expect(distance(returning!.pos, station!.spawn)).toBeLessThan(before);
@@ -1823,6 +1885,35 @@ describe('World car explosions', () => {
     advance(w, VEHICLE_BURN_DURATION + 1);
     expect(w.wreckedCars[idx]).toBe(true);
     expect(w.explosionsTriggered).toBeGreaterThanOrEqual(1);
+  });
+
+  it('makes a returning officer step away from a burning patrol car before heading home', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    const station = city.facilities.find((facility) => facility.kind === 'policeStation');
+    expect(station).toBeDefined();
+    const w = new World({
+      player: { pos: tileCenter(city.spec, 0, 4), angle: 0, radius: 8 },
+      city,
+      police: [{ pos: tileCenter(city.spec, 3, 4), heading: Math.PI, radius: 14, kind: 'car', home: station!.spawn, health: 1 }],
+      bounds: { width: city.width, height: city.height },
+    });
+    w.wanted = addHeat(createWanted(), CRIME_HEAT.hitPolice);
+
+    for (let i = 0; i < 120 && w.police.some((c) => c.kind === 'car'); i++) {
+      w.tick(controls({ fire: true }), 1 / 60);
+    }
+    const officer = w.police.find((cop) => cop.kind === 'foot' && cop.returningHome);
+    const burningIdx = w.cars.findIndex((_, i) => w.carKind(i) === 'police' && w.carIsBurning(i));
+    expect(officer).toBeDefined();
+    expect(burningIdx).toBeGreaterThanOrEqual(0);
+
+    const before = distance(officer!.pos, w.cars[burningIdx].pos);
+    w.tick(controls(), 1 / 60);
+    const after = distance(
+      w.police.find((cop) => cop.kind === 'foot' && cop.returningHome)!.pos,
+      w.cars[burningIdx].pos,
+    );
+    expect(after).toBeGreaterThan(before);
   });
 });
 
@@ -2263,6 +2354,32 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     expect(distance(w.pedestrians[0].pos, hospital.spawn)).toBeLessThan(startDistance);
   });
 
+  it('retargets an ambulance to another body instead of vanishing when its first job disappears', () => {
+    const city = miniCity();
+    const firstBody = tileCenter(city.spec, 2, 4);
+    const secondBody = tileCenter(city.spec, 6, 4);
+    const w = new World({
+      player: player(),
+      city,
+      viewRadius: 4000,
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+
+    w.corpses = [
+      { pos: firstBody, offscreenFor: 0, inFrameFor: AMBULANCE_DISPATCH_DELAY },
+      { pos: secondBody, offscreenFor: 0, inFrameFor: AMBULANCE_DISPATCH_DELAY },
+    ];
+    w.tick(controls(), 0);
+    expect(w.ambulance).not.toBeNull();
+
+    w.corpses = w.corpses.filter((corpse) => corpse.pos.x !== firstBody.x || corpse.pos.y !== firstBody.y);
+    w.tick(controls(), 1 / 60);
+
+    expect(w.ambulance).not.toBeNull();
+    expect(w.ambulance?.job).toEqual(secondBody);
+  });
+
   it('parks the tow truck and sends an operator out to hook the one wreck', () => {
     const city = miniCity();
     const wreck: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 };
@@ -2323,6 +2440,34 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
 
     expect(w.towedCars[0]).toBe(true);
     expect(w.tows[0]?.phase).toBe('return');
+  });
+
+  it('retargets a tow truck to another wreck instead of vanishing when its first job disappears', () => {
+    const city = miniCity();
+    const firstWreck: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 };
+    const secondWreck: Car = { pos: tileCenter(city.spec, 6, 4), heading: 0, speed: 0, radius: 12 };
+    const w = new World({
+      player: player(),
+      cars: [firstWreck, secondWreck],
+      city,
+      carDrivers: [null, null],
+      viewRadius: 4000,
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+    w.wreckedCars[0] = true;
+    w.wreckedCars[1] = true;
+    (w as unknown as { towDispatchCooldowns: number[] }).towDispatchCooldowns[1] = 999;
+
+    w.tick(controls(), 0);
+    expect(w.tows).toHaveLength(1);
+
+    (w as unknown as { towDispatchCooldowns: number[] }).towDispatchCooldowns[1] = 0;
+    w.towedCars[0] = true;
+    w.tick(controls(), 1 / 60);
+
+    expect(w.tows).toHaveLength(1);
+    expect(w.tows[0]?.targetCar).toBe(1);
   });
 
   it('lets the player steal the parked tow truck while the operator is hooking the wreck', () => {
@@ -2447,6 +2592,41 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     expect(w.cars).toHaveLength(3);
     expect(w.wreckedCars[2]).toBe(true);
     expect(w.towedCars[2]).toBe(false);
+  });
+
+  it('makes a medic returning from a burning ambulance run from the fire before heading home', () => {
+    const city = miniCity();
+    const ambulancePos = tileCenter(city.spec, 3, 4);
+    const w = new World({
+      player: { pos: tileCenter(city.spec, 0, 4), angle: 0, radius: 8 },
+      city,
+      bounds: { width: city.width, height: city.height },
+    });
+    w.ambulance = {
+      pos: ambulancePos,
+      heading: 0,
+      radius: 14,
+      dir: vec2(1, 0),
+      target: vec2(ambulancePos.x + 800, ambulancePos.y),
+      phase: 'depart',
+      crew: null,
+      pickupElapsed: 0,
+      age: 0,
+      speed: 0,
+      blocked: 0,
+      health: 1,
+    };
+
+    for (let i = 0; i < 120 && w.ambulance; i++) w.tick(controls({ fire: true }), 1 / 60);
+    const medic = w.pedestrians.find((ped) => ped.uniform === 'medic');
+    const burningIdx = w.cars.findIndex((_, i) => w.carKind(i) === 'ambulance' && w.carIsBurning(i));
+    expect(medic).toBeDefined();
+    expect(burningIdx).toBeGreaterThanOrEqual(0);
+
+    const before = distance(medic!.pos, w.cars[burningIdx].pos);
+    w.tick(controls(), 1 / 60);
+    const after = distance(w.pedestrians.find((ped) => ped.uniform === 'medic')!.pos, w.cars[burningIdx].pos);
+    expect(after).toBeGreaterThan(before);
   });
 });
 
