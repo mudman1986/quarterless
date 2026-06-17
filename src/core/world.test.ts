@@ -242,6 +242,7 @@ describe('World police and wanted level', () => {
       cars: [carAt(20, 0)],
       pedestrians: [pedAt(50, 0)],
       policeSpawns: [vec2(150, 0)],
+      viewRadius: 100,
       bounds: { width: 4000, height: 4000 },
     });
     w.tick(controls({ action: true }), 1 / 60);
@@ -953,24 +954,35 @@ describe('World living world', () => {
   });
 
   it('clears a corpse left out of frame and respawns a pedestrian', () => {
+    const city = miniCity();
+    const corpsePos = tileCenter(city.spec, 2, 4);
+    const hospital = city.facilities
+      .filter((f) => f.kind === 'hospital')
+      .sort((a, b) => distance(a.roadSpawn, corpsePos) - distance(b.roadSpawn, corpsePos))[0];
+    expect(hospital).toBeDefined();
     const w = new World({
       player: player(),
-      pedestrians: [pedAt(40, 0)],
+      city,
       viewRadius: 20, // the body ends up outside the (tiny) view
-      bounds: { width: 1000, height: 1000 },
-      rng: () => 0.5,
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0,
     });
-    for (let i = 0; i < 30 && w.pedestrians.length > 0; i++) w.tick(controls({ fire: true }), 1 / 60);
+    w.corpses = [{ pos: corpsePos, offscreenFor: 0, inFrameFor: 0 }];
     expect(w.corpses).toHaveLength(1);
 
-    for (let i = 0; i < 11 * 60; i++) w.tick(controls(), 1 / 60); // wait out the 10s
+    for (let i = 0; i < 11 * 60 && w.corpses.length > 0; i++) w.tick(controls(), 1 / 60); // wait out the 10s
     expect(w.corpses).toHaveLength(0); // cleared while off-screen
-    expect(w.pedestrians.length).toBeGreaterThanOrEqual(1); // a replacement appeared
+    expect(w.pedestrians).toHaveLength(1);
+    expect(w.pedestrians[0].pos).toEqual(hospital!.spawn);
   });
 
   it('sends an ambulance to collect a body that stays on screen', () => {
     const city = miniCity();
     const spot = tileCenter(city.spec, 2, 4); // on road row 4
+    const hospital = city.facilities
+      .filter((f) => f.kind === 'hospital')
+      .sort((a, b) => distance(a.roadSpawn, spot) - distance(b.roadSpawn, spot))[0];
+    expect(hospital).toBeDefined();
     const victim = pedAt(spot.x, spot.y);
     const runner: Car = { pos: vec2(spot.x - 10, spot.y), heading: 0, speed: 100, radius: 12 };
     const w = new World({
@@ -994,6 +1006,7 @@ describe('World living world', () => {
     }
     expect(dispatched).toBe(true); // an ambulance was sent
     expect(w.corpses).toHaveLength(0); // and it took the body away
+    expect(w.pedestrians.some((ped) => ped.pos.x === hospital!.spawn.x && ped.pos.y === hospital!.spawn.y)).toBe(true);
   });
 
   it('dispatches the ambulance from the nearest hospital building', () => {
@@ -1580,6 +1593,34 @@ describe('World tow truck', () => {
 
     w.tick(controls(), 0); // dispatch without advancing away from the spawn point
     expect(w.tows[0]?.pos).toEqual(towYard!.roadSpawn);
+  });
+
+  it('respawns a picked-up exploded car at the nearest tow yard', () => {
+    const city = miniCity();
+    const wreckPos = tileCenter(city.spec, 2, 4);
+    const towYard = city.facilities
+      .filter((f) => f.kind === 'towYard')
+      .sort((a, b) => distance(a.roadSpawn, wreckPos) - distance(b.roadSpawn, wreckPos))[0];
+    expect(towYard).toBeDefined();
+    const w = new World({
+      player: { pos: tileCenter(city.spec, 0, 4), angle: 0, radius: 8 },
+      cars: [{ pos: wreckPos, heading: 0, speed: 0, radius: 12 }],
+      city,
+      carDrivers: [null],
+      viewRadius: 4000,
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0,
+    });
+
+    for (let i = 0; i < 200 && !w.wreckedCars[0]; i++) w.tick(controls({ fire: true }), 1 / 60);
+    expect(w.wreckedCars[0]).toBe(true);
+
+    for (let i = 0; i < 1500 && !w.towedCars[0]; i++) w.tick(controls(), 1 / 60);
+    expect(w.towedCars[0]).toBe(true);
+
+    w.tick(controls(), 0); // process the respawn without letting the new car drive away
+    expect(w.wreckedCars[0]).toBe(false);
+    expect(w.cars[0].pos).toEqual(towYard!.roadSpawn);
   });
 });
 

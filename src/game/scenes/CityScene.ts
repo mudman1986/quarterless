@@ -1221,7 +1221,7 @@ export class CityScene extends Phaser.Scene {
   private syncSprites(): void {
     this.world.cars.forEach((car, i) => {
       const sprite = this.carSprites[i];
-      if (this.world.towedCars[i]) {
+      if (this.world.towedCars[i] && this.world.wreckedCars[i]) {
         sprite.setVisible(false); // hauled away by a tow truck
         return;
       }
