@@ -632,7 +632,7 @@ export class CityScene extends Phaser.Scene {
     );
 
     this.pedSprites = this.world.pedestrians.map((ped) =>
-      this.add.image(ped.pos.x, ped.pos.y, TEX.pedestrian).setDepth(5),
+      this.add.image(ped.pos.x, ped.pos.y, this.pedTexture(ped)).setDepth(5),
     );
 
     this.ammoSprites = this.world.ammoPickups.map((pickup) => ({
@@ -882,6 +882,12 @@ export class CityScene extends Phaser.Scene {
       this.towBeacons[i]?.setVisible(false);
       this.towWorkerSprites[i]?.setVisible(false);
     }
+  }
+
+  private pedTexture(ped: Pedestrian): string {
+    if (ped.uniform === 'medic') return TEX.medic;
+    if (ped.uniform === 'towWorker') return TEX.towWorker;
+    return TEX.pedestrian;
   }
 
   private setupCamera(): void {
@@ -1253,10 +1259,10 @@ export class CityScene extends Phaser.Scene {
     this.world.pedestrians.forEach((ped, i) => {
       let sprite = this.pedSprites[i];
       if (!sprite) {
-        sprite = this.add.image(ped.pos.x, ped.pos.y, TEX.pedestrian).setDepth(5);
+        sprite = this.add.image(ped.pos.x, ped.pos.y, this.pedTexture(ped)).setDepth(5);
         this.pedSprites[i] = sprite;
       }
-      sprite.setVisible(true).setPosition(ped.pos.x, ped.pos.y);
+      sprite.setTexture(this.pedTexture(ped)).setVisible(true).setPosition(ped.pos.x, ped.pos.y);
     });
     for (let i = this.world.pedestrians.length; i < this.pedSprites.length; i++) {
       this.pedSprites[i].setVisible(false);

@@ -11,6 +11,8 @@ export interface Pedestrian {
   target: Vec2;
   /** Optional fixed destination for a special-case pedestrian returning home. */
   returningTo?: Vec2;
+  /** Optional service uniform used by special pedestrians such as medics. */
+  uniform?: 'medic' | 'towWorker';
 }
 
 export interface PedestrianContext {

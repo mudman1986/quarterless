@@ -613,7 +613,9 @@ export class World {
   private hijackNearbyServiceVehicle(p: Vec2, within: number): boolean {
     const target = this.nearestCrewedServiceVehicle(p, within);
     if (!target) return false;
-    this.sendServiceCrewHome(target.vehicle.pos, target.kind, target.vehicle.pos);
+    const crew = target.vehicle.crew;
+    if (!crew) return false;
+    this.sendServiceCrewHome(crew, target.kind, target.vehicle.pos);
     const idx = this.materializeServiceVehicle(target.vehicle, target.kind, false);
     this.drivingCarIndex = idx;
     this.wanted = addHeat(this.wanted, CRIME_HEAT.hitPedestrian);
@@ -778,6 +780,7 @@ export class World {
       state: 'wander',
       target: home,
       returningTo: home,
+      uniform: kind === 'ambulance' ? 'medic' : 'towWorker',
     });
   }
 

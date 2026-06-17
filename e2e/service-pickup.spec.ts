@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { TEX } from '../src/game/art/textures';
 
 interface Vec2 {
   x: number;
@@ -14,6 +15,7 @@ interface CorpseProbe {
 interface PedestrianProbe {
   pos: Vec2;
   returningTo?: Vec2;
+  uniform?: 'medic' | 'towWorker';
 }
 
 interface CarProbe {
@@ -70,6 +72,7 @@ interface GameProbe {
   scene: {
     getScene(key: string): {
       world: RuntimeWorld;
+      pedSprites: Array<{ texture: { key: string } }>;
     };
   };
 }
@@ -277,7 +280,8 @@ test('the player can steal the parked ambulance during the loading window', asyn
   await page.waitForTimeout(500);
   const state = await page.evaluate(() => {
     const g = (window as unknown as { __game: GameProbe }).__game;
-    const w = g.scene.getScene('City').world;
+    const scene = g.scene.getScene('City');
+    const w = scene.world;
     return {
       corpses: w.corpses.length,
       hasAmbulance: w.ambulance !== null,
@@ -286,6 +290,8 @@ test('the player can steal the parked ambulance during the loading window', asyn
       police: w.police.length,
       returningCrew: w.pedestrians.length,
       crewHeadingHome: w.pedestrians[0]?.returningTo !== undefined,
+      crewUniform: w.pedestrians[0]?.uniform ?? null,
+      crewTexture: scene.pedSprites[0]?.texture.key ?? null,
     };
   });
 
@@ -296,6 +302,8 @@ test('the player can steal the parked ambulance during the loading window', asyn
   expect(state.police).toBeGreaterThan(0);
   expect(state.returningCrew).toBe(1);
   expect(state.crewHeadingHome).toBe(true);
+  expect(state.crewUniform).toBe('medic');
+  expect(state.crewTexture).toBe(TEX.medic);
 });
 
 test('the player can steal the parked tow truck during the loading window', async ({ page }) => {
@@ -314,7 +322,8 @@ test('the player can steal the parked tow truck during the loading window', asyn
   await page.waitForTimeout(500);
   const state = await page.evaluate(() => {
     const g = (window as unknown as { __game: GameProbe }).__game;
-    const w = g.scene.getScene('City').world;
+    const scene = g.scene.getScene('City');
+    const w = scene.world;
     return {
       tows: w.tows.length,
       towed: w.towedCars[0],
@@ -323,6 +332,8 @@ test('the player can steal the parked tow truck during the loading window', asyn
       police: w.police.length,
       returningCrew: w.pedestrians.length,
       crewHeadingHome: w.pedestrians[0]?.returningTo !== undefined,
+      crewUniform: w.pedestrians[0]?.uniform ?? null,
+      crewTexture: scene.pedSprites[0]?.texture.key ?? null,
     };
   });
 
@@ -333,4 +344,6 @@ test('the player can steal the parked tow truck during the loading window', asyn
   expect(state.police).toBeGreaterThan(0);
   expect(state.returningCrew).toBe(1);
   expect(state.crewHeadingHome).toBe(true);
+  expect(state.crewUniform).toBe('towWorker');
+  expect(state.crewTexture).toBe(TEX.towWorker);
 });

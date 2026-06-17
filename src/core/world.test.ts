@@ -2000,32 +2000,45 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
 
   it('lets the player steal the parked ambulance while the medic is loading the body', () => {
     const city = miniCity();
-    const spot = tileCenter(city.spec, 2, 4);
-    const runner: Car = { pos: vec2(spot.x - 10, spot.y), heading: 0, speed: 100, radius: 12 };
+    const parkedPos = tileCenter(city.spec, 3, 4);
+    const bodyPos = tileCenter(city.spec, 2, 4);
     const policeSpawns = city.facilities.filter((f) => f.kind === 'policeStation').map((f) => f.spawn);
     const w = new World({
       player: player(),
-      cars: [runner],
+      cars: [{ pos: vec2(4000, 4000), heading: 0, speed: 0, radius: 12 }],
       city,
       carDrivers: [null],
       policeSpawns,
-      pedestrians: [pedAt(spot.x, spot.y)],
       viewRadius: 4000,
       bounds: { width: city.width, height: city.height },
       rng: () => 0.9,
     });
 
-    w.tick(controls(), 1 / 60);
-    advanceUntilAmbulanceLoading(w);
+    w.corpses = [{ pos: bodyPos, offscreenFor: 0, inFrameFor: 0 }];
+    w.ambulance = {
+      pos: parkedPos,
+      heading: 0,
+      radius: 14,
+      dir: vec2(1, 0),
+      target: bodyPos,
+      phase: 'collect',
+      crew: bodyPos,
+      pickupElapsed: 1,
+      age: 0,
+      speed: 0,
+      blocked: 0,
+      health: 60,
+    };
 
     const parked = w.ambulance!;
+    const medicPos = parked.crew!;
     const hospital = city.facilities
       .filter((f) => f.kind === 'hospital')
       .reduce((best, facility) =>
         distance(facility.spawn, parked.pos) < distance(best.spawn, parked.pos) ? facility : best,
       );
     w.player = { ...w.player, pos: parked.pos, angle: parked.heading };
-    w.tick(controls({ action: true }), 1 / 60);
+    w.tick(controls({ action: true }), 0);
 
     expect(w.isDriving).toBe(true);
     expect(w.ambulance).toBeNull();
@@ -2034,6 +2047,8 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     expect(w.wantedStars).toBeGreaterThan(0);
     expect(w.police.length).toBeGreaterThan(0);
     expect(w.pedestrians).toHaveLength(1);
+    expect(w.pedestrians[0].pos).toEqual(medicPos);
+    expect((w.pedestrians[0] as { uniform?: string }).uniform).toBe('medic');
 
     const startDistance = distance(w.pedestrians[0].pos, hospital.spawn);
     for (let i = 0; i < 120; i++) w.tick(controls(), 1 / 60);
@@ -2105,6 +2120,7 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
   it('lets the player steal the parked tow truck while the operator is hooking the wreck', () => {
     const city = miniCity();
     const wreck: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 };
+    const parkedPos = tileCenter(city.spec, 3, 4);
     const policeSpawns = city.facilities.filter((f) => f.kind === 'policeStation').map((f) => f.spawn);
     const w = new World({
       player: player(),
@@ -2116,17 +2132,33 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
       bounds: { width: city.width, height: city.height },
     });
     w.wreckedCars[0] = true;
-
-    advanceUntilTowLoading(w);
+    w.tows = [
+      {
+        pos: parkedPos,
+        heading: 0,
+        radius: 14,
+        dir: vec2(1, 0),
+        target: wreck.pos,
+        targetCar: 0,
+        phase: 'collect',
+        crew: wreck.pos,
+        pickupElapsed: 1,
+        age: 0,
+        speed: 0,
+        blocked: 0,
+        health: 60,
+      },
+    ];
 
     const parked = w.tows[0]!;
+    const operatorPos = parked.crew!;
     const towYard = city.facilities
       .filter((f) => f.kind === 'towYard')
       .reduce((best, facility) =>
         distance(facility.spawn, parked.pos) < distance(best.spawn, parked.pos) ? facility : best,
       );
     w.player = { ...w.player, pos: parked.pos, angle: parked.heading };
-    w.tick(controls({ action: true }), 1 / 60);
+    w.tick(controls({ action: true }), 0);
 
     expect(w.isDriving).toBe(true);
     expect(w.tows).toHaveLength(0);
@@ -2135,6 +2167,8 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     expect(w.wantedStars).toBeGreaterThan(0);
     expect(w.police.length).toBeGreaterThan(0);
     expect(w.pedestrians).toHaveLength(1);
+    expect(distance(w.pedestrians[0].pos, operatorPos)).toBeLessThan(distance(w.pedestrians[0].pos, parked.pos));
+    expect((w.pedestrians[0] as { uniform?: string }).uniform).toBe('towWorker');
 
     const startDistance = distance(w.pedestrians[0].pos, towYard.spawn);
     for (let i = 0; i < 120; i++) w.tick(controls(), 1 / 60);
