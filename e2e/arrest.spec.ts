@@ -67,7 +67,7 @@ async function seedStoppedPlayerCarUnderFootCop(page: Page): Promise<void> {
 
     w.status = 'playing';
     w.health.current = w.health.max;
-    w.wanted.heat = 1;
+    w.wanted.heat = 250;
     w.pedestrians = [];
     w.police = [];
     w.bullets = [];
