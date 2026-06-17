@@ -24,6 +24,7 @@ const mission = () =>
 const ctx = (partial: Partial<MissionContext> = {}): MissionContext => ({
   playerPos: vec2(0, 0),
   kills: 0,
+  targetKills: 0,
   collected: 0,
   elapsed: 0,
   wantedStars: 0,
@@ -33,6 +34,7 @@ const ctx = (partial: Partial<MissionContext> = {}): MissionContext => ({
 /** Build a baseline snapshot with sensible defaults. */
 const base = (partial: Partial<MissionBaseline> = {}): MissionBaseline => ({
   kills: 0,
+  targetKills: 0,
   collected: 0,
   elapsed: 0,
   ...partial,
@@ -80,6 +82,18 @@ describe('updateMission — eliminate objective', () => {
     expect(isComplete(m)).toBe(false); // only 1 of 2 required
     m = updateMission(m, ctx({ playerPos: vec2(100, 0), kills: 7 }), started);
     expect(isComplete(m)).toBe(true);
+  });
+
+  it('counts only designated target kills when the objective requires actual targets', () => {
+    const targetMission = () =>
+      createMission({
+        id: 't',
+        title: 'Takedown',
+        objectives: [{ kind: 'eliminate', description: 'Take down 2 marked targets', count: 2, targetsOnly: true }],
+      });
+
+    expect(isComplete(updateMission(targetMission(), ctx({ kills: 9, targetKills: 1 }), base()))).toBe(false);
+    expect(isComplete(updateMission(targetMission(), ctx({ kills: 9, targetKills: 2 }), base()))).toBe(true);
   });
 });
 
@@ -150,7 +164,7 @@ describe('objectiveProgress', () => {
 
   it('counts eliminations relative to the objective baseline', () => {
     const obj: Objective = { kind: 'eliminate', description: 'Take out 8', count: 8 };
-    expect(objectiveProgress(obj, ctx({ kills: 5 }), { kills: 2, collected: 0, elapsed: 0 })).toEqual(
+    expect(objectiveProgress(obj, ctx({ kills: 5 }), { kills: 2, targetKills: 0, collected: 0, elapsed: 0 })).toEqual(
       { current: 3, goal: 8 },
     );
   });

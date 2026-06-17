@@ -22,11 +22,12 @@ const mission = (id: string, reward = 100) =>
 const at = (pos = vec2(0, 0)): MissionContext => ({
   playerPos: pos,
   kills: 0,
+  targetKills: 0,
   collected: 0,
   elapsed: 0,
   wantedStars: 0,
 });
-const fresh = { kills: 0, collected: 0, elapsed: 0 };
+const fresh = { kills: 0, targetKills: 0, collected: 0, elapsed: 0 };
 
 describe('createCampaign', () => {
   it('starts on the first mission', () => {

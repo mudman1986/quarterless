@@ -429,8 +429,9 @@ export class CityScene extends Phaser.Scene {
         objectives: [
           {
             kind: 'eliminate',
-            description: 'Take down 6 targets — run them over or shoot (F)',
+            description: 'Take down 6 marked targets — run them over or shoot (F)',
             count: 6,
+            targetsOnly: true,
           },
         ],
         reward: 4000,
@@ -1315,7 +1316,15 @@ export class CityScene extends Phaser.Scene {
         sprite = this.add.image(ped.pos.x, ped.pos.y, this.pedTexture(ped)).setDepth(5);
         this.pedSprites[i] = sprite;
       }
-      sprite.setTexture(this.pedTexture(ped)).setVisible(true).setPosition(ped.pos.x, ped.pos.y);
+      sprite
+        .setTexture(this.pedTexture(ped))
+        .setVisible(true)
+        .setPosition(ped.pos.x, ped.pos.y);
+      if (ped.missionTarget) {
+        sprite.setTint(COLORS.marker);
+      } else {
+        sprite.clearTint();
+      }
     });
     for (let i = this.world.pedestrians.length; i < this.pedSprites.length; i++) {
       this.pedSprites[i].setVisible(false);

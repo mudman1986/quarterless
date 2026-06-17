@@ -348,8 +348,10 @@ export class World {
   tows: TowTruck[] = [];
   /** Money/points for this run, with a high score. */
   score: Score;
-  /** Targets the player has eliminated this run. */
+  /** Total on-foot NPCs / vehicles the player has eliminated this run. */
   kills = 0;
+  /** Designated mission targets the player has eliminated this run. */
+  targetKills = 0;
   /** Ammo (and other) pickups the player has collected this run. */
   collected = 0;
   /** Ammo pickups still on the map. */
@@ -401,7 +403,7 @@ export class World {
   /** Per-pair cooldown so one stuck overlap is not treated as dozens of fresh crashes. */
   private vehicleImpactCooldowns = new Map<string, number>();
   /** The counters captured when the current mission objective began. */
-  private objectiveBaseline: MissionBaseline = { kills: 0, collected: 0, elapsed: 0 };
+  private objectiveBaseline: MissionBaseline = { kills: 0, targetKills: 0, collected: 0, elapsed: 0 };
   /** Seconds elapsed in the current run (drives survive objectives). */
   private elapsed = 0;
 
@@ -447,6 +449,7 @@ export class World {
       this.campaign = missions.length > 0 ? createCampaign(missions) : null;
     }
     this.ammoPickups = opts.ammoPickups ?? [];
+    this.syncMissionTargets();
   }
 
   get isDriving(): boolean {
@@ -826,9 +829,14 @@ export class World {
   /** Resolve an on-foot NPC death into a body left in the world, crediting the
    * player only when they caused it. Shared by pedestrians, foot police, and
    * any service crew member currently out of their vehicle. */
-  private killOnFootNpc(pos: Vec2, kind: 'pedestrian' | 'police', byPlayer: boolean): void {
+  private killOnFootNpc(
+    pos: Vec2,
+    kind: 'pedestrian' | 'police',
+    byPlayer: boolean,
+    missionTarget = false,
+  ): void {
     this.addCorpse(pos);
-    if (byPlayer) this.registerKill(kind);
+    if (byPlayer) this.registerKill(kind, missionTarget);
   }
 
   /** Kill the ambulance medic currently out on foot, aborting the call. */
@@ -1087,7 +1095,7 @@ export class World {
 
     this.pedestrians = this.pedestrians.filter((p) => {
       if (distance(center, p.pos) > EXPLOSION_RADIUS + p.radius) return true;
-      this.killOnFootNpc(p.pos, 'pedestrian', byPlayer);
+      this.killOnFootNpc(p.pos, 'pedestrian', byPlayer, !!p.missionTarget);
       return false;
     });
     this.police = this.police.filter((cop) => {
@@ -1483,6 +1491,9 @@ export class World {
           speed = 0; // hold short of them
         }
       }
+    } else if (this.redLightAhead(v, dir)) {
+      speed = 0; // hold at the red light without counting as blocked
+      blocked = 0;
     } else {
       blocked = 0;
     }
@@ -1755,7 +1766,7 @@ export class World {
       // player is at the wheel do they earn heat for it.
       const hit = this.runningOver(ped.pos, ped.radius);
       if (hit) {
-        if (hit.byPlayer) this.registerKill('pedestrian'); // the player ran them down
+        if (hit.byPlayer) this.registerKill('pedestrian', !!ped.missionTarget); // the player ran them down
         this.addCorpse(ped.pos); // leave a body in the road
         continue; // pedestrian is run over and removed
       }
@@ -1868,7 +1879,8 @@ export class World {
       }
       const pedIdx = this.pedestrians.findIndex((p) => bulletHits(stepped, p.pos, p.radius));
       if (pedIdx !== -1) {
-        this.killOnFootNpc(this.pedestrians[pedIdx].pos, 'pedestrian', true);
+        const ped = this.pedestrians[pedIdx];
+        this.killOnFootNpc(ped.pos, 'pedestrian', true, !!ped.missionTarget);
         this.pedestrians.splice(pedIdx, 1);
         continue;
       }
@@ -2018,14 +2030,66 @@ export class World {
   }
 
   /** Record an elimination by the player: counts a kill, scores, and adds heat. */
-  private registerKill(kind: 'pedestrian' | 'police'): void {
+  private registerKill(kind: 'pedestrian' | 'police', missionTarget = false): void {
     this.kills += 1;
+    if (missionTarget) this.targetKills += 1;
     if (kind === 'pedestrian') {
       this.score = award(this.score, SCORE_PER_PEDESTRIAN);
       this.wanted = addHeat(this.wanted, CRIME_HEAT.hitPedestrian);
     } else {
       this.score = award(this.score, SCORE_PER_POLICE);
       this.wanted = addHeat(this.wanted, CRIME_HEAT.hitPolice);
+    }
+  }
+
+  private clearMissionTargets(): void {
+    for (let i = 0; i < this.pedestrians.length; i++) {
+      const ped = this.pedestrians[i];
+      if (!ped.missionTarget) continue;
+      this.pedestrians[i] = { ...ped, missionTarget: false };
+    }
+  }
+
+  private isEligibleMissionTarget(ped: Pedestrian): boolean {
+    return !ped.returningTo && !ped.uniform;
+  }
+
+  private syncMissionTargets(): void {
+    const obj = this.missionObjective;
+    if (obj?.kind !== 'eliminate' || !obj.targetsOnly) {
+      this.clearMissionTargets();
+      return;
+    }
+
+    const progress = Math.max(0, this.targetKills - this.objectiveBaseline.targetKills);
+    const remaining = Math.max(0, obj.count - progress);
+    const targeted: number[] = [];
+    const candidates: number[] = [];
+
+    for (let i = 0; i < this.pedestrians.length; i++) {
+      const ped = this.pedestrians[i];
+      if (!this.isEligibleMissionTarget(ped)) {
+        if (ped.missionTarget) this.pedestrians[i] = { ...ped, missionTarget: false };
+        continue;
+      }
+      if (ped.missionTarget) {
+        targeted.push(i);
+      } else {
+        candidates.push(i);
+      }
+    }
+
+    for (let i = remaining; i < targeted.length; i++) {
+      const idx = targeted[i];
+      this.pedestrians[idx] = { ...this.pedestrians[idx], missionTarget: false };
+    }
+
+    const need = Math.max(0, remaining - Math.min(targeted.length, remaining));
+    const pool = candidates.slice();
+    for (let i = 0; i < need && pool.length > 0; i++) {
+      const pick = Math.floor(this.rng() * pool.length);
+      const idx = pool.splice(pick, 1)[0];
+      this.pedestrians[idx] = { ...this.pedestrians[idx], missionTarget: true };
     }
   }
 
@@ -2048,6 +2112,7 @@ export class World {
       this.campaign = this.pickNextCampaign();
       this.objectiveBaseline = this.baselineNow();
     }
+    this.syncMissionTargets();
   }
 
   /** Snapshot of world facts the mission system reads to evaluate objectives. */
@@ -2055,6 +2120,7 @@ export class World {
     return {
       playerPos: this.focus,
       kills: this.kills,
+      targetKills: this.targetKills,
       collected: this.collected,
       elapsed: this.elapsed,
       wantedStars: this.wantedStars,
@@ -2073,7 +2139,12 @@ export class World {
 
   /** Snapshot the progress counters for measuring the next objective. */
   private baselineNow(): MissionBaseline {
-    return { kills: this.kills, collected: this.collected, elapsed: this.elapsed };
+    return {
+      kills: this.kills,
+      targetKills: this.targetKills,
+      collected: this.collected,
+      elapsed: this.elapsed,
+    };
   }
 
   /** Police station nearest a point, or null on atypical maps without any. */

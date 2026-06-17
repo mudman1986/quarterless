@@ -9,6 +9,8 @@ export interface Pedestrian {
   state: 'wander' | 'flee';
   /** Current point the pedestrian is walking toward while wandering. */
   target: Vec2;
+  /** Whether this pedestrian is currently a designated mission target. */
+  missionTarget?: boolean;
   /** Optional fixed destination for a special-case pedestrian returning home. */
   returningTo?: Vec2;
   /** Optional service uniform used by special pedestrians such as medics. */

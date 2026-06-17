@@ -1939,12 +1939,49 @@ describe('World tow truck', () => {
     expect(w.wreckedCars[0]).toBe(true);
 
     let dispatched = false;
-    for (let i = 0; i < 1200 && !w.towedCars[0]; i++) {
+    for (let i = 0; i < 1800 && !w.towedCars[0]; i++) {
       w.tick(controls(), 1 / 60);
       if (w.tows.length > 0) dispatched = true;
     }
     expect(dispatched).toBe(true); // a tow truck arrived
     expect(w.towedCars[0]).toBe(true); // and hauled the wreck away
+  });
+
+  it('holds a tow truck at a red light instead of driving into the intersection', () => {
+    const city = miniCity();
+    const wreck: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 };
+    const w = new World({
+      player: player(),
+      cars: [wreck],
+      city,
+      carDrivers: [null],
+      viewRadius: 4000,
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+    w.wreckedCars[0] = true;
+    w.tick(controls(), 0);
+    expect(w.tows).toHaveLength(1);
+
+    w.tows[0] = {
+      ...w.tows[0]!,
+      pos: tileCenter(city.spec, 4, 2),
+      heading: Math.PI / 2,
+      dir: vec2(0, 1),
+      target: tileCenter(city.spec, 4, 6),
+      phase: 'approach',
+      crew: null,
+      speed: 0,
+      blocked: 0,
+    };
+    w.lights = createTrafficLights(0); // horizontal green, so this southbound tow faces red
+
+    const intersectionY = tileCenter(city.spec, 4, 4).y - city.spec.tile / 2;
+    const ticks = Math.floor((LIGHT_GREEN - 1) * 60);
+    for (let i = 0; i < ticks; i++) {
+      w.tick(controls(), 1 / 60);
+      expect(w.tows[0]?.pos.y).toBeLessThan(intersectionY);
+    }
   });
 
   it('clears several wrecks at once with multiple tow trucks', () => {
@@ -2042,7 +2079,7 @@ describe('World service vehicles treat actors as solid', () => {
     w.wreckedCars[0] = true;
 
     let yielded = false;
-    for (let i = 0; i < 1200 && !w.towedCars[0]; i++) {
+    for (let i = 0; i < 1800 && !w.towedCars[0]; i++) {
       w.tick(controls(), 1 / 60);
       if (w.tows[0]?.speed === 0) yielded = true; // braked to a halt for the player
     }
@@ -2657,6 +2694,43 @@ describe('World mission', () => {
     expect(w.missionComplete).toBe(true);
     // Reward plus the score for the pedestrian eliminated.
     expect(w.score.current).toBe(500 + SCORE_PER_PEDESTRIAN);
+  });
+
+  it('marks actual pedestrians as takedown targets and ignores bystander kills', () => {
+    const w = new World({
+      player: player(),
+      pedestrians: [pedAt(40, 0), pedAt(40, 90), pedAt(40, 180)],
+      bounds: { width: 1000, height: 1000 },
+      rng: () => 0,
+      mission: createMission({
+        id: 'm-targets',
+        title: 'Takedown',
+        objectives: [{ kind: 'eliminate', description: 'Take out 2 marked targets', count: 2, targetsOnly: true }],
+        reward: 500,
+      }),
+    });
+
+    expect(w.pedestrians.filter((ped) => ped.missionTarget).length).toBe(2);
+    const bystander = w.pedestrians.find((ped) => !ped.missionTarget);
+    expect(bystander).toBeDefined();
+
+    w.player = { ...w.player, pos: vec2(bystander!.pos.x - 30, bystander!.pos.y), angle: 0 };
+    for (let i = 0; i < 30 && w.kills < 1; i++) {
+      w.tick(controls({ fire: true }), 1 / 60);
+    }
+
+    expect(w.kills).toBe(1);
+    expect(w.missionComplete).toBe(false);
+    expect(w.missionProgress).toEqual({ current: 0, goal: 2 });
+
+    const target = w.pedestrians.find((ped) => ped.missionTarget);
+    expect(target).toBeDefined();
+    w.player = { ...w.player, pos: vec2(target!.pos.x - 30, target!.pos.y), angle: 0 };
+    for (let i = 0; i < 30 && (w.missionProgress?.current ?? 0) < 1; i++) {
+      w.tick(controls({ fire: true }), 1 / 60);
+    }
+
+    expect(w.missionProgress).toEqual({ current: 1, goal: 2 });
   });
 
   it('rolls through a multi-mission campaign one mission at a time', () => {

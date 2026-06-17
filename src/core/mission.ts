@@ -14,6 +14,8 @@ export interface EliminateObjective {
   kind: 'eliminate';
   description: string;
   count: number;
+  /** When true, only designated mission targets count toward the objective. */
+  targetsOnly?: boolean;
 }
 
 /** Collect a number of pickups. */
@@ -63,6 +65,8 @@ export interface MissionContext {
   playerPos: Vec2;
   /** Total eliminations so far this run. */
   kills: number;
+  /** Total designated mission targets eliminated so far this run. */
+  targetKills: number;
   /** Total pickups collected so far this run. */
   collected: number;
   /** Total seconds elapsed so far this run. */
@@ -77,8 +81,17 @@ export interface MissionContext {
  */
 export interface MissionBaseline {
   kills: number;
+  targetKills: number;
   collected: number;
   elapsed: number;
+}
+
+function eliminateProgress(
+  obj: EliminateObjective,
+  ctx: MissionContext,
+  base: MissionBaseline,
+): number {
+  return obj.targetsOnly ? ctx.targetKills - base.targetKills : ctx.kills - base.kills;
 }
 
 export interface MissionSpec {
@@ -109,7 +122,7 @@ function isObjectiveMet(obj: Objective, ctx: MissionContext, base: MissionBaseli
     case 'reach':
       return distance(ctx.playerPos, obj.target) <= obj.radius;
     case 'eliminate':
-      return ctx.kills - base.kills >= obj.count;
+      return eliminateProgress(obj, ctx, base) >= obj.count;
     case 'collect':
       return ctx.collected - base.collected >= obj.count;
     case 'survive':
@@ -161,7 +174,7 @@ export function objectiveProgress(
     case 'reach':
       return null;
     case 'eliminate':
-      return { current: clamp(ctx.kills - base.kills, 0, obj.count), goal: obj.count };
+      return { current: clamp(eliminateProgress(obj, ctx, base), 0, obj.count), goal: obj.count };
     case 'collect':
       return { current: clamp(ctx.collected - base.collected, 0, obj.count), goal: obj.count };
     case 'survive':
