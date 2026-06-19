@@ -22,8 +22,16 @@ import { vec2, type Vec2 } from '../../core/vector';
 import { uiScreenToWorld, uiCounterScale, uiAnchorOnScreen } from '../../core/hudLayout';
 import { greenAxis } from '../../core/trafficLight';
 import { KeyboardInput } from '../input/KeyboardInput';
+import { TouchInput } from '../input/TouchInput';
+import {
+  mergeControls,
+  touchDeviceLikely,
+  touchLayoutForViewport,
+  type TouchLayout,
+} from '../input/touchControls';
 import { Sound } from '../audio/Sound';
 import { createGameTextures, TEX } from '../art/textures';
+import { NO_CONTROLS } from '../../core/types';
 
 const COLORS = {
   road: 0x2b2b30,
@@ -121,6 +129,12 @@ const TOW_BEACON_FWD = 9.5;
 const AMB_BEACON_BLINK_MS = 220;
 const AMB_BEACON_FWD = 6.5;
 const AMB_BEACON_SIDE = 3.5;
+const TOUCH_ALPHA = 0.88;
+const TOUCH_STICK_FILL = 0x0f172a;
+const TOUCH_STICK_STROKE = 0xe2e8f0;
+const TOUCH_ACTION = 0xf59e0b;
+const TOUCH_FIRE = 0xef4444;
+const TOUCH_CONFIRM = 0x22d3ee;
 
 /**
  * Renders the core `World` simulation with Phaser. The scene owns no game
@@ -131,6 +145,9 @@ export class CityScene extends Phaser.Scene {
   private city!: City;
   private world!: World;
   private input_!: KeyboardInput;
+  private touchInput_!: TouchInput;
+  private touchEnabled = false;
+  private touchLayout: TouchLayout | null = null;
 
   private playerSprite!: Phaser.GameObjects.Image;
   private carSprites: Phaser.GameObjects.Image[] = [];
@@ -163,6 +180,8 @@ export class CityScene extends Phaser.Scene {
   private hud!: Phaser.GameObjects.Text;
   private bustedText!: Phaser.GameObjects.Text;
   private banner!: Phaser.GameObjects.Text;
+  private touchControlsGfx!: Phaser.GameObjects.Graphics;
+  private prevTouchConfirm = false;
 
   // Minimap.
   private minimapBg!: Phaser.GameObjects.Image;
@@ -226,6 +245,7 @@ export class CityScene extends Phaser.Scene {
     this.prevMissionComplete = false;
     this.prevMissionId = null;
     this.prevObjective = '';
+    this.prevTouchConfirm = false;
 
     this.city = buildCity(CITY_SPEC);
     createGameTextures(this);
@@ -255,11 +275,16 @@ export class CityScene extends Phaser.Scene {
     this.createEntitySprites();
     this.setupCamera();
     this.createHud();
+    this.createTouchControls();
     this.hud.setText(this.hudText());
     this.createMinimap();
     this.layoutHud();
 
     this.input_ = new KeyboardInput(this.input.keyboard!);
+    this.touchInput_ = new TouchInput(this.input);
+    this.touchEnabled = touchDeviceLikely();
+    this.touchInput_.setEnabled(this.touchEnabled);
+    if (this.touchLayout) this.touchInput_.setLayout(this.touchLayout);
     // Menu keys: P pauses/resumes, N starts a fresh game.
     const kb = this.input.keyboard!;
     this.pauseKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.P);
@@ -267,6 +292,18 @@ export class CityScene extends Phaser.Scene {
     this.paused = false;
     // Browsers block audio until a user gesture: unlock on the first key press.
     this.input.keyboard?.once('keydown', () => this.sfx.resume());
+    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      this.sfx.resume();
+      const pointerType = (pointer.event as PointerEvent | undefined)?.pointerType;
+      if (!this.touchEnabled && pointerType === 'touch') {
+        this.touchEnabled = true;
+        this.touchInput_.setEnabled(true);
+        this.syncTouchControls();
+      }
+    });
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.touchInput_?.destroy();
+    });
   }
 
   /** A lively mix of cars parked in the marked bays and cars driven by NPC traffic. */
@@ -1008,6 +1045,10 @@ export class CityScene extends Phaser.Scene {
       this.minimapBg.setPosition(anchor.x, anchor.y).setScale(counter);
       this.minimapDots.setPosition(anchor.x, anchor.y).setScale(counter);
     }
+
+    this.touchLayout = touchLayoutForViewport(width, height);
+    this.touchInput_?.setLayout(this.touchLayout);
+    this.syncTouchControls();
   }
 
   private createHud(): void {
@@ -1077,6 +1118,12 @@ export class CityScene extends Phaser.Scene {
       .rectangle(this.scale.width / 2, this.scale.height / 2, this.scale.width * 3, this.scale.height * 3, 0x0a0f24, 0)
       .setScrollFactor(0)
       .setDepth(900);
+  }
+
+  private createTouchControls(): void {
+    this.touchControlsGfx = this.add.graphics().setScrollFactor(0).setDepth(1700);
+    const { width, height } = this.scale.gameSize;
+    this.touchLayout = touchLayoutForViewport(width, height);
   }
 
   /** Build the corner minimap: a static city backdrop plus a live dot overlay. */
@@ -1152,16 +1199,31 @@ export class CityScene extends Phaser.Scene {
   }
 
   update(_time: number, deltaMs: number): void {
+    const touchSnapshot = this.touchInput_?.snapshot();
+    const touchConfirmPressed =
+      !!touchSnapshot && this.touchEnabled && touchSnapshot.confirmPressed && !this.prevTouchConfirm;
+    this.syncTouchControls(touchSnapshot);
     // New game from scratch, available at any time.
     if (Phaser.Input.Keyboard.JustDown(this.newGameKey)) {
+      this.prevTouchConfirm = !!touchSnapshot?.confirmPressed;
       this.startNewGame();
+      return;
+    }
+    if (touchConfirmPressed && this.world.status === 'playing') {
+      this.prevTouchConfirm = !!touchSnapshot?.confirmPressed;
+      this.togglePause();
       return;
     }
     // Toggle pause; while paused the simulation is frozen.
     if (Phaser.Input.Keyboard.JustDown(this.pauseKey)) this.togglePause();
-    if (this.paused) return;
+    if (this.paused) {
+      this.prevTouchConfirm = !!touchSnapshot?.confirmPressed;
+      return;
+    }
 
-    const controls = this.input_.read();
+    const keyboard = this.input_.read();
+    const touch = this.touchEnabled && touchSnapshot ? touchSnapshot.controls : NO_CONTROLS;
+    const controls = mergeControls(keyboard, touch);
     const dt = deltaMs / 1000;
 
     this.accumulator += dt;
@@ -1183,6 +1245,8 @@ export class CityScene extends Phaser.Scene {
       this.announceRemaining -= dt;
       if (this.announceRemaining <= 0) this.banner.setVisible(false);
     }
+
+    this.prevTouchConfirm = !!touchSnapshot?.confirmPressed;
   }
 
   /** Advance the day/night cycle and dim the world toward midnight, while the
@@ -1218,6 +1282,7 @@ export class CityScene extends Phaser.Scene {
   private togglePause(): void {
     this.paused = !this.paused;
     this.pauseMenu.setVisible(this.paused);
+    this.syncTouchControls();
   }
 
   /** Restart the scene, beginning a brand-new game (the high score persists). */
@@ -1422,12 +1487,106 @@ export class CityScene extends Phaser.Scene {
         ? `Pistol ${w.weapon.ammo}  ⚠ LOW — grab a crate`
         : `Pistol ${w.weapon.ammo}`;
 
-    const status = w.isDriving
-      ? `DRIVING ${speed}  ·  WASD steer · Space exit · F shoot · P pause`
-      : 'ON FOOT  ·  WASD move · Space car · F shoot · P pause';
+    const status = this.touchEnabled
+      ? w.isDriving
+        ? `DRIVING ${speed}  ·  touch stick move · tap buttons shoot/exit · pause top-right`
+        : 'ON FOOT  ·  touch stick move · tap buttons interact/shoot · pause top-right'
+      : w.isDriving
+        ? `DRIVING ${speed}  ·  WASD steer · Space exit · F shoot · P pause`
+        : 'ON FOOT  ·  WASD move · Space car · F shoot · P pause';
 
     return [`WANTED ${stars}    HP ${hp}`, `${money}    ${ammo}`, mission, status]
       .filter(Boolean)
       .join('\n');
+  }
+
+  private syncTouchControls(snapshot = this.touchInput_?.snapshot()): void {
+    if (!this.touchControlsGfx) return;
+    this.touchControlsGfx.clear();
+    const layout = this.touchLayout;
+    if (!layout || !this.touchEnabled) {
+      this.touchControlsGfx.setVisible(false);
+      return;
+    }
+    this.touchControlsGfx.setVisible(true);
+    if (!snapshot) return;
+    const confirmMode = this.paused || this.world.status !== 'playing';
+    const { width, height } = this.scale.gameSize;
+    const zoom = this.cameras.main.zoom;
+    const counter = uiCounterScale(zoom);
+    const origin = uiScreenToWorld(vec2(0, 0), { width, height }, zoom);
+    this.touchControlsGfx.setPosition(origin.x, origin.y).setScale(counter);
+
+    this.touchControlsGfx.lineStyle(3, TOUCH_STICK_STROKE, 0.52);
+    this.touchControlsGfx.fillStyle(TOUCH_STICK_FILL, 0.22 * TOUCH_ALPHA);
+    this.touchControlsGfx.fillCircle(layout.move.center.x, layout.move.center.y, layout.move.radius);
+    this.touchControlsGfx.strokeCircle(layout.move.center.x, layout.move.center.y, layout.move.radius);
+
+    this.touchControlsGfx.fillStyle(TOUCH_STICK_STROKE, snapshot.movePointer ? 0.42 * TOUCH_ALPHA : 0.28 * TOUCH_ALPHA);
+    this.touchControlsGfx.fillCircle(snapshot.knob.x, snapshot.knob.y, layout.move.knobRadius);
+
+    const drawButton = (center: Vec2, radius: number, color: number, pressed: boolean): void => {
+      this.touchControlsGfx.lineStyle(3, color, 0.82);
+      this.touchControlsGfx.fillStyle(color, (pressed ? 0.38 : 0.18) * TOUCH_ALPHA);
+      this.touchControlsGfx.fillCircle(center.x, center.y, radius);
+      this.touchControlsGfx.strokeCircle(center.x, center.y, radius);
+    };
+
+    drawButton(layout.action.center, layout.action.radius, TOUCH_ACTION, snapshot.actionPressed);
+    drawButton(layout.fire.center, layout.fire.radius, TOUCH_FIRE, snapshot.firePressed);
+    if (layout.confirm) {
+      drawButton(layout.confirm.center, layout.confirm.radius, TOUCH_CONFIRM, snapshot.confirmPressed);
+    }
+
+    const drawPauseGlyph = (center: Vec2, radius: number): void => {
+      const w = radius * 0.28;
+      const h = radius * 0.78;
+      this.touchControlsGfx.fillStyle(0xf8fafc, 0.9);
+      this.touchControlsGfx.fillRect(center.x - w * 1.45, center.y - h / 2, w, h);
+      this.touchControlsGfx.fillRect(center.x + w * 0.45, center.y - h / 2, w, h);
+    };
+
+    const drawConfirmGlyph = (center: Vec2, radius: number): void => {
+      this.touchControlsGfx.lineStyle(4, 0xf8fafc, 0.9);
+      this.touchControlsGfx.beginPath();
+      this.touchControlsGfx.moveTo(center.x - radius * 0.42, center.y + radius * 0.02);
+      this.touchControlsGfx.lineTo(center.x - radius * 0.1, center.y + radius * 0.32);
+      this.touchControlsGfx.lineTo(center.x + radius * 0.46, center.y - radius * 0.28);
+      this.touchControlsGfx.strokePath();
+    };
+
+    const drawActionGlyph = (center: Vec2, radius: number): void => {
+      this.touchControlsGfx.lineStyle(3, 0xf8fafc, 0.88);
+      this.touchControlsGfx.strokeCircle(center.x, center.y, radius * 0.34);
+      this.touchControlsGfx.beginPath();
+      this.touchControlsGfx.moveTo(center.x + radius * 0.12, center.y);
+      this.touchControlsGfx.lineTo(center.x + radius * 0.52, center.y);
+      this.touchControlsGfx.lineTo(center.x + radius * 0.34, center.y - radius * 0.18);
+      this.touchControlsGfx.moveTo(center.x + radius * 0.52, center.y);
+      this.touchControlsGfx.lineTo(center.x + radius * 0.34, center.y + radius * 0.18);
+      this.touchControlsGfx.strokePath();
+    };
+
+    const drawFireGlyph = (center: Vec2, radius: number): void => {
+      this.touchControlsGfx.lineStyle(3, 0xf8fafc, 0.88);
+      this.touchControlsGfx.strokeCircle(center.x, center.y, radius * 0.12);
+      this.touchControlsGfx.beginPath();
+      this.touchControlsGfx.moveTo(center.x - radius * 0.44, center.y);
+      this.touchControlsGfx.lineTo(center.x - radius * 0.18, center.y);
+      this.touchControlsGfx.moveTo(center.x + radius * 0.18, center.y);
+      this.touchControlsGfx.lineTo(center.x + radius * 0.44, center.y);
+      this.touchControlsGfx.moveTo(center.x, center.y - radius * 0.44);
+      this.touchControlsGfx.lineTo(center.x, center.y - radius * 0.18);
+      this.touchControlsGfx.moveTo(center.x, center.y + radius * 0.18);
+      this.touchControlsGfx.lineTo(center.x, center.y + radius * 0.44);
+      this.touchControlsGfx.strokePath();
+    };
+
+    drawActionGlyph(layout.action.center, layout.action.radius);
+    drawFireGlyph(layout.fire.center, layout.fire.radius);
+    if (layout.confirm) {
+      if (confirmMode) drawConfirmGlyph(layout.confirm.center, layout.confirm.radius);
+      else drawPauseGlyph(layout.confirm.center, layout.confirm.radius);
+    }
   }
 }
