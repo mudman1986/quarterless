@@ -363,6 +363,13 @@ type DamageableVehicleRef =
   | { kind: 'tow'; vehicle: TowTruck }
   | { kind: 'patrol'; vehicle: Police };
 
+type PedestrianRouteCache = {
+  kind: 'home' | 'wander';
+  tx: number;
+  ty: number;
+  field: FlowField;
+};
+
 /**
  * Authoritative game simulation. Holds all entities and advances them with a
  * fixed timestep. Has no rendering or input-device knowledge, so it is fully
@@ -430,6 +437,8 @@ export class World {
   private readonly pedestrianNavGrid?: NavGrid;
   /** Flow field to the player, recomputed each tick and shared by all foot cops. */
   private copFlow?: FlowField;
+  /** Reuse a pedestrian's last route field until its destination tile changes. */
+  private readonly pedestrianRouteCache = new WeakMap<Pedestrian, PedestrianRouteCache>();
   private readonly spawn: Vec2;
   private carDrivers: (TrafficAI | null)[];
   private carKinds: VehicleKind[];
@@ -2398,6 +2407,7 @@ export class World {
     for (const ped of this.pedestrians) {
       const returningTo = ped.returningTo;
       const threats = returningTo ? fireThreats : [...playerThreats, ...fireThreats, ...this.gunfireThreats];
+      let routeCache: PedestrianRouteCache | undefined;
       if (returningTo && distance(ped.pos, returningTo) <= ARRIVE_RADIUS) {
         continue; // reached the building entrance: disappear inside
       }
@@ -2413,13 +2423,15 @@ export class World {
         if (!returningTo) return ped.target;
         const sightBlocked = this.walls.some((wll) => segmentIntersectsRect(ped.pos, returningTo, wll));
         if (!sightBlocked || !this.navGrid) return returningTo;
-        const homeFlow = computeFlowField(this.navGrid, returningTo);
-        return flowWaypoint(this.navGrid, homeFlow, ped.pos) ?? returningTo;
+        const route = this.routePedestrianTo(ped, this.navGrid, returningTo, 'home');
+        routeCache = route.cache;
+        return route.waypoint ?? returningTo;
       })();
       const wanderTargetPoint = (() => {
         if (returningTo || !this.pedestrianNavGrid) return undefined;
-        const onFootFlow = computeFlowField(this.pedestrianNavGrid, ped.target);
-        return flowWaypoint(this.pedestrianNavGrid, onFootFlow, ped.pos) ?? ped.target;
+        const route = this.routePedestrianTo(ped, this.pedestrianNavGrid, ped.target, 'wander');
+        routeCache = route.cache;
+        return route.waypoint ?? ped.target;
       })();
       const stepped = stepPedestrian(
         { ...ped, target: homeTarget },
@@ -2448,9 +2460,30 @@ export class World {
       if (returningTo && distance(pos, returningTo) <= ARRIVE_RADIUS) {
         continue;
       }
-      survivors.push({ ...stepped, pos, target, returningTo });
+      const survivor = { ...stepped, pos, target, returningTo };
+      if (routeCache) this.pedestrianRouteCache.set(survivor, routeCache);
+      survivors.push(survivor);
     }
     this.pedestrians = survivors;
+  }
+
+  private routePedestrianTo(
+    ped: Pedestrian,
+    grid: NavGrid,
+    target: Vec2,
+    kind: PedestrianRouteCache['kind'],
+  ): { waypoint: Vec2 | null; cache: PedestrianRouteCache } {
+    const tx = Math.floor(target.x / grid.tile);
+    const ty = Math.floor(target.y / grid.tile);
+    const cached = this.pedestrianRouteCache.get(ped);
+    const field =
+      cached && cached.kind === kind && cached.tx === tx && cached.ty === ty
+        ? cached.field
+        : computeFlowField(grid, target);
+    return {
+      waypoint: flowWaypoint(grid, field, ped.pos),
+      cache: { kind, tx, ty, field },
+    };
   }
 
   /** Whether a point is on an open road lane that is not a marked crossing, so a
