@@ -2909,6 +2909,10 @@ describe('World mission', () => {
   it('lets the player ambulance recover a corpse for a reward', () => {
     const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
     const bodyPos = tileCenter(city.spec, 2, 4);
+    const hospitalRoad = city.facilities
+      .filter((facility) => facility.kind === 'hospital')
+      .sort((a, b) => distance(a.roadSpawn, bodyPos) - distance(b.roadSpawn, bodyPos))[0]!
+      .roadSpawn;
     const w = new World({
       player: player(),
       cars: [{ pos: tileCenter(city.spec, 3, 4), heading: 0, speed: 0, radius: 14 }],
@@ -2929,6 +2933,15 @@ describe('World mission', () => {
     advance(w, 3.1);
 
     expect(w.corpses).toHaveLength(0);
+    expect(w.score.current).toBe(0);
+    expect(w.serviceMission?.kind).toBe('ambulance');
+    expect(w.serviceMission && w.serviceMission.kind === 'ambulance' ? w.serviceMission.stage : null).toBe('return');
+    expect(w.serviceTarget).toEqual(hospitalRoad);
+    expect(w.pedestrians).toHaveLength(0);
+
+    w.cars[0] = { ...w.cars[0], pos: hospitalRoad, speed: 0 };
+    w.tick(controls(), 1 / 60);
+
     expect(w.score.current).toBe(reward);
     expect(w.serviceMission).toBeNull();
     expect(w.pedestrians).toHaveLength(1);
@@ -2938,6 +2951,10 @@ describe('World mission', () => {
     const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
     const towPos = tileCenter(city.spec, 3, 4);
     const wreckPos = tileCenter(city.spec, 2, 4);
+    const towYardRoad = city.facilities
+      .filter((facility) => facility.kind === 'towYard')
+      .sort((a, b) => distance(a.roadSpawn, wreckPos) - distance(b.roadSpawn, wreckPos))[0]!
+      .roadSpawn;
     const w = new World({
       player: player(),
       cars: [
@@ -2961,6 +2978,15 @@ describe('World mission', () => {
     advance(w, 3.1);
 
     expect(w.towedCars[1]).toBe(true);
+    expect(w.wreckedCars[1]).toBe(true);
+    expect(w.score.current).toBe(0);
+    expect(w.serviceMission?.kind).toBe('tow');
+    expect(w.serviceMission && w.serviceMission.kind === 'tow' ? w.serviceMission.stage : null).toBe('return');
+    expect(w.serviceTarget).toEqual(towYardRoad);
+
+    w.cars[0] = { ...w.cars[0], pos: towYardRoad, speed: 0 };
+    w.tick(controls(), 1 / 60);
+
     expect(w.wreckedCars[1]).toBe(false);
     expect(w.score.current).toBe(reward);
     expect(w.serviceMission).toBeNull();

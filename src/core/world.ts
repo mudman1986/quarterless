@@ -349,11 +349,12 @@ interface TaxiCabState {
 }
 
 export type PlayerServiceMissionKind = 'police' | 'ambulance' | 'tow';
+export type PlayerServiceStage = 'pickup' | 'return';
 
 export type PlayerServiceMission =
   | { id: number; kind: 'police'; reward: number; suspectId: number }
-  | { id: number; kind: 'ambulance'; reward: number; pickup: Vec2 }
-  | { id: number; kind: 'tow'; reward: number; targetCar: number };
+  | { id: number; kind: 'ambulance'; stage: PlayerServiceStage; reward: number; pickup: Vec2; returnTo: Vec2 }
+  | { id: number; kind: 'tow'; stage: PlayerServiceStage; reward: number; targetCar: number; returnTo: Vec2 };
 
 type DamageableVehicleRef =
   | { kind: 'car'; index: number }
@@ -613,10 +614,12 @@ export class World {
     if (!mission) return null;
     if (mission.kind === 'police') return this.findPoliceSuspect(mission.suspectId)?.pos ?? null;
     if (mission.kind === 'ambulance') {
+      if (mission.stage === 'return') return mission.returnTo;
       return this.corpses.some((corpse) => distance(corpse.pos, mission.pickup) <= AMBULANCE_PICKUP_RADIUS)
         ? mission.pickup
         : null;
     }
+    if (mission.stage === 'return') return mission.returnTo;
     return this.playerTowTargetAvailable(mission.targetCar) ? this.cars[mission.targetCar]?.pos ?? null : null;
   }
 
@@ -2019,14 +2022,20 @@ export class World {
     };
   }
 
+  private playerServiceReturnPoint(kind: 'hospital' | 'towYard', near: Vec2): Vec2 {
+    return this.nearestFacility(kind, near)?.roadSpawn ?? this.nearestRoadPoint(near) ?? near;
+  }
+
   private startPlayerAmbulanceMission(from: Vec2): PlayerServiceMission | null {
     const corpse = this.nearestCorpse(from);
     if (!corpse) return null;
     return {
       id: this.nextServiceMissionId++,
       kind: 'ambulance',
+      stage: 'pickup',
       reward: PLAYER_AMBULANCE_REWARD,
       pickup: corpse.pos,
+      returnTo: this.playerServiceReturnPoint('hospital', corpse.pos),
     };
   }
 
@@ -2054,8 +2063,10 @@ export class World {
     return {
       id: this.nextServiceMissionId++,
       kind: 'tow',
+      stage: 'pickup',
       reward: PLAYER_TOW_REWARD,
       targetCar,
+      returnTo: this.playerServiceReturnPoint('towYard', this.cars[targetCar]?.pos ?? from),
     };
   }
 
@@ -2188,31 +2199,47 @@ export class World {
     }
 
     if (mission.kind === 'ambulance') {
-      const corpseIndex = this.corpses.findIndex((corpse) => distance(corpse.pos, mission.pickup) <= AMBULANCE_PICKUP_RADIUS);
-      if (corpseIndex === -1) {
-        this.playerServiceMission = this.startPlayerAmbulanceMission(car.pos);
+      if (mission.stage === 'pickup') {
+        const corpseIndex = this.corpses.findIndex((corpse) => distance(corpse.pos, mission.pickup) <= AMBULANCE_PICKUP_RADIUS);
+        if (corpseIndex === -1) {
+          this.playerServiceMission = this.startPlayerAmbulanceMission(car.pos);
+          return;
+        }
+        if (Math.abs(car.speed) > TAXI_SERVICE_SPEED_MAX || distance(car.pos, this.corpses[corpseIndex].pos) > AMBULANCE_PICKUP_RADIUS) {
+          return;
+        }
+        const [corpse] = this.corpses.splice(corpseIndex, 1);
+        if (!corpse) return;
+        this.playerServiceMission = { ...mission, stage: 'return' };
         return;
       }
-      if (Math.abs(car.speed) > TAXI_SERVICE_SPEED_MAX || distance(car.pos, this.corpses[corpseIndex].pos) > AMBULANCE_PICKUP_RADIUS) {
+
+      if (Math.abs(car.speed) > TAXI_SERVICE_SPEED_MAX || distance(car.pos, mission.returnTo) > TAXI_STOP_RADIUS) {
         return;
       }
-      const [corpse] = this.corpses.splice(corpseIndex, 1);
-      if (!corpse) return;
-      this.respawnPedestrian(corpse.pos);
+      this.respawnPedestrian(mission.pickup);
       this.score = award(this.score, mission.reward);
       this.playerServiceMission = this.startPlayerAmbulanceMission(car.pos);
       return;
     }
 
-    if (!this.playerTowTargetAvailable(mission.targetCar)) {
-      this.playerServiceMission = this.startPlayerTowMission(car.pos);
+    if (mission.stage === 'pickup') {
+      if (!this.playerTowTargetAvailable(mission.targetCar)) {
+        this.playerServiceMission = this.startPlayerTowMission(car.pos);
+        return;
+      }
+      const wreck = this.cars[mission.targetCar];
+      if (Math.abs(car.speed) > TAXI_SERVICE_SPEED_MAX || distance(car.pos, wreck.pos) > AMBULANCE_PICKUP_RADIUS) {
+        return;
+      }
+      this.towedCars[mission.targetCar] = true;
+      this.playerServiceMission = { ...mission, stage: 'return' };
       return;
     }
-    const wreck = this.cars[mission.targetCar];
-    if (Math.abs(car.speed) > TAXI_SERVICE_SPEED_MAX || distance(car.pos, wreck.pos) > AMBULANCE_PICKUP_RADIUS) {
+
+    if (Math.abs(car.speed) > TAXI_SERVICE_SPEED_MAX || distance(car.pos, mission.returnTo) > TAXI_STOP_RADIUS) {
       return;
     }
-    this.towedCars[mission.targetCar] = true;
     this.respawnCarAtTowYard(mission.targetCar);
     this.score = award(this.score, mission.reward);
     this.playerServiceMission = this.startPlayerTowMission(car.pos);

@@ -225,6 +225,7 @@ export class CityScene extends Phaser.Scene {
   private prevTaxiMissionId: number | null = null;
   private prevTaxiStage: 'pickup' | 'dropoff' | '' = '';
   private prevServiceMissionId: number | null = null;
+  private prevServiceStage: 'pickup' | 'return' | '' = '';
   private prevExplosions = 0;
   /** Seconds until the next siren wail while a chase is on. */
   private sirenTimer = 0;
@@ -264,6 +265,7 @@ export class CityScene extends Phaser.Scene {
     this.prevTaxiMissionId = null;
     this.prevTaxiStage = '';
     this.prevServiceMissionId = null;
+    this.prevServiceStage = '';
     this.prevTouchConfirm = false;
 
     this.city = buildCity(CITY_SPEC);
@@ -1425,6 +1427,10 @@ export class CityScene extends Phaser.Scene {
             ? 'AMBULANCE RUN\nRecover the body'
             : 'TOW JOB\nRecover the wreck',
       );
+    } else if (serviceMission?.kind === 'ambulance' && serviceMission.stage !== this.prevServiceStage) {
+      this.showBanner('AMBULANCE RUN\nReturn the body to the hospital');
+    } else if (serviceMission?.kind === 'tow' && serviceMission.stage !== this.prevServiceStage) {
+      this.showBanner('TOW JOB\nReturn the wreck to the tow yard');
     }
 
     this.prevBullets = w.bullets.length;
@@ -1436,6 +1442,7 @@ export class CityScene extends Phaser.Scene {
     this.prevTaxiMissionId = taxiMission?.id ?? null;
     this.prevTaxiStage = taxiMission?.stage ?? '';
     this.prevServiceMissionId = serviceMission?.id ?? null;
+    this.prevServiceStage = serviceMission && serviceMission.kind !== 'police' ? serviceMission.stage : '';
     this.prevExplosions = w.explosionsTriggered;
   }
 
@@ -1627,8 +1634,8 @@ export class CityScene extends Phaser.Scene {
       ? w.serviceMission.kind === 'police'
         ? `POLICE: Bust the suspect  +$${w.serviceMission.reward}`
         : w.serviceMission.kind === 'ambulance'
-          ? `AMBULANCE: Recover the body  +$${w.serviceMission.reward}`
-          : `TOW: Recover the wreck  +$${w.serviceMission.reward}`
+          ? `AMBULANCE: ${w.serviceMission.stage === 'pickup' ? 'Recover the body' : 'Return to the hospital'}  +$${w.serviceMission.reward}`
+          : `TOW: ${w.serviceMission.stage === 'pickup' ? 'Recover the wreck' : 'Return to the tow yard'}  +$${w.serviceMission.reward}`
       : w.drivingCarIndex !== null && w.carKind(w.drivingCarIndex) === 'police'
         ? 'POLICE: No suspect available'
         : w.drivingCarIndex !== null && w.carKind(w.drivingCarIndex) === 'ambulance'

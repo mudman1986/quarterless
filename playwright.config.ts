@@ -13,7 +13,12 @@ export default defineConfig({
   // stateful timing assertions flaky. Serial keeps them deterministic (this is
   // already the CI behaviour) and the suite is small.
   workers: 1,
-  reporter: 'html',
+  reporter: process.env.CI
+    ? [['html', { open: 'never' }]]
+    : [
+        ['list'],
+        ['html', { open: 'never' }],
+      ],
   use: {
     baseURL: 'http://127.0.0.1:4173',
     trace: 'on-first-retry',

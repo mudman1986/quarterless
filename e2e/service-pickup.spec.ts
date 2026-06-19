@@ -16,8 +16,13 @@ interface CorpseProbe {
 
 interface PedestrianProbe {
   pos: Vec2;
+  heading?: number;
+  radius?: number;
+  state?: string;
+  target?: Vec2;
   returningTo?: Vec2;
   uniform?: 'medic' | 'towWorker';
+  policeSuspectId?: number;
 }
 
 interface CarProbe {
@@ -47,12 +52,24 @@ interface TowProbe extends ServiceProbe {
   targetCar: number;
 }
 
+interface PlayerServiceMissionProbe {
+  id: number;
+  kind: 'police' | 'ambulance' | 'tow';
+  reward: number;
+  stage?: 'pickup' | 'return';
+  suspectId?: number;
+  pickup?: Vec2;
+  targetCar?: number;
+  returnTo?: Vec2;
+}
+
 interface RuntimeWorld {
   player: { pos: Vec2; angle: number };
   focus: Vec2;
   status: string;
   health: { current: number; max: number };
   wanted: { heat: number };
+  score: { current: number };
   pedestrians: PedestrianProbe[];
   police: unknown[];
   bullets: unknown[];
@@ -68,12 +85,16 @@ interface RuntimeWorld {
   tows: TowProbe[];
   drivingCarIndex: number | null;
   isDriving: boolean;
+  serviceMission: PlayerServiceMissionProbe | null;
+  serviceTarget: Vec2 | null;
   carKind(index: number): string;
 }
 
 interface GameProbe {
   scene: {
     getScene(key: string): {
+      hud: { text: string; visible: boolean };
+      serviceMarker: { visible: boolean };
       world: RuntimeWorld;
       pedSprites: Array<{ texture: { key: string } }>;
     };
@@ -275,6 +296,47 @@ async function seedWideSidewalkCorpse(page: Page): Promise<void> {
   }, { bodyPos: body, approachPos: approach });
 }
 
+async function seedPolicePatrolMission(page: Page): Promise<{ patrol: Vec2; suspectA: Vec2; suspectB: Vec2 }> {
+  const patrol = tileCenter(LIVE_CITY.spec, LIVE_CITY.spec.block, LIVE_CITY.spec.block);
+  const suspectA = tileCenter(LIVE_CITY.spec, LIVE_CITY.spec.block * 2, LIVE_CITY.spec.block);
+  const suspectB = tileCenter(LIVE_CITY.spec, LIVE_CITY.spec.block * 2, LIVE_CITY.spec.block * 2);
+  const patrolHome = tileCenter(LIVE_CITY.spec, LIVE_CITY.spec.block * 3, LIVE_CITY.spec.block);
+
+  await page.evaluate(({ patrolPos, patrolHomePos, suspectPosA, suspectPosB }) => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const w = g.scene.getScene('City').world;
+
+    w.status = 'playing';
+    w.health.current = w.health.max;
+    w.wanted.heat = 0;
+    w.score.current = 0;
+    w.bullets = [];
+    w.policeBullets = [];
+    w.explosions = [];
+    w.corpses = [];
+    w.ambulance = null;
+    w.tows = [];
+    w.drivingCarIndex = null;
+    for (let i = 0; i < w.cars.length; i++) {
+      w.cars[i] = { ...w.cars[i], pos: { x: 4000 + i * 24, y: 4000 }, heading: 0, speed: 0 };
+      w.wreckedCars[i] = false;
+      w.towedCars[i] = false;
+      w.carDrivers[i] = null;
+      if (i < w.towDispatchCooldowns.length) w.towDispatchCooldowns[i] = 0;
+    }
+
+    w.player.pos = { ...patrolPos };
+    w.player.angle = 0;
+    w.pedestrians = [
+      { pos: suspectPosA, heading: 0, radius: 7, state: 'wander', target: suspectPosA },
+      { pos: suspectPosB, heading: 0, radius: 7, state: 'wander', target: suspectPosB },
+    ];
+    w.police = [{ pos: patrolPos, heading: 0, radius: 14, kind: 'car', home: patrolHomePos, speed: 0, health: 60 }];
+  }, { patrolPos: patrol, patrolHomePos: patrolHome, suspectPosA: suspectA, suspectPosB: suspectB });
+
+  return { patrol, suspectA, suspectB };
+}
+
 test('ambulance pickup waits 3 seconds before the body is removed', async ({ page }) => {
   await boot(page);
   await seedAmbulanceLoading(page, 2.5);
@@ -433,6 +495,350 @@ test('the player can steal the parked tow truck during the loading window', asyn
   expect(state.crewHeadingHome).toBe(true);
   expect(state.crewUniform).toBe('towWorker');
   expect(state.crewTexture).toBe(TEX.towWorker);
+});
+
+test('stealing a patrol car starts and completes a live suspect bust side mission', async ({ page }) => {
+  await boot(page);
+  const { patrol, suspectA } = await seedPolicePatrolMission(page);
+
+  await page.locator('#game canvas').click();
+  await page.evaluate(({ patrolPos }) => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const w = g.scene.getScene('City').world;
+    const patrolWorld = w as RuntimeWorld & {
+      appendVehicleSlot(
+        car: CarProbe,
+        kind: 'police',
+        opts: { health: number; wrecked?: boolean; respawnsAtTow?: boolean },
+      ): number;
+      startPlayerPoliceMission(from: Vec2): PlayerServiceMissionProbe | null;
+      playerServiceMission: PlayerServiceMissionProbe | null;
+      wanted: { heat: number };
+      player: { pos: Vec2; angle: number };
+      police: unknown[];
+    };
+    patrolWorld.player.pos = { ...patrolPos };
+    patrolWorld.police = [];
+    patrolWorld.drivingCarIndex = patrolWorld.appendVehicleSlot(
+      { pos: patrolPos, heading: 0, speed: 0, radius: 14 },
+      'police',
+      { health: 60, respawnsAtTow: false },
+    );
+    patrolWorld.wanted.heat = 250;
+    patrolWorld.playerServiceMission = patrolWorld.startPlayerPoliceMission(patrolPos);
+  }, { patrolPos: patrol });
+
+  await page.waitForFunction(() => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const w = g.scene.getScene('City').world;
+    return w.isDriving &&
+      w.drivingCarIndex !== null &&
+      w.carKind(w.drivingCarIndex) === 'police' &&
+      w.serviceMission?.kind === 'police' &&
+      w.serviceTarget !== null;
+  }, undefined, { timeout: 2000 });
+
+  const start = await page.evaluate(() => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const scene = g.scene.getScene('City');
+    const w = scene.world;
+    return {
+      drivingKind: w.drivingCarIndex === null ? null : w.carKind(w.drivingCarIndex),
+      mission: w.serviceMission,
+      target: w.serviceTarget,
+      score: w.score.current,
+      suspectCount: w.pedestrians.filter((ped) => ped.policeSuspectId !== undefined).length,
+      hud: scene.hud.text,
+      markerVisible: scene.serviceMarker.visible,
+    };
+  });
+
+  expect(start.drivingKind).toBe('police');
+  expect(start.mission?.kind).toBe('police');
+  expect(start.target).toEqual(suspectA);
+  expect(start.suspectCount).toBe(1);
+  expect(start.markerVisible).toBe(true);
+  expect(start.hud).toContain('POLICE: Bust the suspect');
+
+  await page.evaluate(({ target }) => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const w = g.scene.getScene('City').world;
+    w.police = [];
+    w.wanted.heat = 0;
+    if (w.drivingCarIndex === null) throw new Error('expected to be driving the stolen patrol car');
+    w.cars[w.drivingCarIndex] = { ...w.cars[w.drivingCarIndex], pos: target, speed: 0 };
+  }, { target: suspectA });
+
+  await page.waitForFunction(({ firstMissionId, reward }) => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const scene = g.scene.getScene('City');
+    const w = scene.world;
+    return w.score.current === reward &&
+      w.serviceMission?.kind === 'police' &&
+      w.serviceMission.id !== firstMissionId &&
+      scene.hud.text.includes('POLICE: Bust the suspect');
+  }, { firstMissionId: start.mission!.id, reward: start.mission!.reward }, { timeout: 5000 });
+
+  const completed = await page.evaluate(() => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const scene = g.scene.getScene('City');
+    const w = scene.world;
+    return {
+      mission: w.serviceMission,
+      score: w.score.current,
+      remainingSuspects: w.pedestrians.filter((ped) => ped.policeSuspectId !== undefined).length,
+      markerVisible: scene.serviceMarker.visible,
+    };
+  });
+
+  expect(completed.score).toBe(start.mission!.reward);
+  expect(completed.mission?.kind).toBe('police');
+  expect(completed.mission?.id).not.toBe(start.mission?.id);
+  expect(completed.remainingSuspects).toBe(1);
+  expect(completed.markerVisible).toBe(true);
+});
+
+test('stealing an ambulance starts and completes a live corpse recovery side mission', async ({ page }) => {
+  await boot(page);
+  await seedAmbulanceLoading(page, 1);
+
+  await page.locator('#game canvas').click();
+  await page.keyboard.press('Space');
+
+  await page.waitForFunction(() => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const scene = g.scene.getScene('City');
+    const w = scene.world;
+    return w.isDriving &&
+      w.drivingCarIndex !== null &&
+      w.carKind(w.drivingCarIndex) === 'ambulance' &&
+      w.serviceMission?.kind === 'ambulance' &&
+      w.serviceTarget !== null &&
+      scene.serviceMarker.visible &&
+      scene.hud.text.includes('AMBULANCE: Recover the body');
+  }, undefined, { timeout: 2000 });
+
+  const start = await page.evaluate(() => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const scene = g.scene.getScene('City');
+    const w = scene.world;
+    return {
+      corpses: w.corpses.length,
+      mission: w.serviceMission,
+      target: w.serviceTarget,
+      score: w.score.current,
+      hud: scene.hud.text,
+      markerVisible: scene.serviceMarker.visible,
+    };
+  });
+
+  expect(start.corpses).toBe(1);
+  expect(start.mission?.kind).toBe('ambulance');
+  expect(start.target).not.toBeNull();
+  expect(start.markerVisible).toBe(true);
+  expect(start.hud).toContain('AMBULANCE: Recover the body');
+  expect(start.mission?.stage).toBe('pickup');
+
+  await page.waitForTimeout(600);
+  const locked = await page.evaluate(() => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const w = g.scene.getScene('City').world;
+    return { corpses: w.corpses.length, score: w.score.current, missionKind: w.serviceMission?.kind ?? null };
+  });
+  expect(locked.corpses).toBe(1);
+  expect(locked.score).toBe(0);
+  expect(locked.missionKind).toBe('ambulance');
+
+  await page.waitForFunction(() => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const scene = g.scene.getScene('City');
+    const w = scene.world;
+    return w.corpses.length === 0 &&
+      w.serviceMission?.kind === 'ambulance' &&
+      w.serviceMission.stage === 'return' &&
+      w.serviceTarget !== null &&
+      scene.serviceMarker.visible &&
+      scene.hud.text.includes('AMBULANCE: Return to the hospital');
+  }, undefined, { timeout: 6000 });
+
+  const returning = await page.evaluate(() => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const scene = g.scene.getScene('City');
+    const w = scene.world;
+    return {
+      mission: w.serviceMission,
+      target: w.serviceTarget,
+      score: w.score.current,
+      corpses: w.corpses.length,
+      hud: scene.hud.text,
+      markerVisible: scene.serviceMarker.visible,
+    };
+  });
+
+  expect(returning.mission?.kind).toBe('ambulance');
+  expect(returning.mission?.stage).toBe('return');
+  expect(returning.target).not.toBeNull();
+  expect(returning.score).toBe(0);
+  expect(returning.corpses).toBe(0);
+  expect(returning.hud).toContain('AMBULANCE: Return to the hospital');
+  expect(returning.markerVisible).toBe(true);
+
+  await page.evaluate(({ target }) => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const w = g.scene.getScene('City').world;
+    if (w.drivingCarIndex === null) throw new Error('expected to be driving the stolen ambulance');
+    w.cars[w.drivingCarIndex] = { ...w.cars[w.drivingCarIndex], pos: target, speed: 0 };
+  }, { target: returning.target! });
+
+  await page.waitForFunction(({ reward }) => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const scene = g.scene.getScene('City');
+    const w = scene.world;
+    return w.score.current === reward &&
+      w.serviceMission === null &&
+      !scene.serviceMarker.visible;
+  }, { reward: start.mission!.reward }, { timeout: 4000 });
+
+  const completed = await page.evaluate(() => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const scene = g.scene.getScene('City');
+    const w = scene.world;
+    return {
+      corpses: w.corpses.length,
+      score: w.score.current,
+      mission: w.serviceMission,
+      markerVisible: scene.serviceMarker.visible,
+    };
+  });
+
+  expect(completed.corpses).toBe(0);
+  expect(completed.score).toBe(start.mission!.reward);
+  expect(completed.mission).toBeNull();
+  expect(completed.markerVisible).toBe(false);
+});
+
+test('stealing a tow truck starts and completes a live wreck recovery side mission', async ({ page }) => {
+  await boot(page);
+  await seedTowLoading(page, 1);
+
+  await page.locator('#game canvas').click();
+  await page.keyboard.press('Space');
+
+  await page.waitForFunction(() => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const scene = g.scene.getScene('City');
+    const w = scene.world;
+    return w.isDriving &&
+      w.drivingCarIndex !== null &&
+      w.carKind(w.drivingCarIndex) === 'tow' &&
+      w.serviceMission?.kind === 'tow' &&
+      w.serviceTarget !== null &&
+      scene.serviceMarker.visible &&
+      scene.hud.text.includes('TOW: Recover the wreck');
+  }, undefined, { timeout: 2000 });
+
+  const start = await page.evaluate(() => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const scene = g.scene.getScene('City');
+    const w = scene.world;
+    return {
+      towed: w.towedCars[0],
+      mission: w.serviceMission,
+      target: w.serviceTarget,
+      score: w.score.current,
+      hud: scene.hud.text,
+      markerVisible: scene.serviceMarker.visible,
+    };
+  });
+
+  expect(start.towed).toBe(false);
+  expect(start.mission?.kind).toBe('tow');
+  expect(start.target).not.toBeNull();
+  expect(start.markerVisible).toBe(true);
+  expect(start.hud).toContain('TOW: Recover the wreck');
+  expect(start.mission?.stage).toBe('pickup');
+
+  await page.waitForTimeout(600);
+  const locked = await page.evaluate(() => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const w = g.scene.getScene('City').world;
+    return { towed: w.towedCars[0], score: w.score.current, missionKind: w.serviceMission?.kind ?? null };
+  });
+  expect(locked.towed).toBe(false);
+  expect(locked.score).toBe(0);
+  expect(locked.missionKind).toBe('tow');
+
+  await page.waitForFunction(() => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const scene = g.scene.getScene('City');
+    const w = scene.world;
+    return w.towedCars[0] === true &&
+      w.wreckedCars[0] === true &&
+      w.serviceMission?.kind === 'tow' &&
+      w.serviceMission.stage === 'return' &&
+      w.serviceTarget !== null &&
+      scene.serviceMarker.visible &&
+      scene.hud.text.includes('TOW: Return to the tow yard');
+  }, undefined, { timeout: 6000 });
+
+  const returning = await page.evaluate(() => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const scene = g.scene.getScene('City');
+    const w = scene.world;
+    return {
+      mission: w.serviceMission,
+      target: w.serviceTarget,
+      score: w.score.current,
+      towed: w.towedCars[0],
+      wrecked: w.wreckedCars[0],
+      hud: scene.hud.text,
+      markerVisible: scene.serviceMarker.visible,
+    };
+  });
+
+  expect(returning.mission?.kind).toBe('tow');
+  expect(returning.mission?.stage).toBe('return');
+  expect(returning.target).not.toBeNull();
+  expect(returning.score).toBe(0);
+  expect(returning.towed).toBe(true);
+  expect(returning.wrecked).toBe(true);
+  expect(returning.hud).toContain('TOW: Return to the tow yard');
+  expect(returning.markerVisible).toBe(true);
+
+  await page.evaluate(({ target }) => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const w = g.scene.getScene('City').world;
+    if (w.drivingCarIndex === null) throw new Error('expected to be driving the stolen tow truck');
+    w.cars[w.drivingCarIndex] = { ...w.cars[w.drivingCarIndex], pos: target, speed: 0 };
+  }, { target: returning.target! });
+
+  await page.waitForFunction(({ reward }) => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const scene = g.scene.getScene('City');
+    const w = scene.world;
+    return w.score.current === reward &&
+      w.serviceMission === null &&
+      !scene.serviceMarker.visible;
+  }, { reward: start.mission!.reward }, { timeout: 4000 });
+
+  const completed = await page.evaluate(() => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const scene = g.scene.getScene('City');
+    const w = scene.world;
+    return {
+      towed: w.towedCars[0],
+      wrecked: w.wreckedCars[0],
+      score: w.score.current,
+      mission: w.serviceMission,
+      markerVisible: scene.serviceMarker.visible,
+    };
+  });
+
+  expect(completed.towed).toBe(true);
+  expect(completed.wrecked).toBe(false);
+  expect(completed.score).toBe(start.mission!.reward);
+  expect(completed.mission).toBeNull();
+  expect(completed.markerVisible).toBe(false);
 });
 
 test('an ambulance reaches a corpse on a wide sidewalk in the live game instead of timing out', async ({ page }) => {
