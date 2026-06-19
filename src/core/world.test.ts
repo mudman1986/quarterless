@@ -3103,6 +3103,66 @@ describe('World mission', () => {
     expect(w.serviceMission).toBeNull();
   });
 
+  it('makes the player wanted when stealing a parked ambulance from a hospital', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    const hospital = city.facilities.find((facility) => facility.kind === 'hospital');
+    expect(hospital).toBeDefined();
+
+    const parked = vec2(hospital!.roadSpawn.x, hospital!.roadSpawn.y);
+    const w = new World({
+      player: { ...player(), pos: vec2(parked.x - 18, parked.y) },
+      cars: [{ pos: parked, heading: 0, speed: 0, radius: 14 }],
+      carDrivers: [null],
+      carKinds: ['ambulance'],
+      city,
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0,
+    });
+
+    w.tick(controls({ action: true }), 1 / 60);
+
+    expect(w.isDriving).toBe(true);
+    expect(w.carKind(w.drivingCarIndex!)).toBe('ambulance');
+    expect(w.wantedStars).toBeGreaterThan(0);
+  });
+
+  it('advances a service objective after the player completes an ambulance run', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    const bodyPos = tileCenter(city.spec, 2, 4);
+    const hospitalRoad = city.facilities
+      .filter((facility) => facility.kind === 'hospital')
+      .sort((a, b) => distance(a.roadSpawn, bodyPos) - distance(b.roadSpawn, bodyPos))[0]!
+      .roadSpawn;
+    const w = new World({
+      player: player(),
+      cars: [{ pos: tileCenter(city.spec, 3, 4), heading: 0, speed: 0, radius: 14 }],
+      carDrivers: [null],
+      carKinds: ['ambulance'],
+      city,
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0,
+      mission: createMission({
+        id: 'svc',
+        title: 'Body Run',
+        objectives: [
+          { kind: 'service', description: 'Steal an ambulance and complete 1 recovery', service: 'ambulance', count: 1 },
+        ],
+      }),
+    });
+
+    w.drivingCarIndex = 0;
+    w.corpses = [{ pos: bodyPos, offscreenFor: 0, inFrameFor: 0 }];
+    w.tick(controls(), 1 / 60);
+
+    expect(w.missionComplete).toBe(false);
+    w.cars[0] = { ...w.cars[0], pos: bodyPos, speed: 0 };
+    advance(w, 3.1);
+    w.cars[0] = { ...w.cars[0], pos: hospitalRoad, speed: 0 };
+    w.tick(controls(), 1 / 60);
+
+    expect(w.missionComplete).toBe(true);
+  });
+
   it('tracks a reach-then-eliminate mission and banks the reward', () => {
     const w = new World({
       player: player(), // already at the reach target (0,0)

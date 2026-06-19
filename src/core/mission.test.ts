@@ -141,6 +141,25 @@ describe('updateMission — wanted objective', () => {
   });
 });
 
+describe('updateMission — service objective', () => {
+  const serviceMission = () =>
+    createMission({
+      id: 'svc',
+      title: 'First Responder',
+      objectives: [{ kind: 'service', description: 'Complete 2 ambulance runs', service: 'ambulance', count: 2 }],
+    });
+
+  it('completes only after enough service runs finish after the objective began', () => {
+    const started = base({ serviceCompleted: { police: 1, ambulance: 3, tow: 0 } });
+    expect(
+      isComplete(updateMission(serviceMission(), ctx({ serviceCompleted: { police: 1, ambulance: 4, tow: 0 } }), started)),
+    ).toBe(false);
+    expect(
+      isComplete(updateMission(serviceMission(), ctx({ serviceCompleted: { police: 1, ambulance: 5, tow: 0 } }), started)),
+    ).toBe(true);
+  });
+});
+
 describe('updateMission — purity and idempotence', () => {
   it('does not mutate the input mission', () => {
     const m = mission();
@@ -179,6 +198,13 @@ describe('objectiveProgress', () => {
     expect(objectiveProgress(survive, ctx({ elapsed: 12.7 }), base())).toEqual({ current: 12, goal: 30 });
     const wanted: Objective = { kind: 'wanted', description: '3 stars', stars: 3 };
     expect(objectiveProgress(wanted, ctx({ wantedStars: 2 }), base())).toEqual({ current: 2, goal: 3 });
+  });
+
+  it('reports service progress relative to the objective baseline', () => {
+    const service: Objective = { kind: 'service', description: 'Finish 3 tow jobs', service: 'tow', count: 3 };
+    expect(
+      objectiveProgress(service, ctx({ serviceCompleted: { police: 0, ambulance: 0, tow: 4 } }), base({ serviceCompleted: { police: 0, ambulance: 0, tow: 2 } })),
+    ).toEqual({ current: 2, goal: 3 });
   });
 });
 

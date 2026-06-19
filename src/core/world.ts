@@ -74,6 +74,7 @@ import {
   type Objective,
   type MissionBaseline,
   type ObjectiveProgress,
+  type ServiceCompletionCounts,
   currentObjective,
   updateMission,
   isComplete,
@@ -114,6 +115,8 @@ export interface WorldOptions {
   carDrivers?: (TrafficAI | null)[];
   /** Render / behavior kind for each world car, parallel to `cars`. */
   carKinds?: VehicleKind[];
+  /** Whether each initial car slot should recycle back into traffic after towing. */
+  carRespawnsAtTow?: boolean[];
   /** Fallback player respawn point when the map has no matching facility. */
   spawn?: Vec2;
   /** The player's starting weapon. Defaults to a pistol. */
@@ -452,6 +455,8 @@ export class World {
   private carBurnTimers: number[];
   /** Whether each burning car's eventual explosion should be credited to the player. */
   private carBurnByPlayer: boolean[];
+  /** Whether a parked service vehicle slot has already been stolen and charged. */
+  private stolenServiceVehicles: boolean[];
   /** Seconds until each wreck may be claimed by a fresh tow dispatch again. */
   private towDispatchCooldowns: number[];
   /** Continuous time the player's current car has been stopped for a bust. */
@@ -483,6 +488,7 @@ export class World {
   private nextTaxiPassengerId = 1;
   private nextServiceMissionId = 1;
   private nextPoliceSuspectId = 1;
+  private completedServiceJobs: ServiceCompletionCounts = { police: 0, ambulance: 0, tow: 0 };
 
   constructor(opts: WorldOptions) {
     this.player = opts.player;
@@ -509,10 +515,11 @@ export class World {
     this.carDrivers = this.cars.map((_, i) => opts.carDrivers?.[i] ?? null);
     this.carKinds = this.cars.map((_, i) => opts.carKinds?.[i] ?? 'car');
     this.taxiStates = this.cars.map((_, i) => (this.carKinds[i] === 'taxi' ? this.createTaxiState() : null));
-    this.carRespawnsAtTow = this.cars.map(() => true);
+    this.carRespawnsAtTow = this.cars.map((_, i) => opts.carRespawnsAtTow?.[i] ?? true);
     this.carHealth = this.cars.map(() => CAR_MAX_HEALTH);
     this.carBurnTimers = this.cars.map(() => 0);
     this.carBurnByPlayer = this.cars.map(() => false);
+    this.stolenServiceVehicles = this.cars.map(() => false);
     this.towDispatchCooldowns = this.cars.map(() => 0);
     this.wreckedCars = this.cars.map(() => false);
     this.towedCars = this.cars.map(() => false);
@@ -697,6 +704,7 @@ export class World {
       const idx = this.nearestCarIndex(moved.pos, this.enterRadius);
       if (idx !== null) {
         if (this.carKind(idx) === 'taxi') this.clearNpcTaxiFare(idx, this.cars[idx].pos);
+        this.markServiceVehicleTheft(idx);
         this.drivingCarIndex = idx;
         this.cars[idx] = { ...this.cars[idx], speed: 0 };
         this.carDrivers[idx] = null; // any NPC driver bails out
@@ -959,6 +967,7 @@ export class World {
   private parkedCarNear(p: Vec2): number | null {
     for (let i = 0; i < this.cars.length; i++) {
       if (i === this.drivingCarIndex || this.carDrivers[i] || this.wreckedCars[i] || this.carIsBurning(i)) continue;
+      if (!this.isCivilianRoadCar(i)) continue;
       if (distance(p, this.cars[i].pos) <= PED_ENTER_RADIUS + this.cars[i].radius) return i;
     }
     return null;
@@ -1054,6 +1063,7 @@ export class World {
     this.carHealth.push(wrecked ? 0 : opts.health);
     this.carBurnTimers.push(0);
     this.carBurnByPlayer.push(false);
+    this.stolenServiceVehicles.push(false);
     this.towDispatchCooldowns.push(0);
     this.wreckedCars.push(wrecked);
     this.towedCars.push(false);
@@ -1356,6 +1366,7 @@ export class World {
     this.carHealth[idx] = CAR_MAX_HEALTH;
     this.carBurnTimers[idx] = 0;
     this.carBurnByPlayer[idx] = false;
+    this.stolenServiceVehicles[idx] = false;
     this.towDispatchCooldowns[idx] = 0;
     this.wreckedCars[idx] = false;
     this.taxiStates[idx] = this.carKind(idx) === 'taxi' ? this.createTaxiState() : null;
@@ -2101,6 +2112,27 @@ export class World {
     this.playerServiceActionLock = 0;
   }
 
+  private markServiceVehicleTheft(index: number): void {
+    if (this.stolenServiceVehicles[index]) return;
+    const kind = this.carKind(index);
+    if (kind === 'police') {
+      this.wanted = addHeat(this.wanted, CRIME_HEAT.hitPolice);
+      this.stolenServiceVehicles[index] = true;
+      return;
+    }
+    if (kind === 'ambulance' || kind === 'tow') {
+      this.wanted = addHeat(this.wanted, CRIME_HEAT.hitPedestrian);
+      this.stolenServiceVehicles[index] = true;
+    }
+  }
+
+  private recordCompletedServiceJob(kind: keyof ServiceCompletionCounts): void {
+    this.completedServiceJobs = {
+      ...this.completedServiceJobs,
+      [kind]: this.completedServiceJobs[kind] + 1,
+    };
+  }
+
   private startPlayerTaxiMission(from: Vec2): void {
     const pickup = this.randomTaxiStop(from, TAXI_MIN_PICKUP_DISTANCE);
     const dropoff = this.randomTaxiStop(pickup, TAXI_MIN_DROPOFF_DISTANCE);
@@ -2206,6 +2238,7 @@ export class World {
         return;
       }
       this.score = award(this.score, mission.reward);
+      this.recordCompletedServiceJob('police');
       this.spawnCivilianPedestrian(this.nearestFacility('policeStation', busted.pos)?.spawn ?? busted.pos);
       this.playerServiceMission = this.startPlayerPoliceMission(car.pos);
       return;
@@ -2232,6 +2265,7 @@ export class World {
       }
       this.respawnPedestrian(mission.pickup);
       this.score = award(this.score, mission.reward);
+      this.recordCompletedServiceJob('ambulance');
       this.playerServiceMission = this.startPlayerAmbulanceMission(car.pos);
       return;
     }
@@ -2255,6 +2289,7 @@ export class World {
     }
     this.respawnCarAtTowYard(mission.targetCar);
     this.score = award(this.score, mission.reward);
+    this.recordCompletedServiceJob('tow');
     this.playerServiceMission = this.startPlayerTowMission(car.pos);
   }
 
@@ -2827,6 +2862,7 @@ export class World {
       collected: this.collected,
       elapsed: this.elapsed,
       wantedStars: this.wantedStars,
+      serviceCompleted: { ...this.completedServiceJobs },
     };
   }
 
@@ -2847,6 +2883,7 @@ export class World {
       targetKills: this.targetKills,
       collected: this.collected,
       elapsed: this.elapsed,
+      serviceCompleted: { ...this.completedServiceJobs },
     };
   }
 

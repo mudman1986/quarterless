@@ -39,12 +39,29 @@ export interface WantedObjective {
   stars: number;
 }
 
+export type ServiceObjectiveKind = 'police' | 'ambulance' | 'tow';
+
+export interface ServiceCompletionCounts {
+  police: number;
+  ambulance: number;
+  tow: number;
+}
+
+/** Complete a number of police / ambulance / tow service runs. */
+export interface ServiceObjective {
+  kind: 'service';
+  description: string;
+  service: ServiceObjectiveKind;
+  count: number;
+}
+
 export type Objective =
   | ReachObjective
   | EliminateObjective
   | CollectObjective
   | SurviveObjective
-  | WantedObjective;
+  | WantedObjective
+  | ServiceObjective;
 
 export type MissionStatus = 'active' | 'completed';
 
@@ -73,6 +90,8 @@ export interface MissionContext {
   elapsed: number;
   /** Current wanted-level star rating. */
   wantedStars: number;
+  /** Completed player service runs so far this run. */
+  serviceCompleted?: ServiceCompletionCounts;
 }
 
 /**
@@ -84,6 +103,7 @@ export interface MissionBaseline {
   targetKills: number;
   collected: number;
   elapsed: number;
+  serviceCompleted?: ServiceCompletionCounts;
 }
 
 function eliminateProgress(
@@ -92,6 +112,12 @@ function eliminateProgress(
   base: MissionBaseline,
 ): number {
   return obj.targetsOnly ? ctx.targetKills - base.targetKills : ctx.kills - base.kills;
+}
+
+function serviceProgress(obj: ServiceObjective, ctx: MissionContext, base: MissionBaseline): number {
+  const now = ctx.serviceCompleted?.[obj.service] ?? 0;
+  const then = base.serviceCompleted?.[obj.service] ?? 0;
+  return now - then;
 }
 
 export interface MissionSpec {
@@ -129,6 +155,8 @@ function isObjectiveMet(obj: Objective, ctx: MissionContext, base: MissionBaseli
       return ctx.elapsed - base.elapsed >= obj.seconds;
     case 'wanted':
       return ctx.wantedStars >= obj.stars;
+    case 'service':
+      return serviceProgress(obj, ctx, base) >= obj.count;
   }
 }
 
@@ -184,6 +212,8 @@ export function objectiveProgress(
       };
     case 'wanted':
       return { current: clamp(ctx.wantedStars, 0, obj.stars), goal: obj.stars };
+    case 'service':
+      return { current: clamp(serviceProgress(obj, ctx, base), 0, obj.count), goal: obj.count };
   }
 }
 

@@ -3,10 +3,11 @@ import {
   crosswalkStripeRects,
   tileCenter,
   type City,
+  type Facility,
   type ParkingSpot,
 } from '../../core/city';
 import Phaser from 'phaser';
-import { World, type VehicleKind } from '../../core/world';
+import { SERVICE_SPAWN_SPACING, World, type VehicleKind } from '../../core/world';
 import { CITY_SPEC } from '../citySpec';
 import { createMission, type Mission } from '../../core/mission';
 import {
@@ -284,6 +285,7 @@ export class CityScene extends Phaser.Scene {
       cars: traffic.cars,
       carDrivers: traffic.drivers,
       carKinds: traffic.kinds,
+      carRespawnsAtTow: traffic.respawnsAtTow,
       city: this.city,
       pedestrians: this.spawnPedestrians(),
       policeSpawns: this.policeSpawnPoints(),
@@ -332,7 +334,12 @@ export class CityScene extends Phaser.Scene {
   }
 
   /** A lively mix of cars parked in the marked bays and cars driven by NPC traffic. */
-  private spawnTraffic(): { cars: Car[]; drivers: (TrafficAI | null)[]; kinds: VehicleKind[] } {
+  private spawnTraffic(): {
+    cars: Car[];
+    drivers: (TrafficAI | null)[];
+    kinds: VehicleKind[];
+    respawnsAtTow: boolean[];
+  } {
     const { spec } = this.city;
     const { block, cols, rows } = spec;
     const roadWidth = Math.max(1, Math.min(block, spec.roadWidth ?? 1));
@@ -340,11 +347,39 @@ export class CityScene extends Phaser.Scene {
     const cars: Car[] = [];
     const drivers: (TrafficAI | null)[] = [];
     const kinds: VehicleKind[] = [];
+    const respawnsAtTow: boolean[] = [];
 
-    const pushTrafficCar = (car: Car, driver: TrafficAI | null, kind: VehicleKind): void => {
+    const pushTrafficCar = (
+      car: Car,
+      driver: TrafficAI | null,
+      kind: VehicleKind,
+      options: { respawnsAtTow?: boolean } = {},
+    ): void => {
       cars.push(car);
       drivers.push(driver);
       kinds.push(kind);
+      respawnsAtTow.push(options.respawnsAtTow ?? true);
+    };
+
+    const facilityVehiclePos = (facility: Facility, slot = 1): Vec2 => {
+      const verticalRoad =
+        facility.roadSpawn.x < facility.building.x || facility.roadSpawn.x > facility.building.x + facility.building.w;
+      const offset = slot * SERVICE_SPAWN_SPACING;
+      return verticalRoad
+        ? vec2(facility.roadSpawn.x, facility.roadSpawn.y + offset)
+        : vec2(facility.roadSpawn.x + offset, facility.roadSpawn.y);
+    };
+
+    const pushFacilityVehicle = (facility: Facility, kind: VehicleKind): void => {
+      const pos = facilityVehiclePos(facility);
+      const { tx, ty } = tileCoord(spec, pos);
+      const dir = openDirections(this.city, tx, ty)[0] ?? vec2(1, 0);
+      pushTrafficCar(
+        { pos, heading: Math.atan2(dir.y, dir.x), speed: 0, radius: 14 },
+        null,
+        kind,
+        { respawnsAtTow: false },
+      );
     };
 
     // Parked cars fill a spread-out subset of the kerbside bays (right against
@@ -368,6 +403,16 @@ export class CityScene extends Phaser.Scene {
         { dir },
         'taxi',
       );
+    }
+
+    for (const station of this.city.facilities.filter((facility) => facility.kind === 'policeStation')) {
+      pushFacilityVehicle(station, 'police');
+    }
+    for (const hospital of this.city.facilities.filter((facility) => facility.kind === 'hospital')) {
+      pushFacilityVehicle(hospital, 'ambulance');
+    }
+    for (const yard of this.city.facilities.filter((facility) => facility.kind === 'towYard')) {
+      pushFacilityVehicle(yard, 'tow');
     }
 
     // NPC cars use both directions and both lanes of the wider streets, spread
@@ -424,7 +469,7 @@ export class CityScene extends Phaser.Scene {
       }
       n++;
     }
-    return { cars, drivers, kinds };
+    return { cars, drivers, kinds, respawnsAtTow };
   }
 
   /** Scatter pedestrians along the sidewalks so they start off the road. */
@@ -473,6 +518,15 @@ export class CityScene extends Phaser.Scene {
       target: tileCenter(spec, tx, ty),
       radius: 56,
     });
+    const reachPoint = (target: Vec2, description: string) => ({
+      kind: 'reach' as const,
+      description,
+      target,
+      radius: 64,
+    });
+    const policeStation = this.city.facilities.find((facility) => facility.kind === 'policeStation');
+    const hospital = this.city.facilities.find((facility) => facility.kind === 'hospital');
+    const towYard = this.city.facilities.find((facility) => facility.kind === 'towYard');
 
     const makeName: Mission[] = [
       createMission({
@@ -539,7 +593,47 @@ export class CityScene extends Phaser.Scene {
       }),
     ];
 
-    return [makeName, heat, mostWanted];
+    const service: Mission[] = [
+      createMission({
+        id: 'patrol-shift',
+        title: 'Patrol Shift',
+        objectives: [
+          ...(policeStation ? [reachPoint(policeStation.roadSpawn, 'Reach the marked police station')] : []),
+          { kind: 'service', description: 'Steal a patrol car and bust 1 suspect', service: 'police', count: 1 },
+        ],
+        reward: 1800,
+      }),
+      createMission({
+        id: 'body-run',
+        title: 'Body Run',
+        objectives: [
+          ...(hospital ? [reachPoint(hospital.roadSpawn, 'Reach the marked hospital vehicle bay')] : []),
+          {
+            kind: 'service',
+            description: 'Steal an ambulance and complete 1 recovery — leave a body if you need a job',
+            service: 'ambulance',
+            count: 1,
+          },
+        ],
+        reward: 2200,
+      }),
+      createMission({
+        id: 'wreck-duty',
+        title: 'Wreck Duty',
+        objectives: [
+          ...(towYard ? [reachPoint(towYard.roadSpawn, 'Reach the marked tow yard')] : []),
+          {
+            kind: 'service',
+            description: 'Steal a tow truck and complete 1 recovery — wreck a car first if needed',
+            service: 'tow',
+            count: 1,
+          },
+        ],
+        reward: 2400,
+      }),
+    ];
+
+    return [makeName, heat, mostWanted, service];
   }
 
   private drawCity(): void {
