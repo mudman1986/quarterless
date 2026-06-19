@@ -69,6 +69,14 @@ describe('stepPedestrian fleeing', () => {
 });
 
 describe('stepPedestrian wandering', () => {
+  it('keeps a taxi fare waiting even if a car threat is nearby', () => {
+    const p = ped({ taxiPassengerRole: 'playerFare', state: 'wait' });
+    const threat = vec2(100 + PANIC_RADIUS / 2, 100);
+    const next = stepPedestrian(p, ctx([threat]), 0.1);
+    expect(next.state).toBe('wait');
+    expect(next.pos).toEqual(p.pos);
+  });
+
   it('walks toward its current target', () => {
     const p = ped({ target: vec2(500, 100) });
     const next = stepPedestrian(p, ctx(), 0.1);

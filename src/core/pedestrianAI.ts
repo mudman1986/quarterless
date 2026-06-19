@@ -78,6 +78,10 @@ export function stepPedestrian(
   dt: number,
   rng: () => number = Math.random,
 ): Pedestrian {
+  if (ped.taxiPassengerRole) {
+    return { ...ped, state: 'wait', target: ped.target };
+  }
+
   const threat = nearestThreat(ped.pos, ctx.threats);
   if (threat && distance(ped.pos, threat) < PANIC_RADIUS) {
     let dir = sub(ped.pos, threat);
@@ -89,10 +93,6 @@ export function stepPedestrian(
       pos: add(ped.pos, scale(dir, PED_FLEE_SPEED * dt)),
       heading: angle(dir),
     };
-  }
-
-  if (ped.taxiPassengerRole) {
-    return { ...ped, state: 'wait', target: ped.target };
   }
 
   let target = ped.target;
