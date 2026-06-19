@@ -375,6 +375,20 @@ type PedestrianRouteCache = {
   field: FlowField;
 };
 
+type HazardVehicle = {
+  pos: Vec2;
+  radius: number;
+  speed: number;
+  byPlayer: boolean;
+};
+
+type TickSpatialCache = {
+  blockingCars: readonly Car[];
+  hazardVehicles: readonly HazardVehicle[];
+  fireThreats: readonly Vec2[];
+  civilianThreats: readonly Vec2[];
+};
+
 /**
  * Authoritative game simulation. Holds all entities and advances them with a
  * fixed timestep. Has no rendering or input-device knowledge, so it is fully
@@ -671,9 +685,10 @@ export class World {
     this.lights = tickLights(this.lights, dt);
     this.updateTraffic(dt);
     this.resolveVehicleCollisions(dt);
-    this.updatePedestrians(dt);
+    const tickSpatial = this.buildTickSpatialCache();
+    this.updatePedestrians(dt, tickSpatial);
     this.updateNpcDriving(dt);
-    this.checkRoadKill();
+    this.checkRoadKill(tickSpatial.hazardVehicles);
     this.checkDrowning();
     this.collectAmmo();
     this.updateAmmoRespawns(dt);
@@ -828,13 +843,25 @@ export class World {
     return true;
   }
 
+  private buildTickSpatialCache(): TickSpatialCache {
+    const blockingCars = this.blockingCars();
+    const hazardVehicles = this.hazardVehicles();
+    const fireThreats = this.burningCarThreats();
+    const civilianThreats = [
+      ...(this.drivingCar ? [this.drivingCar.pos] : []),
+      ...fireThreats,
+      ...this.gunfireThreats,
+    ];
+    return { blockingCars, hazardVehicles, fireThreats, civilianThreats };
+  }
+
   /** Every vehicle that can currently run an actor over — player, NPC and police
    * cars and dispatched service vehicles (ambulances, tow trucks) alike — in one
    * normalised list, so the road-kill rule is applied uniformly and any future
    * vehicle type inherits it for free. `byPlayer` flags hits the player is to
    * blame for (those earn heat and score). */
-  private hazardVehicles(): { pos: Vec2; radius: number; speed: number; byPlayer: boolean }[] {
-    const hazards: { pos: Vec2; radius: number; speed: number; byPlayer: boolean }[] = [];
+  private hazardVehicles(): HazardVehicle[] {
+    const hazards: HazardVehicle[] = [];
     for (let i = 0; i < this.cars.length; i++) {
       if (this.wreckedCars[i]) continue;
       const car = this.cars[i];
@@ -857,8 +884,12 @@ export class World {
 
   /** The vehicle currently running over an actor at `pos` with radius `r`, if
    * any: one moving fast enough to be lethal whose body overlaps the actor. */
-  private runningOver(pos: Vec2, r: number): { byPlayer: boolean; speed: number } | null {
-    for (const h of this.hazardVehicles()) {
+  private runningOver(
+    pos: Vec2,
+    r: number,
+    hazards: readonly HazardVehicle[] = this.hazardVehicles(),
+  ): { byPlayer: boolean; speed: number } | null {
+    for (const h of hazards) {
       if (h.speed >= RUN_OVER_SPEED && distance(h.pos, pos) <= h.radius + r) {
         return { byPlayer: h.byPlayer, speed: h.speed };
       }
@@ -2489,25 +2520,30 @@ export class World {
     this.cars[idx] = { ...collided, pos: this.wrapPos(collided.pos) };
   }
 
-  private updatePedestrians(dt: number): void {
+  private updatePedestrians(dt: number, tickSpatial?: TickSpatialCache): void {
     if (this.pedestrians.length === 0) return;
 
-    // A fast-moving player car and any burning vehicle are threats pedestrians flee from.
-    const drivingCar = this.drivingCar;
-    const playerThreats: Vec2[] = drivingCar ? [drivingCar.pos] : [];
-    const fireThreats = this.burningCarThreats();
+    const blockers = tickSpatial?.blockingCars ?? this.blockingCars();
+    const hazards = tickSpatial?.hazardVehicles ?? this.hazardVehicles();
+    const fireThreats = tickSpatial?.fireThreats ?? this.burningCarThreats();
+    const civilianThreats =
+      tickSpatial?.civilianThreats ?? [
+        ...(this.drivingCar ? [this.drivingCar.pos] : []),
+        ...fireThreats,
+        ...this.gunfireThreats,
+      ];
     const survivors: Pedestrian[] = [];
 
     for (const ped of this.pedestrians) {
       const returningTo = ped.returningTo;
-      const threats = returningTo ? fireThreats : [...playerThreats, ...fireThreats, ...this.gunfireThreats];
+      const threats = returningTo ? fireThreats : civilianThreats;
       let routeCache: PedestrianRouteCache | undefined;
       if (returningTo && distance(ped.pos, returningTo) <= ARRIVE_RADIUS) {
         continue; // reached the building entrance: disappear inside
       }
       // Any vehicle moving fast enough runs the pedestrian over; only when the
       // player is at the wheel do they earn heat for it.
-      const hit = this.runningOver(ped.pos, ped.radius);
+      const hit = this.runningOver(ped.pos, ped.radius, hazards);
       if (hit) {
         if (hit.byPlayer) this.registerKill('pedestrian', !!ped.missionTarget); // the player ran them down
         this.addCorpse(ped.pos); // leave a body in the road
@@ -2535,7 +2571,7 @@ export class World {
       );
       // Pedestrians cannot walk through cars too slow to have run them over
       // (handled above); buildings are resolved last so they stay authoritative.
-      const offCars = resolveCircleCircles(stepped.pos, stepped.radius, this.blockingCars());
+      const offCars = resolveCircleCircles(stepped.pos, stepped.radius, blockers);
       let pos = resolveCircleRects(offCars, stepped.radius, this.walls);
       // When calm, a pedestrian keeps to the pavement and only steps onto the
       // road at a crosswalk; a fleeing pedestrian will bolt across anywhere.
@@ -2592,12 +2628,12 @@ export class World {
   }
 
   /** Kill the player if a fast vehicle strikes them while on foot. */
-  private checkRoadKill(): void {
+  private checkRoadKill(hazards: readonly HazardVehicle[] = this.hazardVehicles()): void {
     if (this.status !== 'playing') return;
-    this.runOverFootPolice();
-    this.runOverServiceCrews();
+    this.runOverFootPolice(hazards);
+    this.runOverServiceCrews(hazards);
     if (this.isDriving) return; // safe inside a car
-    const hit = this.runningOver(this.player.pos, this.player.radius);
+    const hit = this.runningOver(this.player.pos, this.player.radius, hazards);
     if (hit) this.applyPlayerDamage(hit.speed);
   }
 
@@ -2959,14 +2995,14 @@ export class World {
 
   /** Any lethal vehicle striking an officer on foot turns them into a corpse.
    * Player-caused impacts still award the higher police kill score and heat. */
-  private runOverFootPolice(): void {
+  private runOverFootPolice(hazards: readonly HazardVehicle[]): void {
     const survivors: Police[] = [];
     for (const cop of this.police) {
       if (cop.kind !== 'foot') {
         survivors.push(cop);
         continue;
       }
-      const hit = this.runningOver(cop.pos, cop.radius);
+      const hit = this.runningOver(cop.pos, cop.radius, hazards);
       if (!hit) {
         survivors.push(cop);
         continue;
@@ -2978,17 +3014,17 @@ export class World {
 
   /** Any lethal vehicle striking a medic or tow operator on foot kills them,
    * leaving a corpse and abandoning the service vehicle for later recovery. */
-  private runOverServiceCrews(): void {
+  private runOverServiceCrews(hazards: readonly HazardVehicle[]): void {
     const crewRadius = 7;
     const ambCrew = this.ambulance?.crew;
     if (ambCrew) {
-      const hit = this.runningOver(ambCrew, crewRadius);
+      const hit = this.runningOver(ambCrew, crewRadius, hazards);
       if (hit) this.killAmbulanceCrew(hit.byPlayer);
     }
     for (let i = this.tows.length - 1; i >= 0; i--) {
       const crew = this.tows[i].crew;
       if (!crew) continue;
-      const hit = this.runningOver(crew, crewRadius);
+      const hit = this.runningOver(crew, crewRadius, hazards);
       if (hit) this.killTowCrew(i, hit.byPlayer);
     }
   }

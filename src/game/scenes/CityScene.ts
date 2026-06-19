@@ -29,6 +29,7 @@ import {
   touchDeviceLikely,
   touchLayoutForViewport,
   type TouchLayout,
+  type TouchSnapshot,
 } from '../input/touchControls';
 import { Sound } from '../audio/Sound';
 import { createGameTextures, TEX } from '../art/textures';
@@ -116,6 +117,8 @@ const PED_SIZE = 10;
 const PEDESTRIAN_SIDEWALK_STRIDE = 6;
 /** Roughly how many of the city's parking bays actually hold a parked car. */
 const PARKED_CAR_BUDGET = 90;
+/** Minimap dots do not need a full 60 Hz redraw to read clearly. */
+const MINIMAP_REFRESH_INTERVAL = 1 / 30;
 /** A focus jump larger than this (px) means the player wrapped a map edge:
  * snap the camera there rather than panning smoothly across the whole city. */
 const WRAP_SNAP_DISTANCE = 256;
@@ -204,6 +207,7 @@ export class CityScene extends Phaser.Scene {
   private minimapDots!: Phaser.GameObjects.Graphics;
 
   private accumulator = 0;
+  private minimapAccumulator = MINIMAP_REFRESH_INTERVAL;
 
   /** Pause / menu state. */
   private paused = false;
@@ -231,6 +235,12 @@ export class CityScene extends Phaser.Scene {
   private prevServiceMissionId: number | null = null;
   private prevServiceStage: 'pickup' | 'return' | '' = '';
   private prevExplosions = 0;
+  private prevHudText = '';
+  private prevBustedMessage = '';
+  private prevLightAxis: 'horizontal' | 'vertical' | null = null;
+  private prevCorpseSignature: string | null = null;
+  private prevTouchControlsKey = '';
+  private touchControlsDirty = true;
   /** Seconds until the next siren wail while a chase is on. */
   private sirenTimer = 0;
   /** Seconds left to show the announcement banner. */
@@ -257,6 +267,7 @@ export class CityScene extends Phaser.Scene {
     this.ammoSprites = [];
     this.parkedSpots = [];
     this.accumulator = 0;
+    this.minimapAccumulator = MINIMAP_REFRESH_INTERVAL;
     this.sirenTimer = 0;
     this.timeOfDay = 0;
     this.prevBullets = 0;
@@ -270,6 +281,12 @@ export class CityScene extends Phaser.Scene {
     this.prevTaxiStage = '';
     this.prevServiceMissionId = null;
     this.prevServiceStage = '';
+    this.prevHudText = '';
+    this.prevBustedMessage = '';
+    this.prevLightAxis = null;
+    this.prevCorpseSignature = null;
+    this.prevTouchControlsKey = '';
+    this.touchControlsDirty = true;
     this.prevTouchConfirm = false;
 
     this.city = buildCity(CITY_SPEC);
@@ -303,9 +320,10 @@ export class CityScene extends Phaser.Scene {
     this.setupCamera();
     this.createHud();
     this.createTouchControls();
-    this.hud.setText(this.hudText());
+    this.syncHudText();
     this.createMinimap();
     this.layoutHud();
+    this.syncMinimap();
 
     this.input_ = new KeyboardInput(this.input.keyboard!);
     this.touchInput_ = new TouchInput(this.input);
@@ -1000,6 +1018,8 @@ export class CityScene extends Phaser.Scene {
    * intersection, reflecting the current shared light phase. */
   private syncLights(): void {
     const axis = greenAxis(this.world.lights);
+    if (axis === this.prevLightAxis) return;
+    this.prevLightAxis = axis;
     const g = this.lightsGfx;
     g.clear();
     const ew = axis === 'horizontal' ? COLORS.lightGreen : COLORS.lightRed;
@@ -1014,6 +1034,9 @@ export class CityScene extends Phaser.Scene {
 
   /** Draw each corpse as a body lying in a pool of blood. */
   private syncCorpses(): void {
+    const signature = this.world.corpses.map((c) => `${c.pos.x},${c.pos.y}`).join('|');
+    if (signature === this.prevCorpseSignature) return;
+    this.prevCorpseSignature = signature;
     const g = this.corpseGfx;
     g.clear();
     for (const c of this.world.corpses) {
@@ -1437,7 +1460,11 @@ export class CityScene extends Phaser.Scene {
     }
 
     this.syncSprites();
-    this.syncMinimap();
+    this.minimapAccumulator += dt;
+    if (this.minimapAccumulator >= MINIMAP_REFRESH_INTERVAL) {
+      this.syncMinimap();
+      this.minimapAccumulator = 0;
+    }
     this.handleEvents();
     this.updateSiren(dt);
     this.updateDayNight(dt);
@@ -1484,6 +1511,7 @@ export class CityScene extends Phaser.Scene {
   private togglePause(): void {
     this.paused = !this.paused;
     this.pauseMenu.setVisible(this.paused);
+    this.touchControlsDirty = true;
     this.refreshPauseTouchButton();
     this.syncTouchControls();
   }
@@ -1493,6 +1521,7 @@ export class CityScene extends Phaser.Scene {
     this.touchOptedOut = this.touchAvailable && !enabled;
     this.touchInput_?.setEnabled(enabled);
     if (!enabled) this.prevTouchConfirm = false;
+    this.touchControlsDirty = true;
     this.refreshPauseTouchButton();
     this.syncTouchControls();
   }
@@ -1741,16 +1770,8 @@ export class CityScene extends Phaser.Scene {
     // instantly so it doesn't sweep across everything in between.
     if (jump > WRAP_SNAP_DISTANCE) this.cameras.main.centerOn(focus.x, focus.y);
 
-    this.hud.setText(this.hudText());
-
-    if (this.world.status !== 'playing') {
-      const title = this.world.isWasted ? 'WASTED' : 'BUSTED';
-      this.bustedText
-        .setVisible(true)
-        .setText(`${title}\n\nRespawning in ${this.world.respawnIn}s\nPress Enter to continue`);
-    } else {
-      this.bustedText.setVisible(false);
-    }
+    this.syncHudText();
+    this.syncBustedText();
   }
 
   /** A "(done/goal)" tag for the current objective, or '' for reach/none. */
@@ -1830,14 +1851,65 @@ export class CityScene extends Phaser.Scene {
       .join('\n');
   }
 
+  private syncHudText(): void {
+    const text = this.hudText();
+    if (text === this.prevHudText) return;
+    this.prevHudText = text;
+    this.hud.setText(text);
+  }
+
+  private syncBustedText(): void {
+    if (this.world.status === 'playing') {
+      this.prevBustedMessage = '';
+      this.bustedText.setVisible(false);
+      return;
+    }
+    const title = this.world.isWasted ? 'WASTED' : 'BUSTED';
+    const text = `${title}\n\nRespawning in ${this.world.respawnIn}s\nPress Enter to continue`;
+    if (text !== this.prevBustedMessage) {
+      this.prevBustedMessage = text;
+      this.bustedText.setText(text);
+    }
+    this.bustedText.setVisible(true);
+  }
+
+  private touchControlsKey(snapshot?: TouchSnapshot): string {
+    const layout = this.touchLayout;
+    if (!layout || !this.touchEnabled) return 'hidden';
+    const confirm = layout.confirm;
+    return [
+      this.paused || this.world.status !== 'playing' ? 'confirm' : 'pause',
+      snapshot?.movePointer ? 'move' : 'rest',
+      snapshot?.actionPressed ? 'action' : 'idle',
+      snapshot?.firePressed ? 'fire' : 'idle',
+      snapshot?.confirmPressed ? 'confirm' : 'idle',
+      (snapshot?.knob.x ?? layout.move.center.x).toFixed(1),
+      (snapshot?.knob.y ?? layout.move.center.y).toFixed(1),
+      layout.move.center.x.toFixed(1),
+      layout.move.center.y.toFixed(1),
+      layout.action.center.x.toFixed(1),
+      layout.action.center.y.toFixed(1),
+      layout.fire.center.x.toFixed(1),
+      layout.fire.center.y.toFixed(1),
+      confirm ? `${confirm.center.x.toFixed(1)},${confirm.center.y.toFixed(1)},${confirm.radius.toFixed(1)}` : 'none',
+      this.cameras.main.zoom.toFixed(3),
+    ].join('|');
+  }
+
   private syncTouchControls(snapshot = this.touchInput_?.snapshot()): void {
     if (!this.touchControlsGfx) return;
-    this.touchControlsGfx.clear();
     const layout = this.touchLayout;
     if (!layout || !this.touchEnabled) {
+      this.prevTouchControlsKey = 'hidden';
+      this.touchControlsDirty = false;
       this.touchControlsGfx.setVisible(false);
       return;
     }
+    const key = this.touchControlsKey(snapshot);
+    if (!this.touchControlsDirty && key === this.prevTouchControlsKey) return;
+    this.prevTouchControlsKey = key;
+    this.touchControlsDirty = false;
+    this.touchControlsGfx.clear();
     this.touchControlsGfx.setVisible(true);
     if (!snapshot) return;
     const confirmMode = this.paused || this.world.status !== 'playing';
@@ -1869,6 +1941,7 @@ export class CityScene extends Phaser.Scene {
     }
 
     const drawPauseGlyph = (center: Vec2, radius: number): void => {
+        this.touchControlsDirty = true;
       const w = radius * 0.28;
       const h = radius * 0.78;
       this.touchControlsGfx.fillStyle(0xf8fafc, 0.9);

@@ -21,6 +21,15 @@ export default defineConfig({
     // Phaser is a large single dependency; this keeps the build log clean
     // without hiding genuinely oversized app chunks.
     chunkSizeWarningLimit: 1600,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules/phaser')) return 'phaser';
+          if (id.includes('node_modules')) return 'vendor';
+          return undefined;
+        },
+      },
+    },
   },
   test: {
     // Unit tests live next to the pure game logic in src/. E2E tests live in e2e/
