@@ -5,6 +5,7 @@ import {
   SCORE_PER_PEDESTRIAN,
   SCORE_PER_POLICE,
   PLAYER_MAX_HEALTH,
+  SERVICE_TIMEOUT,
   VEHICLE_BURN_DURATION,
 } from './world';
 import { type OnFootActor } from './entity';
@@ -2503,6 +2504,41 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     expect(w.ambulance?.job).toEqual(secondBody);
   });
 
+  it('sends a timed-out ambulance into a visible depart phase instead of vanishing', () => {
+    const city = miniCity();
+    const bodyPos = tileCenter(city.spec, 2, 4);
+    const ambPos = tileCenter(city.spec, 3, 4);
+    const w = new World({
+      player: player(),
+      city,
+      viewRadius: 4000,
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+
+    w.corpses = [{ pos: bodyPos, offscreenFor: 0, inFrameFor: AMBULANCE_DISPATCH_DELAY }];
+    w.ambulance = {
+      pos: ambPos,
+      heading: 0,
+      radius: 14,
+      dir: vec2(1, 0),
+      target: bodyPos,
+      job: bodyPos,
+      phase: 'approach',
+      crew: null,
+      pickupElapsed: 0,
+      age: SERVICE_TIMEOUT,
+      speed: 0,
+      blocked: 0,
+      health: 60,
+    };
+
+    w.tick(controls(), 1 / 60);
+
+    expect(w.ambulance).not.toBeNull();
+    expect(w.ambulance?.phase).toBe('depart');
+  });
+
   it('parks the tow truck and sends an operator out to hook the one wreck', () => {
     const city = miniCity();
     const wreck: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 };
@@ -2591,6 +2627,44 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
 
     expect(w.tows).toHaveLength(1);
     expect(w.tows[0]?.targetCar).toBe(1);
+  });
+
+  it('sends a timed-out tow truck into a visible depart phase instead of vanishing', () => {
+    const city = miniCity();
+    const wreck: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 };
+    const towPos = tileCenter(city.spec, 3, 4);
+    const w = new World({
+      player: player(),
+      cars: [wreck],
+      city,
+      carDrivers: [null],
+      viewRadius: 4000,
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+    w.wreckedCars[0] = true;
+    w.tows = [
+      {
+        pos: towPos,
+        heading: 0,
+        radius: 14,
+        dir: vec2(1, 0),
+        target: wreck.pos,
+        job: wreck.pos,
+        targetCar: 0,
+        phase: 'approach',
+        crew: null,
+        pickupElapsed: 0,
+        age: SERVICE_TIMEOUT,
+        speed: 0,
+        blocked: 0,
+        health: 60,
+      },
+    ];
+
+    w.tick(controls(), 1 / 60);
+
+    expect(w.tows.some((tow) => tow.phase === 'depart')).toBe(true);
   });
 
   it('lets the player steal the parked tow truck while the operator is hooking the wreck', () => {

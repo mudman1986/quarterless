@@ -1223,7 +1223,7 @@ export class World {
       return;
     }
     if (driven.age >= SERVICE_TIMEOUT) {
-      this.ambulance = null; // gave up
+      this.ambulance = this.departServiceVehicle(driven); // gave up: leave visibly instead of vanishing
       return;
     }
     if (distance(driven.pos, driven.target) <= this.serviceStopRadius(driven.radius)) {
@@ -1271,7 +1271,10 @@ export class World {
         if (!this.serviceArrived(tow)) alive.push(tow); // still hauling it off-map
         continue;
       }
-      if (tow.age >= SERVICE_TIMEOUT) continue; // gave up / gone
+      if (tow.age >= SERVICE_TIMEOUT) {
+        alive.push(this.departTowTruck(tow)); // gave up: leave visibly instead of vanishing
+        continue;
+      }
       if (this.towedCars[tow.targetCar]) {
         const claimed = new Set(
           this.tows
