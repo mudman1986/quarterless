@@ -2869,6 +2869,103 @@ describe('World mission', () => {
     expect(w.taxiMission?.id).not.toBe(firstFareId);
   });
 
+  it('starts looping police busts after the player steals a patrol car', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    const station = city.facilities.find((facility) => facility.kind === 'policeStation');
+    expect(station).toBeDefined();
+    const patrolPos = tileCenter(city.spec, 3, 4);
+    const farSuspect = tileCenter(city.spec, 8, 4);
+    const backupSuspect = tileCenter(city.spec, 8, 8);
+    const w = new World({
+      player: { ...player(), pos: patrolPos },
+      city,
+      police: [{ pos: patrolPos, heading: 0, radius: 14, kind: 'car', home: station!.spawn, speed: 0, health: 60 }],
+      policeSpawns: [station!.spawn],
+      pedestrians: [pedAt(farSuspect.x, farSuspect.y), pedAt(backupSuspect.x, backupSuspect.y)],
+      walls: city.buildings,
+      sidewalks: city.sidewalks,
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0,
+    });
+
+    w.tick(controls({ action: true }), 0);
+
+    expect(w.isDriving).toBe(true);
+    expect(w.carKind(w.drivingCarIndex!)).toBe('police');
+    expect(w.serviceMission?.kind).toBe('police');
+    expect(w.serviceTarget).toEqual(farSuspect);
+
+    const firstBustId = w.serviceMission!.id;
+    const reward = w.serviceMission!.reward;
+    w.police = [];
+    w.cars[w.drivingCarIndex!] = { ...w.cars[w.drivingCarIndex!], pos: farSuspect, speed: 0 };
+    w.tick(controls(), 1 / 60);
+
+    expect(w.score.current).toBe(reward);
+    expect(w.serviceMission?.kind).toBe('police');
+    expect(w.serviceMission?.id).not.toBe(firstBustId);
+  });
+
+  it('lets the player ambulance recover a corpse for a reward', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    const bodyPos = tileCenter(city.spec, 2, 4);
+    const w = new World({
+      player: player(),
+      cars: [{ pos: tileCenter(city.spec, 3, 4), heading: 0, speed: 0, radius: 14 }],
+      carDrivers: [null],
+      carKinds: ['ambulance'],
+      city,
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0,
+    });
+
+    w.drivingCarIndex = 0;
+    w.corpses = [{ pos: bodyPos, offscreenFor: 0, inFrameFor: 0 }];
+    w.tick(controls(), 1 / 60);
+
+    expect(w.serviceMission?.kind).toBe('ambulance');
+    const reward = w.serviceMission!.reward;
+    w.cars[0] = { ...w.cars[0], pos: bodyPos, speed: 0 };
+    advance(w, 3.1);
+
+    expect(w.corpses).toHaveLength(0);
+    expect(w.score.current).toBe(reward);
+    expect(w.serviceMission).toBeNull();
+    expect(w.pedestrians).toHaveLength(1);
+  });
+
+  it('lets the player tow truck recover a wreck for a reward', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    const towPos = tileCenter(city.spec, 3, 4);
+    const wreckPos = tileCenter(city.spec, 2, 4);
+    const w = new World({
+      player: player(),
+      cars: [
+        { pos: towPos, heading: 0, speed: 0, radius: 14 },
+        { pos: wreckPos, heading: 0, speed: 0, radius: 12 },
+      ],
+      carDrivers: [null, null],
+      carKinds: ['tow', 'car'],
+      city,
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0,
+    });
+
+    w.drivingCarIndex = 0;
+    w.wreckedCars[1] = true;
+    w.tick(controls(), 1 / 60);
+
+    expect(w.serviceMission?.kind).toBe('tow');
+    const reward = w.serviceMission!.reward;
+    w.cars[0] = { ...w.cars[0], pos: wreckPos, speed: 0 };
+    advance(w, 3.1);
+
+    expect(w.towedCars[1]).toBe(true);
+    expect(w.wreckedCars[1]).toBe(false);
+    expect(w.score.current).toBe(reward);
+    expect(w.serviceMission).toBeNull();
+  });
+
   it('tracks a reach-then-eliminate mission and banks the reward', () => {
     const w = new World({
       player: player(), // already at the reach target (0,0)

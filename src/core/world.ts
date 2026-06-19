@@ -246,6 +246,11 @@ const TAXI_COOLDOWN_MAX = 7;
 const TAXI_REWARD_BASE = 250;
 const TAXI_REWARD_PER_PIXEL = 0.35;
 const TAXI_PASSENGER_NAMES = ['Ava', 'Milo', 'Nina', 'Theo', 'Jules', 'Sana', 'Omar', 'Ivy'] as const;
+const PLAYER_POLICE_MIN_TARGET_DISTANCE = 180;
+const PLAYER_POLICE_BUST_RADIUS = 42;
+const PLAYER_POLICE_REWARD = 300;
+const PLAYER_AMBULANCE_REWARD = 200;
+const PLAYER_TOW_REWARD = 225;
 
 /** A dead pedestrian left on the ground (with a blood puddle, rendered later). */
 export interface Corpse {
@@ -342,6 +347,13 @@ interface TaxiCabState {
   fare: TaxiFareState | null;
   cooldown: number;
 }
+
+export type PlayerServiceMissionKind = 'police' | 'ambulance' | 'tow';
+
+export type PlayerServiceMission =
+  | { id: number; kind: 'police'; reward: number; suspectId: number }
+  | { id: number; kind: 'ambulance'; reward: number; pickup: Vec2 }
+  | { id: number; kind: 'tow'; reward: number; targetCar: number };
 
 type DamageableVehicleRef =
   | { kind: 'car'; index: number }
@@ -450,8 +462,14 @@ export class World {
   private elapsed = 0;
   /** The currently active player taxi fare, if the player is driving a cab. */
   private playerTaxiMission: TaxiMission | null = null;
+  /** The player's current side mission in a stolen police, ambulance, or tow vehicle. */
+  private playerServiceMission: PlayerServiceMission | null = null;
+  /** Delay before a newly started ambulance/tow side mission may complete. */
+  private playerServiceActionLock = 0;
   private nextTaxiMissionId = 1;
   private nextTaxiPassengerId = 1;
+  private nextServiceMissionId = 1;
+  private nextPoliceSuspectId = 1;
 
   constructor(opts: WorldOptions) {
     this.player = opts.player;
@@ -584,6 +602,24 @@ export class World {
     return fare.stage === 'pickup' ? (this.findTaxiPassenger(fare.passengerId)?.pos ?? fare.pickup) : fare.dropoff;
   }
 
+  /** The player's active police / ambulance / tow side mission, if any. */
+  get serviceMission(): PlayerServiceMission | null {
+    return this.playerServiceMission;
+  }
+
+  /** The current service-side-mission target: suspect, corpse, or wreck. */
+  get serviceTarget(): Vec2 | null {
+    const mission = this.playerServiceMission;
+    if (!mission) return null;
+    if (mission.kind === 'police') return this.findPoliceSuspect(mission.suspectId)?.pos ?? null;
+    if (mission.kind === 'ambulance') {
+      return this.corpses.some((corpse) => distance(corpse.pos, mission.pickup) <= AMBULANCE_PICKUP_RADIUS)
+        ? mission.pickup
+        : null;
+    }
+    return this.playerTowTargetAvailable(mission.targetCar) ? this.cars[mission.targetCar]?.pos ?? null : null;
+  }
+
   /** Advance the simulation by `dt` seconds. */
   tick(c: Controls, dt: number): void {
     if (this.status !== 'playing') {
@@ -601,6 +637,7 @@ export class World {
       this.updateOnFoot(c, dt, actionPressed);
     }
     this.updateTaxiSystems();
+    this.updatePlayerServiceMissions(dt);
     this.lights = tickLights(this.lights, dt);
     this.updateTraffic(dt);
     this.resolveVehicleCollisions(dt);
@@ -634,6 +671,10 @@ export class World {
     // get into a car they are standing on top of.
     if (actionPressed) {
       if (this.hijackNearbyServiceVehicle(moved.pos, this.enterRadius)) {
+        this.player = moved;
+        return;
+      }
+      if (this.hijackNearbyPatrolCar(moved.pos, this.enterRadius)) {
         this.player = moved;
         return;
       }
@@ -690,6 +731,46 @@ export class World {
       }
     });
     return best;
+  }
+
+  private nearestPatrolCar(p: Vec2, within: number): { vehicle: Police; index: number } | null {
+    let best: { vehicle: Police; index: number } | null = null;
+    let bestDist = within;
+    this.police.forEach((cop, index) => {
+      if (cop.kind !== 'car') return;
+      const d = distance(p, cop.pos);
+      if (d > bestDist) return;
+      best = { vehicle: cop, index };
+      bestDist = d;
+    });
+    return best;
+  }
+
+  private hijackNearbyPatrolCar(p: Vec2, within: number): boolean {
+    const target = this.nearestPatrolCar(p, within);
+    if (!target) return false;
+    const patrol = target.vehicle;
+    const home = this.policeHome(patrol) ?? patrol.pos;
+    const side = fromAngle(patrol.heading + Math.PI / 2, patrol.radius + 12);
+
+    this.police.splice(target.index, 1);
+    this.police.push({
+      pos: add(patrol.pos, side),
+      heading: patrol.heading,
+      radius: 12,
+      kind: 'foot',
+      home,
+      fireCooldown: 0,
+    });
+
+    const idx = this.appendVehicleSlot(
+      { pos: patrol.pos, heading: patrol.heading, speed: 0, radius: patrol.radius },
+      'police',
+      { health: patrol.health ?? CAR_MAX_HEALTH, respawnsAtTow: false },
+    );
+    this.drivingCarIndex = idx;
+    this.wanted = addHeat(this.wanted, CRIME_HEAT.hitPolice);
+    return true;
   }
 
   private hijackNearbyServiceVehicle(p: Vec2, within: number): boolean {
@@ -1879,6 +1960,123 @@ export class World {
     return TAXI_REWARD_BASE + Math.round(distance(pickup, dropoff) * TAXI_REWARD_PER_PIXEL);
   }
 
+  private findPoliceSuspect(suspectId: number): Pedestrian | null {
+    return this.pedestrians.find((ped) => ped.policeSuspectId === suspectId) ?? null;
+  }
+
+  private removePoliceSuspect(suspectId: number): Pedestrian | null {
+    const idx = this.pedestrians.findIndex((ped) => ped.policeSuspectId === suspectId);
+    if (idx === -1) return null;
+    const [suspect] = this.pedestrians.splice(idx, 1);
+    return suspect ?? null;
+  }
+
+  private clearPoliceSuspect(suspectId: number): void {
+    const idx = this.pedestrians.findIndex((ped) => ped.policeSuspectId === suspectId);
+    if (idx === -1) return;
+    const ped = this.pedestrians[idx];
+    this.pedestrians[idx] = { ...ped, policeSuspectId: undefined };
+  }
+
+  private isEligiblePoliceSuspect(ped: Pedestrian): boolean {
+    return this.isEligibleMissionTarget(ped) && !ped.policeSuspectId;
+  }
+
+  private findPoliceSuspectIndex(near: Vec2): number | null {
+    let bestAny: number | null = null;
+    let bestAnyDist = Infinity;
+    let bestFar: number | null = null;
+    let bestFarDist = Infinity;
+
+    for (let i = 0; i < this.pedestrians.length; i++) {
+      const ped = this.pedestrians[i];
+      if (!this.isEligiblePoliceSuspect(ped)) continue;
+      const d = distance(near, ped.pos);
+      if (d < bestAnyDist) {
+        bestAny = i;
+        bestAnyDist = d;
+      }
+      if (d >= PLAYER_POLICE_MIN_TARGET_DISTANCE && d < bestFarDist) {
+        bestFar = i;
+        bestFarDist = d;
+      }
+    }
+
+    return bestFar ?? bestAny;
+  }
+
+  private startPlayerPoliceMission(from: Vec2): PlayerServiceMission | null {
+    const suspectIndex = this.findPoliceSuspectIndex(from);
+    if (suspectIndex === null) return null;
+    const suspectId = this.nextPoliceSuspectId++;
+    const ped = this.pedestrians[suspectIndex];
+    this.pedestrians[suspectIndex] = { ...ped, policeSuspectId: suspectId };
+    return {
+      id: this.nextServiceMissionId++,
+      kind: 'police',
+      reward: PLAYER_POLICE_REWARD,
+      suspectId,
+    };
+  }
+
+  private startPlayerAmbulanceMission(from: Vec2): PlayerServiceMission | null {
+    const corpse = this.nearestCorpse(from);
+    if (!corpse) return null;
+    return {
+      id: this.nextServiceMissionId++,
+      kind: 'ambulance',
+      reward: PLAYER_AMBULANCE_REWARD,
+      pickup: corpse.pos,
+    };
+  }
+
+  private playerTowTargetAvailable(targetCar: number): boolean {
+    return targetCar >= 0 && targetCar < this.cars.length && this.wreckedCars[targetCar] && !this.towedCars[targetCar];
+  }
+
+  private nearestPlayerTowTarget(from: Vec2): number {
+    let best = -1;
+    let bestDist = Infinity;
+    for (let i = 0; i < this.cars.length; i++) {
+      if (!this.playerTowTargetAvailable(i)) continue;
+      const d = distance(from, this.cars[i].pos);
+      if (d < bestDist) {
+        best = i;
+        bestDist = d;
+      }
+    }
+    return best;
+  }
+
+  private startPlayerTowMission(from: Vec2): PlayerServiceMission | null {
+    const targetCar = this.nearestPlayerTowTarget(from);
+    if (targetCar === -1) return null;
+    return {
+      id: this.nextServiceMissionId++,
+      kind: 'tow',
+      reward: PLAYER_TOW_REWARD,
+      targetCar,
+    };
+  }
+
+  private startPlayerServiceMission(kind: PlayerServiceMissionKind, from: Vec2): PlayerServiceMission | null {
+    const mission =
+      kind === 'police'
+        ? this.startPlayerPoliceMission(from)
+        : kind === 'ambulance'
+          ? this.startPlayerAmbulanceMission(from)
+          : this.startPlayerTowMission(from);
+    this.playerServiceActionLock = mission && kind !== 'police' ? SERVICE_PICKUP_DWELL : 0;
+    return mission;
+  }
+
+  private clearPlayerServiceMission(): void {
+    const mission = this.playerServiceMission;
+    if (mission?.kind === 'police') this.clearPoliceSuspect(mission.suspectId);
+    this.playerServiceMission = null;
+    this.playerServiceActionLock = 0;
+  }
+
   private startPlayerTaxiMission(from: Vec2): void {
     const pickup = this.randomTaxiStop(from, TAXI_MIN_PICKUP_DISTANCE);
     const dropoff = this.randomTaxiStop(pickup, TAXI_MIN_DROPOFF_DISTANCE);
@@ -1945,8 +2143,83 @@ export class World {
     this.startPlayerTaxiMission(car.pos);
   }
 
+  private updatePlayerServiceMissions(dt: number): void {
+    const idx = this.drivingCarIndex;
+    const kind = idx === null ? null : this.carKind(idx);
+    if (idx === null || (kind !== 'police' && kind !== 'ambulance' && kind !== 'tow') || this.wreckedCars[idx] || this.carIsBurning(idx)) {
+      if (this.playerServiceMission) this.clearPlayerServiceMission();
+      return;
+    }
+
+    const car = this.cars[idx];
+    if (!this.playerServiceMission || this.playerServiceMission.kind !== kind) {
+      this.clearPlayerServiceMission();
+      this.playerServiceMission = this.startPlayerServiceMission(kind, car.pos);
+    }
+
+    const mission = this.playerServiceMission;
+    if (!mission) return;
+
+    if (this.playerServiceActionLock > 0) {
+      this.playerServiceActionLock = Math.max(0, this.playerServiceActionLock - dt);
+      if (this.playerServiceActionLock > 0) return;
+    }
+
+    if (mission.kind === 'police') {
+      const suspect = this.findPoliceSuspect(mission.suspectId);
+      if (!suspect) {
+        this.clearPlayerServiceMission();
+        this.playerServiceMission = this.startPlayerPoliceMission(car.pos);
+        return;
+      }
+      if (Math.abs(car.speed) > TAXI_SERVICE_SPEED_MAX || distance(car.pos, suspect.pos) > PLAYER_POLICE_BUST_RADIUS) {
+        return;
+      }
+      const busted = this.removePoliceSuspect(mission.suspectId);
+      this.playerServiceMission = null;
+      if (!busted) {
+        this.playerServiceMission = this.startPlayerPoliceMission(car.pos);
+        return;
+      }
+      this.score = award(this.score, mission.reward);
+      this.spawnCivilianPedestrian(this.nearestFacility('policeStation', busted.pos)?.spawn ?? busted.pos);
+      this.playerServiceMission = this.startPlayerPoliceMission(car.pos);
+      return;
+    }
+
+    if (mission.kind === 'ambulance') {
+      const corpseIndex = this.corpses.findIndex((corpse) => distance(corpse.pos, mission.pickup) <= AMBULANCE_PICKUP_RADIUS);
+      if (corpseIndex === -1) {
+        this.playerServiceMission = this.startPlayerAmbulanceMission(car.pos);
+        return;
+      }
+      if (Math.abs(car.speed) > TAXI_SERVICE_SPEED_MAX || distance(car.pos, this.corpses[corpseIndex].pos) > AMBULANCE_PICKUP_RADIUS) {
+        return;
+      }
+      const [corpse] = this.corpses.splice(corpseIndex, 1);
+      if (!corpse) return;
+      this.respawnPedestrian(corpse.pos);
+      this.score = award(this.score, mission.reward);
+      this.playerServiceMission = this.startPlayerAmbulanceMission(car.pos);
+      return;
+    }
+
+    if (!this.playerTowTargetAvailable(mission.targetCar)) {
+      this.playerServiceMission = this.startPlayerTowMission(car.pos);
+      return;
+    }
+    const wreck = this.cars[mission.targetCar];
+    if (Math.abs(car.speed) > TAXI_SERVICE_SPEED_MAX || distance(car.pos, wreck.pos) > AMBULANCE_PICKUP_RADIUS) {
+      return;
+    }
+    this.towedCars[mission.targetCar] = true;
+    this.respawnCarAtTowYard(mission.targetCar);
+    this.score = award(this.score, mission.reward);
+    this.playerServiceMission = this.startPlayerTowMission(car.pos);
+  }
+
   private isEligibleTaxiPassenger(ped: Pedestrian): boolean {
-    return ped.state === 'wander' && !ped.returningTo && !ped.uniform && !ped.missionTarget && !ped.taxiPassengerRole;
+    return ped.state === 'wander' && !ped.returningTo && !ped.uniform && !ped.missionTarget && !ped.taxiPassengerRole && !ped.policeSuspectId;
   }
 
   private findTaxiHailPassengerIndex(near: Vec2): number | null {
@@ -2177,6 +2450,7 @@ export class World {
     this.health = damage(this.health, amount);
     if (isDead(this.health)) {
       this.cancelPlayerTaxiMission(this.focus);
+      this.clearPlayerServiceMission();
       this.status = 'wasted';
       this.bustedTimer = RESPAWN_DELAY;
       this.endChase(); // dying ends the chase: the heat clears at once
@@ -2327,9 +2601,12 @@ export class World {
   /** Start a car burning in place; it explodes after a short escape window. */
   private igniteCar(idx: number, byPlayer: boolean): void {
     if (this.wreckedCars[idx] || this.carIsBurning(idx)) return;
-    if (this.carKind(idx) === 'taxi') {
+    const kind = this.carKind(idx);
+    if (kind === 'taxi') {
       this.clearNpcTaxiFare(idx, this.cars[idx].pos);
       if (idx === this.drivingCarIndex) this.cancelPlayerTaxiMission(this.cars[idx].pos);
+    } else if (idx === this.drivingCarIndex && (kind === 'police' || kind === 'ambulance' || kind === 'tow')) {
+      this.clearPlayerServiceMission();
     }
     this.towedCars[idx] = false;
     this.carHealth[idx] = 0;
@@ -2407,7 +2684,7 @@ export class World {
   }
 
   private isEligibleMissionTarget(ped: Pedestrian): boolean {
-    return !ped.returningTo && !ped.uniform && !ped.taxiPassengerRole;
+    return !ped.returningTo && !ped.uniform && !ped.taxiPassengerRole && !ped.policeSuspectId;
   }
 
   private syncMissionTargets(): void {
@@ -2757,6 +3034,7 @@ export class World {
     if (!this.bustable) return; // in a car, you must have been stopped long enough
     if (this.police.some((cop) => cop.kind === 'foot' && !cop.returningHome && hasCaught(cop, this.focus))) {
       this.cancelPlayerTaxiMission(this.focus);
+      this.clearPlayerServiceMission();
       this.status = 'busted';
       this.bustedTimer = RESPAWN_DELAY;
       this.endChase(); // the arrest ends the chase: clear the wanted level now
@@ -2805,6 +3083,7 @@ export class World {
 
   /** Reset the player to the appropriate respawn point, clear the heat, and resume play. */
   private respawn(): void {
+    this.clearPlayerServiceMission();
     this.player = { ...this.player, pos: this.playerRespawnPoint(), angle: 0 };
     this.wanted = createWanted();
     this.police = [];
@@ -2817,6 +3096,8 @@ export class World {
     this.health = createHealth(this.health.max);
     this.drivingCarIndex = null;
     this.playerTaxiMission = null;
+    this.playerServiceMission = null;
+    this.playerServiceActionLock = 0;
     this.carStoppedForBusted = 0;
     this.bustedTimer = 0;
     this.status = 'playing';

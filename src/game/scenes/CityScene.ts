@@ -52,6 +52,9 @@ const COLORS = {
   bullet: 0xfde047,
   marker: 0x22d3ee,
   taxiMarker: 0xfacc15,
+  policeMarker: 0x60a5fa,
+  ambulanceMarker: 0xf8fafc,
+  towMarker: 0xf59e0b,
   ammo: 0xfacc15,
   // Water & bridges.
   water: 0x1d4e6f,
@@ -81,6 +84,9 @@ const COLORS = {
   mmPolice: 0x3b82f6,
   mmTarget: 0x22d3ee,
   mmTaxiTarget: 0xfacc15,
+  mmPoliceTarget: 0x60a5fa,
+  mmAmbulanceTarget: 0xf8fafc,
+  mmTowTarget: 0xf59e0b,
   mmAmmo: 0xfacc15,
 };
 
@@ -163,6 +169,7 @@ export class CityScene extends Phaser.Scene {
   private ammoSprites: { sprite: Phaser.GameObjects.Image; pickup: AmmoPickup }[] = [];
   private missionMarker!: Phaser.GameObjects.Arc;
   private taxiMarker!: Phaser.GameObjects.Arc;
+  private serviceMarker!: Phaser.GameObjects.Arc;
   private explosionGfx!: Phaser.GameObjects.Graphics;
   private burningGfx!: Phaser.GameObjects.Graphics;
   private lightsGfx!: Phaser.GameObjects.Graphics;
@@ -217,6 +224,7 @@ export class CityScene extends Phaser.Scene {
   private prevObjective = '';
   private prevTaxiMissionId: number | null = null;
   private prevTaxiStage: 'pickup' | 'dropoff' | '' = '';
+  private prevServiceMissionId: number | null = null;
   private prevExplosions = 0;
   /** Seconds until the next siren wail while a chase is on. */
   private sirenTimer = 0;
@@ -255,6 +263,7 @@ export class CityScene extends Phaser.Scene {
     this.prevObjective = '';
     this.prevTaxiMissionId = null;
     this.prevTaxiStage = '';
+    this.prevServiceMissionId = null;
     this.prevTouchConfirm = false;
 
     this.city = buildCity(CITY_SPEC);
@@ -729,6 +738,11 @@ export class CityScene extends Phaser.Scene {
     this.taxiMarker = this.add
       .circle(0, 0, 46, COLORS.taxiMarker, 0.12)
       .setStrokeStyle(3, COLORS.taxiMarker)
+      .setDepth(3)
+      .setVisible(false);
+    this.serviceMarker = this.add
+      .circle(0, 0, 46, COLORS.marker, 0.12)
+      .setStrokeStyle(3, COLORS.marker)
       .setDepth(3)
       .setVisible(false);
 
@@ -1253,6 +1267,12 @@ export class CityScene extends Phaser.Scene {
       g.lineStyle(2, COLORS.mmTaxiTarget, 1);
       g.strokeCircle(taxiTarget.x * scale, taxiTarget.y * scale, 4);
     }
+    const serviceMission = this.world.serviceMission;
+    const serviceTarget = this.world.serviceTarget;
+    if (serviceMission && serviceTarget) {
+      g.lineStyle(2, this.serviceMarkerColor(serviceMission.kind, true), 1);
+      g.strokeCircle(serviceTarget.x * scale, serviceTarget.y * scale, 4);
+    }
 
     g.fillStyle(COLORS.mmAmmo, 1);
     for (const a of this.world.ammoPickups) {
@@ -1396,6 +1416,16 @@ export class CityScene extends Phaser.Scene {
         this.showBanner(`Drop off ${taxiMission.passengerName}`);
       }
     }
+    const serviceMission = w.serviceMission;
+    if (serviceMission && serviceMission.id !== this.prevServiceMissionId) {
+      this.showBanner(
+        serviceMission.kind === 'police'
+          ? 'POLICE JOB\nBust the suspect'
+          : serviceMission.kind === 'ambulance'
+            ? 'AMBULANCE RUN\nRecover the body'
+            : 'TOW JOB\nRecover the wreck',
+      );
+    }
 
     this.prevBullets = w.bullets.length;
     this.prevKills = w.kills;
@@ -1405,7 +1435,14 @@ export class CityScene extends Phaser.Scene {
     this.prevObjective = objective;
     this.prevTaxiMissionId = taxiMission?.id ?? null;
     this.prevTaxiStage = taxiMission?.stage ?? '';
+    this.prevServiceMissionId = serviceMission?.id ?? null;
     this.prevExplosions = w.explosionsTriggered;
+  }
+
+  private serviceMarkerColor(kind: 'police' | 'ambulance' | 'tow', minimap = false): number {
+    if (kind === 'police') return minimap ? COLORS.mmPoliceTarget : COLORS.policeMarker;
+    if (kind === 'ambulance') return minimap ? COLORS.mmAmbulanceTarget : COLORS.ambulanceMarker;
+    return minimap ? COLORS.mmTowTarget : COLORS.towMarker;
   }
 
   /** Flash a banner message for a few seconds. */
@@ -1526,6 +1563,18 @@ export class CityScene extends Phaser.Scene {
     } else {
       this.taxiMarker.setVisible(false);
     }
+    const serviceMission = this.world.serviceMission;
+    const serviceTarget = this.world.serviceTarget;
+    if (serviceMission && serviceTarget) {
+      const color = this.serviceMarkerColor(serviceMission.kind);
+      this.serviceMarker
+        .setVisible(true)
+        .setPosition(serviceTarget.x, serviceTarget.y)
+        .setFillStyle(color, 0.12)
+        .setStrokeStyle(3, color);
+    } else {
+      this.serviceMarker.setVisible(false);
+    }
 
     const p = this.world.player;
     this.playerSprite.setPosition(p.pos.x, p.pos.y);
@@ -1574,6 +1623,19 @@ export class CityScene extends Phaser.Scene {
     const taxi = w.taxiMission
       ? `TAXI: ${w.taxiMission.stage === 'pickup' ? `Pick up ${w.taxiMission.passengerName}` : `Drop off ${w.taxiMission.passengerName}`}  +$${w.taxiMission.reward}`
       : '';
+    const service = w.serviceMission
+      ? w.serviceMission.kind === 'police'
+        ? `POLICE: Bust the suspect  +$${w.serviceMission.reward}`
+        : w.serviceMission.kind === 'ambulance'
+          ? `AMBULANCE: Recover the body  +$${w.serviceMission.reward}`
+          : `TOW: Recover the wreck  +$${w.serviceMission.reward}`
+      : w.drivingCarIndex !== null && w.carKind(w.drivingCarIndex) === 'police'
+        ? 'POLICE: No suspect available'
+        : w.drivingCarIndex !== null && w.carKind(w.drivingCarIndex) === 'ambulance'
+          ? 'AMBULANCE: No corpses to recover'
+          : w.drivingCarIndex !== null && w.carKind(w.drivingCarIndex) === 'tow'
+            ? 'TOW: No wrecks to recover'
+            : '';
 
     const ammo =
       w.weapon.ammo <= 4
@@ -1588,7 +1650,7 @@ export class CityScene extends Phaser.Scene {
         ? `DRIVING ${speed}  ·  WASD steer · Space exit · F shoot · P pause`
         : 'ON FOOT  ·  WASD move · Space car · F shoot · P pause';
 
-    return [`WANTED ${stars}    HP ${hp}`, `${money}    ${ammo}`, mission, taxi, status]
+    return [`WANTED ${stars}    HP ${hp}`, `${money}    ${ammo}`, mission, taxi, service, status]
       .filter(Boolean)
       .join('\n');
   }

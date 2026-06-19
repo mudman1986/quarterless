@@ -19,6 +19,8 @@ export interface Pedestrian {
   taxiPassengerId?: number;
   /** Whether this pedestrian is a player fare or an ambient NPC taxi fare. */
   taxiPassengerRole?: 'playerFare' | 'npcFare';
+  /** Stable id for a suspect the player is meant to bust in a stolen police car. */
+  policeSuspectId?: number;
 }
 
 export interface PedestrianContext {
