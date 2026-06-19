@@ -6,7 +6,7 @@ import {
   type ParkingSpot,
 } from '../../core/city';
 import Phaser from 'phaser';
-import { World } from '../../core/world';
+import { World, type VehicleKind } from '../../core/world';
 import { CITY_SPEC } from '../citySpec';
 import { createMission, type Mission } from '../../core/mission';
 import {
@@ -16,7 +16,7 @@ import {
 } from '../../core/highScore';
 import type { Car } from '../../core/vehicle';
 import type { Pedestrian } from '../../core/pedestrianAI';
-import type { TrafficAI } from '../../core/trafficAI';
+import { type TrafficAI, openDirections, tileCoord } from '../../core/trafficAI';
 import type { AmmoPickup } from '../../core/weapon';
 import { vec2, type Vec2 } from '../../core/vector';
 import { uiScreenToWorld, uiCounterScale, uiAnchorOnScreen } from '../../core/hudLayout';
@@ -42,13 +42,16 @@ const COLORS = {
   policeBuilding: 0x1d4ed8,
   hospitalBuilding: 0xf8fafc,
   towBuilding: 0xf59e0b,
+  taxiBuilding: 0xfacc15,
   policeRoof: 0x0f285f,
   hospitalRoof: 0xe2e8f0,
   towRoof: 0x92400e,
+  taxiRoof: 0x854d0e,
   window: 0xfde68a,
   windowDark: 0x334155,
   bullet: 0xfde047,
   marker: 0x22d3ee,
+  taxiMarker: 0xfacc15,
   ammo: 0xfacc15,
   // Water & bridges.
   water: 0x1d4e6f,
@@ -72,10 +75,12 @@ const COLORS = {
   mmPoliceBuilding: 0x2563eb,
   mmHospitalBuilding: 0xe5e7eb,
   mmTowBuilding: 0xf59e0b,
+  mmTaxiBuilding: 0xfacc15,
   mmWater: 0x1d4e6f,
   mmPlayer: 0x39ff14,
   mmPolice: 0x3b82f6,
   mmTarget: 0x22d3ee,
+  mmTaxiTarget: 0xfacc15,
   mmAmmo: 0xfacc15,
 };
 
@@ -157,6 +162,7 @@ export class CityScene extends Phaser.Scene {
   private policeBulletSprites: Phaser.GameObjects.Rectangle[] = [];
   private ammoSprites: { sprite: Phaser.GameObjects.Image; pickup: AmmoPickup }[] = [];
   private missionMarker!: Phaser.GameObjects.Arc;
+  private taxiMarker!: Phaser.GameObjects.Arc;
   private explosionGfx!: Phaser.GameObjects.Graphics;
   private burningGfx!: Phaser.GameObjects.Graphics;
   private lightsGfx!: Phaser.GameObjects.Graphics;
@@ -209,6 +215,8 @@ export class CityScene extends Phaser.Scene {
   private prevMissionComplete = false;
   private prevMissionId: string | null = null;
   private prevObjective = '';
+  private prevTaxiMissionId: number | null = null;
+  private prevTaxiStage: 'pickup' | 'dropoff' | '' = '';
   private prevExplosions = 0;
   /** Seconds until the next siren wail while a chase is on. */
   private sirenTimer = 0;
@@ -245,6 +253,8 @@ export class CityScene extends Phaser.Scene {
     this.prevMissionComplete = false;
     this.prevMissionId = null;
     this.prevObjective = '';
+    this.prevTaxiMissionId = null;
+    this.prevTaxiStage = '';
     this.prevTouchConfirm = false;
 
     this.city = buildCity(CITY_SPEC);
@@ -259,6 +269,7 @@ export class CityScene extends Phaser.Scene {
       player: { pos: spawn, angle: 0, radius: PLAYER_SIZE / 2 },
       cars: traffic.cars,
       carDrivers: traffic.drivers,
+      carKinds: traffic.kinds,
       city: this.city,
       pedestrians: this.spawnPedestrians(),
       policeSpawns: this.policeSpawnPoints(),
@@ -307,13 +318,20 @@ export class CityScene extends Phaser.Scene {
   }
 
   /** A lively mix of cars parked in the marked bays and cars driven by NPC traffic. */
-  private spawnTraffic(): { cars: Car[]; drivers: (TrafficAI | null)[] } {
+  private spawnTraffic(): { cars: Car[]; drivers: (TrafficAI | null)[]; kinds: VehicleKind[] } {
     const { spec } = this.city;
     const { block, cols, rows } = spec;
     const roadWidth = Math.max(1, Math.min(block, spec.roadWidth ?? 1));
     const lanesPerDirection = Math.max(1, Math.floor(roadWidth / 2));
     const cars: Car[] = [];
     const drivers: (TrafficAI | null)[] = [];
+    const kinds: VehicleKind[] = [];
+
+    const pushTrafficCar = (car: Car, driver: TrafficAI | null, kind: VehicleKind): void => {
+      cars.push(car);
+      drivers.push(driver);
+      kinds.push(kind);
+    };
 
     // Parked cars fill a spread-out subset of the kerbside bays (right against
     // the sidewalks), kept to a budget so the streets — and the collision
@@ -322,10 +340,21 @@ export class CityScene extends Phaser.Scene {
     const stride = Math.max(1, Math.ceil(spots.length / PARKED_CAR_BUDGET));
     spots.forEach((spot, i) => {
       if (i % stride !== 0) return;
-      cars.push({ pos: spot.pos, heading: spot.heading, speed: 0, radius: 14 });
-      drivers.push(null);
+      pushTrafficCar({ pos: spot.pos, heading: spot.heading, speed: 0, radius: 14 }, null, 'car');
       this.parkedSpots.push(spot);
     });
+
+    // Dedicated taxis start from the two taxi depots so they read as part of
+    // the city rather than random yellow traffic.
+    for (const depot of this.city.facilities.filter((facility) => facility.kind === 'taxiDepot')) {
+      const { tx, ty } = tileCoord(spec, depot.roadSpawn);
+      const dir = openDirections(this.city, tx, ty)[0] ?? vec2(1, 0);
+      pushTrafficCar(
+        { pos: depot.roadSpawn, heading: Math.atan2(dir.y, dir.x), speed: 0, radius: 14 },
+        { dir },
+        'taxi',
+      );
+    }
 
     // NPC cars use both directions and both lanes of the wider streets, spread
     // across vertical and horizontal corridors so the traffic system exercises
@@ -340,13 +369,19 @@ export class CityScene extends Phaser.Scene {
       const northTy = Math.max(block * 2, rows - block * 2 - 1);
       if (southTx < cols && !this.city.isWater(southTx, southTy)) {
         const start = tileCenter(spec, southTx, southTy);
-        cars.push({ pos: start, heading: Math.PI / 2, speed: 0, radius: 14 });
-        drivers.push({ dir: vec2(0, 1) });
+        pushTrafficCar(
+          { pos: start, heading: Math.PI / 2, speed: 0, radius: 14 },
+          { dir: vec2(0, 1) },
+          n % 6 === 0 ? 'taxi' : 'car',
+        );
       }
       if (northTx < cols && !this.city.isWater(northTx, northTy)) {
         const start = tileCenter(spec, northTx, northTy);
-        cars.push({ pos: start, heading: -Math.PI / 2, speed: 0, radius: 14 });
-        drivers.push({ dir: vec2(0, -1) });
+        pushTrafficCar(
+          { pos: start, heading: -Math.PI / 2, speed: 0, radius: 14 },
+          { dir: vec2(0, -1) },
+          n % 7 === 0 ? 'taxi' : 'car',
+        );
       }
       n++;
     }
@@ -359,17 +394,23 @@ export class CityScene extends Phaser.Scene {
       const westTy = ty + westLane;
       if (eastTy < rows && !this.city.isWater(eastTx, eastTy)) {
         const start = tileCenter(spec, eastTx, eastTy);
-        cars.push({ pos: start, heading: 0, speed: 0, radius: 14 });
-        drivers.push({ dir: vec2(1, 0) });
+        pushTrafficCar(
+          { pos: start, heading: 0, speed: 0, radius: 14 },
+          { dir: vec2(1, 0) },
+          n % 6 === 0 ? 'taxi' : 'car',
+        );
       }
       if (westTy < rows && !this.city.isWater(westTx, westTy)) {
         const start = tileCenter(spec, westTx, westTy);
-        cars.push({ pos: start, heading: Math.PI, speed: 0, radius: 14 });
-        drivers.push({ dir: vec2(-1, 0) });
+        pushTrafficCar(
+          { pos: start, heading: Math.PI, speed: 0, radius: 14 },
+          { dir: vec2(-1, 0) },
+          n % 7 === 0 ? 'taxi' : 'car',
+        );
       }
       n++;
     }
-    return { cars, drivers };
+    return { cars, drivers, kinds };
   }
 
   /** Scatter pedestrians along the sidewalks so they start off the road. */
@@ -527,6 +568,8 @@ export class CityScene extends Phaser.Scene {
             ? COLORS.hospitalBuilding
             : facility?.kind === 'towYard'
               ? COLORS.towBuilding
+              : facility?.kind === 'taxiDepot'
+                ? COLORS.taxiBuilding
               : shades[i % shades.length];
       const roofColor =
         facility?.kind === 'policeStation'
@@ -535,6 +578,8 @@ export class CityScene extends Phaser.Scene {
             ? COLORS.hospitalRoof
             : facility?.kind === 'towYard'
               ? COLORS.towRoof
+              : facility?.kind === 'taxiDepot'
+                ? COLORS.taxiRoof
               : COLORS.buildingRoof;
       g.fillStyle(bodyColor, 1);
       g.fillRect(b.x, b.y, b.w, b.h);
@@ -572,6 +617,19 @@ export class CityScene extends Phaser.Scene {
         for (let k = 0; k < 5; k++) {
           g.fillRect(b.x + 16 + k * 18, b.y + b.h / 2 - 4, 10, 8);
         }
+      } else if (facility?.kind === 'taxiDepot') {
+        const cx = b.x + b.w / 2;
+        const cy = b.y + b.h / 2;
+        g.fillStyle(0x111114, 1);
+        for (let row = 0; row < 2; row++) {
+          for (let col = 0; col < 3; col++) {
+            if ((row + col) % 2 === 0) {
+              g.fillRect(cx - 18 + col * 12, cy - 10 + row * 10, 10, 8);
+            }
+          }
+        }
+        g.fillStyle(0x111114, 1);
+        g.fillRect(cx - 4, cy + 6, 8, 18);
       }
     });
 
@@ -666,6 +724,11 @@ export class CityScene extends Phaser.Scene {
     this.missionMarker = this.add
       .circle(0, 0, 52, COLORS.marker, 0.12)
       .setStrokeStyle(3, COLORS.marker)
+      .setDepth(3)
+      .setVisible(false);
+    this.taxiMarker = this.add
+      .circle(0, 0, 46, COLORS.taxiMarker, 0.12)
+      .setStrokeStyle(3, COLORS.taxiMarker)
       .setDepth(3)
       .setVisible(false);
 
@@ -1142,7 +1205,9 @@ export class CityScene extends Phaser.Scene {
           ? COLORS.mmPoliceBuilding
           : facility.kind === 'hospital'
             ? COLORS.mmHospitalBuilding
-            : COLORS.mmTowBuilding,
+            : facility.kind === 'towYard'
+              ? COLORS.mmTowBuilding
+              : COLORS.mmTaxiBuilding,
         1,
       );
       const b = facility.building;
@@ -1182,6 +1247,11 @@ export class CityScene extends Phaser.Scene {
     if (objective && objective.kind === 'reach') {
       g.lineStyle(2, COLORS.mmTarget, 1);
       g.strokeCircle(objective.target.x * scale, objective.target.y * scale, 4);
+    }
+    const taxiTarget = this.world.taxiTarget;
+    if (taxiTarget) {
+      g.lineStyle(2, COLORS.mmTaxiTarget, 1);
+      g.strokeCircle(taxiTarget.x * scale, taxiTarget.y * scale, 4);
     }
 
     g.fillStyle(COLORS.mmAmmo, 1);
@@ -1318,12 +1388,23 @@ export class CityScene extends Phaser.Scene {
       this.showBanner(objective); // next objective within the same mission
     }
 
+    const taxiMission = w.taxiMission;
+    if (taxiMission) {
+      if (taxiMission.id !== this.prevTaxiMissionId) {
+        this.showBanner(`TAXI FARE\nPick up ${taxiMission.passengerName}`);
+      } else if (taxiMission.stage !== this.prevTaxiStage) {
+        this.showBanner(`Drop off ${taxiMission.passengerName}`);
+      }
+    }
+
     this.prevBullets = w.bullets.length;
     this.prevKills = w.kills;
     this.prevStatus = w.status;
     this.prevMissionComplete = w.missionComplete;
     this.prevMissionId = missionId;
     this.prevObjective = objective;
+    this.prevTaxiMissionId = taxiMission?.id ?? null;
+    this.prevTaxiStage = taxiMission?.stage ?? '';
     this.prevExplosions = w.explosionsTriggered;
   }
 
@@ -1338,6 +1419,7 @@ export class CityScene extends Phaser.Scene {
     if (kind === 'ambulance') return TEX.ambulance;
     if (kind === 'tow') return TEX.tow;
     if (kind === 'police') return TEX.policeCar;
+    if (kind === 'taxi') return TEX.taxi;
     return index === this.world.drivingCarIndex ? TEX.playerCar : TEX.npcCar;
   }
 
@@ -1387,6 +1469,8 @@ export class CityScene extends Phaser.Scene {
         .setPosition(ped.pos.x, ped.pos.y);
       if (ped.missionTarget) {
         sprite.setTint(COLORS.marker);
+      } else if (ped.taxiPassengerRole === 'playerFare') {
+        sprite.setTint(COLORS.taxiMarker);
       } else {
         sprite.clearTint();
       }
@@ -1436,6 +1520,12 @@ export class CityScene extends Phaser.Scene {
     } else {
       this.missionMarker.setVisible(false);
     }
+    const taxiTarget = this.world.taxiTarget;
+    if (taxiTarget) {
+      this.taxiMarker.setVisible(true).setPosition(taxiTarget.x, taxiTarget.y);
+    } else {
+      this.taxiMarker.setVisible(false);
+    }
 
     const p = this.world.player;
     this.playerSprite.setPosition(p.pos.x, p.pos.y);
@@ -1481,6 +1571,9 @@ export class CityScene extends Phaser.Scene {
       : w.mission
         ? `▶ ${w.mission.title}: ${w.missionObjective?.description ?? ''}${this.progressText()}`
         : '';
+    const taxi = w.taxiMission
+      ? `TAXI: ${w.taxiMission.stage === 'pickup' ? `Pick up ${w.taxiMission.passengerName}` : `Drop off ${w.taxiMission.passengerName}`}  +$${w.taxiMission.reward}`
+      : '';
 
     const ammo =
       w.weapon.ammo <= 4
@@ -1495,7 +1588,7 @@ export class CityScene extends Phaser.Scene {
         ? `DRIVING ${speed}  ·  WASD steer · Space exit · F shoot · P pause`
         : 'ON FOOT  ·  WASD move · Space car · F shoot · P pause';
 
-    return [`WANTED ${stars}    HP ${hp}`, `${money}    ${ammo}`, mission, status]
+    return [`WANTED ${stars}    HP ${hp}`, `${money}    ${ammo}`, mission, taxi, status]
       .filter(Boolean)
       .join('\n');
   }

@@ -6,7 +6,7 @@ export interface Pedestrian {
   pos: Vec2;
   heading: number;
   radius: number;
-  state: 'wander' | 'flee';
+  state: 'wander' | 'flee' | 'wait';
   /** Current point the pedestrian is walking toward while wandering. */
   target: Vec2;
   /** Whether this pedestrian is currently a designated mission target. */
@@ -15,6 +15,10 @@ export interface Pedestrian {
   returningTo?: Vec2;
   /** Optional service uniform used by special pedestrians such as medics. */
   uniform?: 'medic' | 'towWorker';
+  /** Stable id for a taxi passenger a cab is waiting to collect. */
+  taxiPassengerId?: number;
+  /** Whether this pedestrian is a player fare or an ambient NPC taxi fare. */
+  taxiPassengerRole?: 'playerFare' | 'npcFare';
 }
 
 export interface PedestrianContext {
@@ -85,6 +89,10 @@ export function stepPedestrian(
       pos: add(ped.pos, scale(dir, PED_FLEE_SPEED * dt)),
       heading: angle(dir),
     };
+  }
+
+  if (ped.taxiPassengerRole) {
+    return { ...ped, state: 'wait', target: ped.target };
   }
 
   let target = ped.target;

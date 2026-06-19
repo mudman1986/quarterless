@@ -25,6 +25,8 @@ export interface TrafficAI {
   laneTarget?: number;
   /** Temporary road target while a panicked driver is trying to get away. */
   escapeTarget?: Vec2;
+  /** Temporary road target while following a specific route, such as a taxi fare. */
+  routeTarget?: Vec2;
 }
 
 /** Cruising speed (px/s) of NPC traffic. */
@@ -100,7 +102,11 @@ export function stepTraffic(
   rng: () => number = Math.random,
 ): { car: Car; ai: TrafficAI } {
   const v: RoadVehicle = { pos: car.pos, heading: car.heading, dir: ai.dir };
-  const chooser = ai.escapeTarget ? seekChooser(ai.escapeTarget) : wanderChooser(rng, TRAFFIC_TURN_CHANCE);
+  const chooser = ai.escapeTarget
+    ? seekChooser(ai.escapeTarget)
+    : ai.routeTarget
+      ? seekChooser(ai.routeTarget)
+      : wanderChooser(rng, TRAFFIC_TURN_CHANCE);
   const next = stepRoadVehicle(v, city, dt, speed, chooser, ai.laneTarget);
   return {
     car: { ...car, pos: next.pos, heading: next.heading, speed },

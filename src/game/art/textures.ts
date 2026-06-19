@@ -9,6 +9,7 @@ import Phaser from 'phaser';
 export const TEX = {
   playerCar: 'tex-player-car',
   npcCar: 'tex-npc-car',
+  taxi: 'tex-taxi',
   policeCar: 'tex-police-car',
   ambulance: 'tex-ambulance',
   tow: 'tex-tow',
@@ -157,6 +158,23 @@ function drawTowTruck(g: Phaser.GameObjects.Graphics): void {
   g.fillRect(SVC_W - 2, 3, 2, 3);
   g.fillRect(SVC_W - 2, SVC_H - 6, 2, 3);
 }
+
+/** Draw a top-down taxi (pointing +x): bright yellow with a checker belt and roof sign. */
+function drawTaxi(g: Phaser.GameObjects.Graphics): void {
+  drawCar(g, 0xfacc15, 0xa16207);
+
+  g.fillStyle(0x111114, 1);
+  for (let i = 0; i < 5; i++) {
+    const x = 7 + i * 4;
+    g.fillRect(x, 4, 2, 2);
+    g.fillRect(x + 2, CAR_H - 6, 2, 2);
+  }
+
+  g.fillStyle(0xf8fafc, 1);
+  g.fillRoundedRect(13, 1, 8, 3, 1.5);
+  g.fillStyle(0x111114, 1);
+  g.fillRect(15, 2, 4, 1);
+}
 function drawPerson(g: Phaser.GameObjects.Graphics, shirt: number, skin: number): void {
   const c = PERSON / 2;
   // Shoulders.
@@ -179,6 +197,7 @@ export function createGameTextures(scene: Phaser.Scene): void {
 
   make(TEX.playerCar, CAR_W, CAR_H, (g) => drawCar(g, 0x2f7d32, 0x1b4d1f));
   make(TEX.npcCar, CAR_W, CAR_H, (g) => drawCar(g, 0xb91c1c, 0x7f1212));
+  make(TEX.taxi, CAR_W, CAR_H, drawTaxi);
   make(TEX.policeCar, CAR_W, CAR_H, (g) => drawCar(g, 0x1d4ed8, 0x0b245f));
 
   make(TEX.ambulance, SVC_W, SVC_H, drawAmbulance);

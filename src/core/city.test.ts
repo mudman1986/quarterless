@@ -42,16 +42,16 @@ describe('buildCity', () => {
 
   it('assigns custom service buildings with road-adjacent spawn points', () => {
     const kinds = new Set(city.facilities.map((f) => f.kind));
-    expect(kinds).toEqual(new Set(['policeStation', 'hospital', 'towYard']));
+    expect(kinds).toEqual(new Set(['policeStation', 'hospital', 'towYard', 'taxiDepot']));
     expect(
       city.facilities.reduce(
         (counts, facility) => {
           counts[facility.kind] += 1;
           return counts;
         },
-        { policeStation: 0, hospital: 0, towYard: 0 },
+        { policeStation: 0, hospital: 0, towYard: 0, taxiDepot: 0 },
       ),
-    ).toEqual({ policeStation: 2, hospital: 2, towYard: 2 });
+    ).toEqual({ policeStation: 2, hospital: 2, towYard: 2, taxiDepot: 2 });
     expect(new Set(city.facilities.map((f) => f.buildingIndex)).size).toBe(city.facilities.length);
     for (const facility of city.facilities) {
       // The on-foot spawn is the doorstep on the pavement: on a sidewalk strip,

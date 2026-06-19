@@ -5,6 +5,7 @@ import {
   resolveCircleCircles,
   circleIntersectsRect,
   pointInRect,
+  randomPointInRect,
   segmentIntersectsRect,
 } from './collision';
 import { wrap } from './math';
@@ -110,6 +111,8 @@ export interface WorldOptions {
   city?: City;
   /** Per-car NPC driver (or null for a parked car), parallel to `cars`. */
   carDrivers?: (TrafficAI | null)[];
+  /** Render / behavior kind for each world car, parallel to `cars`. */
+  carKinds?: VehicleKind[];
   /** Fallback player respawn point when the map has no matching facility. */
   spawn?: Vec2;
   /** The player's starting weapon. Defaults to a pistol. */
@@ -225,10 +228,24 @@ export const CREW_WALK_SPEED = 55;
 export const CREW_REACH_RADIUS = 8;
 /** Seconds a medic or tow operator spends loading the cargo once they reach it. */
 export const SERVICE_PICKUP_DWELL = 3;
+/** How close a taxi must get to a passenger or dropoff to service it. */
+export const TAXI_STOP_RADIUS = 44;
+/** The cab must be nearly stopped before someone boards or gets out. */
+export const TAXI_SERVICE_SPEED_MAX = 18;
 /** Fraction of cruising speed a vehicle still rolls forward at while easing into
  * another lane, so a lane change is a natural diagonal swerve rather than a car
  * sliding straight sideways. */
 const LANE_CHANGE_SPEED_FACTOR = 0.6;
+const TAXI_NPC_ASSIGN_CHANCE = 0.18;
+const TAXI_STOP_DWELL = 1.1;
+const TAXI_MIN_PICKUP_DISTANCE = 220;
+const TAXI_MIN_DROPOFF_DISTANCE = 420;
+const TAXI_HAIL_SEARCH_RADIUS = 320;
+const TAXI_COOLDOWN_MIN = 3;
+const TAXI_COOLDOWN_MAX = 7;
+const TAXI_REWARD_BASE = 250;
+const TAXI_REWARD_PER_PIXEL = 0.35;
+const TAXI_PASSENGER_NAMES = ['Ava', 'Milo', 'Nina', 'Theo', 'Jules', 'Sana', 'Omar', 'Ivy'] as const;
 
 /** A dead pedestrian left on the ground (with a blood puddle, rendered later). */
 export interface Corpse {
@@ -243,7 +260,7 @@ export interface Corpse {
 export type ServicePhase = 'approach' | 'collect' | 'return' | 'depart';
 
 /** Vehicle body rendered for a drivable world car slot. */
-export type VehicleKind = 'car' | 'ambulance' | 'tow' | 'police';
+export type VehicleKind = 'car' | 'ambulance' | 'tow' | 'police' | 'taxi';
 
 /** Common state for a dispatched service vehicle that follows the roads. */
 export interface ServiceVehicle {
@@ -302,6 +319,28 @@ export interface Explosion {
   age: number;
   /** Total time the visual lasts. */
   life: number;
+}
+
+export type TaxiMissionStage = 'pickup' | 'dropoff';
+
+/** A player taxi side mission: collect a named fare, then drop them off. */
+export interface TaxiMission {
+  id: number;
+  passengerId: number;
+  passengerName: string;
+  stage: TaxiMissionStage;
+  pickup: Vec2;
+  dropoff: Vec2;
+  reward: number;
+}
+
+interface TaxiFareState extends TaxiMission {
+  dwell: number;
+}
+
+interface TaxiCabState {
+  fare: TaxiFareState | null;
+  cooldown: number;
 }
 
 type DamageableVehicleRef =
@@ -378,6 +417,7 @@ export class World {
   private readonly spawn: Vec2;
   private carDrivers: (TrafficAI | null)[];
   private carKinds: VehicleKind[];
+  private taxiStates: (TaxiCabState | null)[];
   /** Whether a recovered wreck at this slot should be recycled back into play
    * from a tow yard (ordinary cars do; abandoned service vehicles do not). */
   private carRespawnsAtTow: boolean[];
@@ -408,6 +448,10 @@ export class World {
   private objectiveBaseline: MissionBaseline = { kills: 0, targetKills: 0, collected: 0, elapsed: 0 };
   /** Seconds elapsed in the current run (drives survive objectives). */
   private elapsed = 0;
+  /** The currently active player taxi fare, if the player is driving a cab. */
+  private playerTaxiMission: TaxiMission | null = null;
+  private nextTaxiMissionId = 1;
+  private nextTaxiPassengerId = 1;
 
   constructor(opts: WorldOptions) {
     this.player = opts.player;
@@ -431,7 +475,8 @@ export class World {
     this.navGrid = opts.city ? buildNavGrid(opts.city) : undefined;
     this.spawn = opts.spawn ?? opts.player.pos;
     this.carDrivers = this.cars.map((_, i) => opts.carDrivers?.[i] ?? null);
-    this.carKinds = this.cars.map(() => 'car');
+    this.carKinds = this.cars.map((_, i) => opts.carKinds?.[i] ?? 'car');
+    this.taxiStates = this.cars.map((_, i) => (this.carKinds[i] === 'taxi' ? this.createTaxiState() : null));
     this.carRespawnsAtTow = this.cars.map(() => true);
     this.carHealth = this.cars.map(() => CAR_MAX_HEALTH);
     this.carBurnTimers = this.cars.map(() => 0);
@@ -527,6 +572,18 @@ export class World {
     return objectiveProgress(obj, this.missionCtx(), this.objectiveBaseline);
   }
 
+  /** The player's active taxi fare, if they are currently driving a cab. */
+  get taxiMission(): TaxiMission | null {
+    return this.playerTaxiMission;
+  }
+
+  /** The current taxi-side-mission target: passenger first, then the dropoff. */
+  get taxiTarget(): Vec2 | null {
+    const fare = this.playerTaxiMission;
+    if (!fare) return null;
+    return fare.stage === 'pickup' ? (this.findTaxiPassenger(fare.passengerId)?.pos ?? fare.pickup) : fare.dropoff;
+  }
+
   /** Advance the simulation by `dt` seconds. */
   tick(c: Controls, dt: number): void {
     if (this.status !== 'playing') {
@@ -543,6 +600,7 @@ export class World {
     } else {
       this.updateOnFoot(c, dt, actionPressed);
     }
+    this.updateTaxiSystems();
     this.lights = tickLights(this.lights, dt);
     this.updateTraffic(dt);
     this.resolveVehicleCollisions(dt);
@@ -581,6 +639,7 @@ export class World {
       }
       const idx = this.nearestCarIndex(moved.pos, this.enterRadius);
       if (idx !== null) {
+        if (this.carKind(idx) === 'taxi') this.clearNpcTaxiFare(idx, this.cars[idx].pos);
         this.drivingCarIndex = idx;
         this.cars[idx] = { ...this.cars[idx], speed: 0 };
         this.carDrivers[idx] = null; // any NPC driver bails out
@@ -706,8 +765,24 @@ export class World {
       let blocked = ai.blocked ?? 0;
       let speed = TRAFFIC_SPEED;
       let escapeTarget = ai.escapeTarget;
+      let routeTarget = ai.routeTarget;
       if (escapeTarget && distance(car.pos, escapeTarget) <= this.city.spec.tile) {
         escapeTarget = undefined;
+      }
+      const taxiPlan = this.carKind(i) === 'taxi' ? this.planTaxiTraffic(i, car, dt) : null;
+      if (taxiPlan) {
+        routeTarget = taxiPlan.routeTarget;
+        if (taxiPlan.hold) {
+          this.cars[i] = { ...car, speed: 0 };
+          this.carDrivers[i] = {
+            ...ai,
+            blocked: 0,
+            laneTarget: undefined,
+            escapeTarget,
+            routeTarget,
+          };
+          continue;
+        }
       }
       // Drop a finished lane change once the car has reached the chosen lane.
       let laneTarget = ai.laneTarget;
@@ -740,7 +815,7 @@ export class World {
         blocked = 0; // path cleared
       }
 
-      const out = stepTraffic(car, { dir, blocked, laneTarget, escapeTarget }, this.city, dt, speed, this.rng);
+      const out = stepTraffic(car, { dir, blocked, laneTarget, escapeTarget, routeTarget }, this.city, dt, speed, this.rng);
       const turned = out.ai.dir.x !== ai.dir.x || out.ai.dir.y !== ai.dir.y;
       this.cars[i] = out.car;
       this.carDrivers[i] = turned ? { ...out.ai, laneTarget: undefined } : out.ai;
@@ -877,6 +952,7 @@ export class World {
     this.cars.push(car);
     this.carDrivers.push(null);
     this.carKinds.push(kind);
+    this.taxiStates.push(kind === 'taxi' ? this.createTaxiState() : null);
     this.carRespawnsAtTow.push(opts.respawnsAtTow ?? false);
     this.carHealth.push(wrecked ? 0 : opts.health);
     this.carBurnTimers.push(0);
@@ -1185,6 +1261,7 @@ export class World {
     this.carBurnByPlayer[idx] = false;
     this.towDispatchCooldowns[idx] = 0;
     this.wreckedCars[idx] = false;
+    this.taxiStates[idx] = this.carKind(idx) === 'taxi' ? this.createTaxiState() : null;
   }
 
   /** Dispatch and drive an ambulance to collect a body that lingers on screen.
@@ -1415,7 +1492,7 @@ export class World {
    * the city has no such facility (tiny test maps can still fall back to
    * corner dispatch). */
   private nearestFacility(
-    kind: 'policeStation' | 'hospital' | 'towYard',
+    kind: 'policeStation' | 'hospital' | 'towYard' | 'taxiDepot',
     target: Vec2,
   ): City['facilities'][number] | null {
     const facilities = this.city?.facilities.filter((f) => f.kind === kind);
@@ -1732,6 +1809,257 @@ export class World {
     return vec2(wrap(p.x, this.bounds.width), wrap(p.y, this.bounds.height));
   }
 
+  private createTaxiState(): TaxiCabState {
+    return { fare: null, cooldown: this.nextTaxiCooldown() };
+  }
+
+  private nextTaxiCooldown(): number {
+    return TAXI_COOLDOWN_MIN + this.rng() * (TAXI_COOLDOWN_MAX - TAXI_COOLDOWN_MIN);
+  }
+
+  private isCivilianRoadCar(index: number): boolean {
+    const kind = this.carKind(index);
+    return kind === 'car' || kind === 'taxi';
+  }
+
+  private taxiPassengerName(): string {
+    return TAXI_PASSENGER_NAMES[Math.floor(this.rng() * TAXI_PASSENGER_NAMES.length)] ?? 'Fare';
+  }
+
+  private spawnCivilianPedestrian(pos: Vec2): void {
+    this.pedestrians.push({ pos, heading: 0, radius: 7, state: 'wander', target: pos });
+  }
+
+  private findTaxiPassenger(passengerId: number): Pedestrian | null {
+    return this.pedestrians.find((ped) => ped.taxiPassengerId === passengerId) ?? null;
+  }
+
+  private removeTaxiPassenger(passengerId: number): Pedestrian | null {
+    const idx = this.pedestrians.findIndex((ped) => ped.taxiPassengerId === passengerId);
+    if (idx === -1) return null;
+    const [passenger] = this.pedestrians.splice(idx, 1);
+    return passenger ?? null;
+  }
+
+  private clearTaxiPassengerRole(passengerId: number): void {
+    const idx = this.pedestrians.findIndex((ped) => ped.taxiPassengerId === passengerId);
+    if (idx === -1) return;
+    const ped = this.pedestrians[idx];
+    this.pedestrians[idx] = {
+      ...ped,
+      state: 'wander',
+      target: ped.pos,
+      taxiPassengerId: undefined,
+      taxiPassengerRole: undefined,
+    };
+  }
+
+  private randomTaxiStop(awayFrom: Vec2, minDistance: number): Vec2 {
+    const sample = (): Vec2 => {
+      if (this.sidewalks.length > 0) {
+        const strip = this.sidewalks[Math.floor(this.rng() * this.sidewalks.length)] ?? this.sidewalks[0];
+        return randomPointInRect(strip, this.rng);
+      }
+      return vec2(this.rng() * this.bounds.width, this.rng() * this.bounds.height);
+    };
+
+    let fallback = sample();
+    for (let i = 0; i < 24; i++) {
+      const candidate = sample();
+      fallback = candidate;
+      if (distance(candidate, awayFrom) >= minDistance) return candidate;
+    }
+
+    let dir = sub(fallback, awayFrom);
+    if (length(dir) < 1e-6) dir = vec2(1, 0);
+    return this.wrapPos(add(awayFrom, scale(normalize(dir), minDistance)));
+  }
+
+  private taxiFareReward(pickup: Vec2, dropoff: Vec2): number {
+    return TAXI_REWARD_BASE + Math.round(distance(pickup, dropoff) * TAXI_REWARD_PER_PIXEL);
+  }
+
+  private startPlayerTaxiMission(from: Vec2): void {
+    const pickup = this.randomTaxiStop(from, TAXI_MIN_PICKUP_DISTANCE);
+    const dropoff = this.randomTaxiStop(pickup, TAXI_MIN_DROPOFF_DISTANCE);
+    const passengerId = this.nextTaxiPassengerId++;
+    this.pedestrians.push({
+      pos: pickup,
+      heading: 0,
+      radius: 7,
+      state: 'wait',
+      target: pickup,
+      taxiPassengerId: passengerId,
+      taxiPassengerRole: 'playerFare',
+    });
+    this.playerTaxiMission = {
+      id: this.nextTaxiMissionId++,
+      passengerId,
+      passengerName: this.taxiPassengerName(),
+      stage: 'pickup',
+      pickup,
+      dropoff,
+      reward: this.taxiFareReward(pickup, dropoff),
+    };
+  }
+
+  private cancelPlayerTaxiMission(at: Vec2): void {
+    const fare = this.playerTaxiMission;
+    if (!fare) return;
+    if (fare.stage === 'pickup') this.clearTaxiPassengerRole(fare.passengerId);
+    else this.spawnCivilianPedestrian(at);
+    this.playerTaxiMission = null;
+  }
+
+  private updateTaxiSystems(): void {
+    const idx = this.drivingCarIndex;
+    if (idx === null || this.carKind(idx) !== 'taxi' || this.wreckedCars[idx] || this.carIsBurning(idx)) {
+      if (this.playerTaxiMission) this.cancelPlayerTaxiMission(this.focus);
+      return;
+    }
+
+    if (!this.playerTaxiMission) this.startPlayerTaxiMission(this.cars[idx].pos);
+    const fare = this.playerTaxiMission;
+    if (!fare) return;
+
+    const car = this.cars[idx];
+    if (Math.abs(car.speed) > TAXI_SERVICE_SPEED_MAX) return;
+
+    if (fare.stage === 'pickup') {
+      const passengerPos = this.findTaxiPassenger(fare.passengerId)?.pos ?? fare.pickup;
+      if (distance(car.pos, passengerPos) > TAXI_STOP_RADIUS) return;
+      const boarded = this.removeTaxiPassenger(fare.passengerId);
+      if (!boarded) {
+        this.playerTaxiMission = null;
+        this.startPlayerTaxiMission(car.pos);
+        return;
+      }
+      this.playerTaxiMission = { ...fare, stage: 'dropoff' };
+      return;
+    }
+
+    if (distance(car.pos, fare.dropoff) > TAXI_STOP_RADIUS) return;
+    this.score = award(this.score, fare.reward);
+    this.spawnCivilianPedestrian(fare.dropoff);
+    this.playerTaxiMission = null;
+    this.startPlayerTaxiMission(car.pos);
+  }
+
+  private isEligibleTaxiPassenger(ped: Pedestrian): boolean {
+    return ped.state === 'wander' && !ped.returningTo && !ped.uniform && !ped.missionTarget && !ped.taxiPassengerRole;
+  }
+
+  private findTaxiHailPassengerIndex(near: Vec2): number | null {
+    let best: number | null = null;
+    let bestDist = TAXI_HAIL_SEARCH_RADIUS;
+    for (let i = 0; i < this.pedestrians.length; i++) {
+      const ped = this.pedestrians[i];
+      if (!this.isEligibleTaxiPassenger(ped)) continue;
+      const d = distance(near, ped.pos);
+      if (d > bestDist) continue;
+      best = i;
+      bestDist = d;
+    }
+    return best;
+  }
+
+  private beginNpcTaxiFare(passengerIndex: number): TaxiFareState {
+    const passengerId = this.nextTaxiPassengerId++;
+    const ped = this.pedestrians[passengerIndex];
+    const waiting: Pedestrian = {
+      ...ped,
+      state: 'wait',
+      target: ped.pos,
+      missionTarget: false,
+      taxiPassengerId: passengerId,
+      taxiPassengerRole: 'npcFare',
+    };
+    this.pedestrians[passengerIndex] = waiting;
+    return {
+      id: this.nextTaxiMissionId++,
+      passengerId,
+      passengerName: this.taxiPassengerName(),
+      stage: 'pickup',
+      pickup: waiting.pos,
+      dropoff: this.randomTaxiStop(waiting.pos, TAXI_MIN_DROPOFF_DISTANCE),
+      reward: 0,
+      dwell: 0,
+    };
+  }
+
+  private clearNpcTaxiFare(index: number, releasePos: Vec2): void {
+    const state = this.taxiStates[index];
+    if (!state) return;
+    const fare = state.fare;
+    if (!fare) {
+      state.cooldown = this.nextTaxiCooldown();
+      return;
+    }
+    if (fare.stage === 'pickup') this.clearTaxiPassengerRole(fare.passengerId);
+    else this.spawnCivilianPedestrian(releasePos);
+    state.fare = null;
+    state.cooldown = this.nextTaxiCooldown();
+  }
+
+  private planTaxiTraffic(index: number, car: Car, dt: number): { hold: boolean; routeTarget: Vec2 | undefined } {
+    const state = this.taxiStates[index];
+    if (!state) return { hold: false, routeTarget: undefined };
+
+    let fare = state.fare;
+    if (!fare) {
+      if (state.cooldown > 0) {
+        state.cooldown = Math.max(0, state.cooldown - dt);
+        return { hold: false, routeTarget: undefined };
+      }
+      if (this.rng() >= TAXI_NPC_ASSIGN_CHANCE * dt) return { hold: false, routeTarget: undefined };
+      const passengerIndex = this.findTaxiHailPassengerIndex(car.pos);
+      if (passengerIndex === null) {
+        state.cooldown = this.nextTaxiCooldown();
+        return { hold: false, routeTarget: undefined };
+      }
+      fare = this.beginNpcTaxiFare(passengerIndex);
+      state.fare = fare;
+    }
+
+    if (fare.stage === 'pickup') {
+      const passenger = this.findTaxiPassenger(fare.passengerId);
+      if (!passenger) {
+        state.fare = null;
+        state.cooldown = this.nextTaxiCooldown();
+        return { hold: false, routeTarget: undefined };
+      }
+      fare = { ...fare, pickup: passenger.pos };
+      state.fare = fare;
+      const routeTarget = this.nearestRoadPoint(passenger.pos) ?? passenger.pos;
+      if (distance(car.pos, passenger.pos) > TAXI_STOP_RADIUS) return { hold: false, routeTarget };
+      const dwell = fare.dwell + dt;
+      if (dwell < TAXI_STOP_DWELL) {
+        state.fare = { ...fare, dwell };
+        return { hold: true, routeTarget };
+      }
+      const boarded = this.removeTaxiPassenger(fare.passengerId);
+      if (!boarded) {
+        state.fare = null;
+        state.cooldown = this.nextTaxiCooldown();
+        return { hold: false, routeTarget: undefined };
+      }
+      state.fare = { ...fare, stage: 'dropoff', dwell: 0 };
+      return { hold: false, routeTarget: this.nearestRoadPoint(fare.dropoff) ?? fare.dropoff };
+    }
+
+    const routeTarget = this.nearestRoadPoint(fare.dropoff) ?? fare.dropoff;
+    if (distance(car.pos, fare.dropoff) > TAXI_STOP_RADIUS) return { hold: false, routeTarget };
+    const dwell = fare.dwell + dt;
+    if (dwell < TAXI_STOP_DWELL) {
+      state.fare = { ...fare, dwell };
+      return { hold: true, routeTarget };
+    }
+    this.spawnCivilianPedestrian(fare.dropoff);
+    state.fare = null;
+    state.cooldown = this.nextTaxiCooldown();
+    return { hold: true, routeTarget: undefined };
+  }
+
   private updateDriving(c: Controls, dt: number, actionPressed: boolean): void {
     const idx = this.drivingCarIndex!;
     const car = this.cars[idx];
@@ -1739,6 +2067,7 @@ export class World {
     if (actionPressed) {
       const offset = fromAngle(car.heading + Math.PI / 2, car.radius + this.player.radius + EXIT_GAP);
       this.player = { ...this.player, pos: add(car.pos, offset), angle: car.heading };
+      if (this.carKind(idx) === 'taxi') this.cancelPlayerTaxiMission(add(car.pos, offset));
       this.drivingCarIndex = null;
       return;
     }
@@ -1847,6 +2176,7 @@ export class World {
     if (this.status !== 'playing') return;
     this.health = damage(this.health, amount);
     if (isDead(this.health)) {
+      this.cancelPlayerTaxiMission(this.focus);
       this.status = 'wasted';
       this.bustedTimer = RESPAWN_DELAY;
       this.endChase(); // dying ends the chase: the heat clears at once
@@ -1944,7 +2274,7 @@ export class World {
     this.gunfireThreats.push(pos);
     if (!this.city) return;
     for (let i = 0; i < this.cars.length; i++) {
-      if (i === this.drivingCarIndex || this.wreckedCars[i] || this.carIsBurning(i) || this.carKind(i) !== 'car') {
+      if (i === this.drivingCarIndex || this.wreckedCars[i] || this.carIsBurning(i) || !this.isCivilianRoadCar(i)) {
         continue;
       }
       const driver = this.carDrivers[i];
@@ -1965,7 +2295,7 @@ export class World {
   }
 
   private redirectNpcDriverFromShot(idx: number, travel: Vec2): void {
-    if (!this.city || idx === this.drivingCarIndex || this.carKind(idx) !== 'car') return;
+    if (!this.city || idx === this.drivingCarIndex || !this.isCivilianRoadCar(idx)) return;
     const driver = this.carDrivers[idx];
     if (!driver) return;
     const escapeDir = length(travel) > 1e-6 ? nearestCardinal(angle(travel)) : driver.dir;
@@ -1980,7 +2310,7 @@ export class World {
   }
 
   private evacuateNpcDriver(idx: number): void {
-    if (idx === this.drivingCarIndex || this.carKind(idx) !== 'car') return;
+    if (idx === this.drivingCarIndex || !this.isCivilianRoadCar(idx)) return;
     const driver = this.carDrivers[idx];
     if (!driver) return;
     const car = this.cars[idx];
@@ -1997,6 +2327,10 @@ export class World {
   /** Start a car burning in place; it explodes after a short escape window. */
   private igniteCar(idx: number, byPlayer: boolean): void {
     if (this.wreckedCars[idx] || this.carIsBurning(idx)) return;
+    if (this.carKind(idx) === 'taxi') {
+      this.clearNpcTaxiFare(idx, this.cars[idx].pos);
+      if (idx === this.drivingCarIndex) this.cancelPlayerTaxiMission(this.cars[idx].pos);
+    }
     this.towedCars[idx] = false;
     this.carHealth[idx] = 0;
     this.carBurnTimers[idx] = VEHICLE_BURN_DURATION;
@@ -2073,7 +2407,7 @@ export class World {
   }
 
   private isEligibleMissionTarget(ped: Pedestrian): boolean {
-    return !ped.returningTo && !ped.uniform;
+    return !ped.returningTo && !ped.uniform && !ped.taxiPassengerRole;
   }
 
   private syncMissionTargets(): void {
@@ -2422,6 +2756,7 @@ export class World {
     if (!isWanted(this.wanted) || this.police.length === 0) return;
     if (!this.bustable) return; // in a car, you must have been stopped long enough
     if (this.police.some((cop) => cop.kind === 'foot' && !cop.returningHome && hasCaught(cop, this.focus))) {
+      this.cancelPlayerTaxiMission(this.focus);
       this.status = 'busted';
       this.bustedTimer = RESPAWN_DELAY;
       this.endChase(); // the arrest ends the chase: clear the wanted level now
@@ -2481,6 +2816,7 @@ export class World {
     this.tows = [];
     this.health = createHealth(this.health.max);
     this.drivingCarIndex = null;
+    this.playerTaxiMission = null;
     this.carStoppedForBusted = 0;
     this.bustedTimer = 0;
     this.status = 'playing';

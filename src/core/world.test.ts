@@ -2828,6 +2828,47 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
 });
 
 describe('World mission', () => {
+  it('starts looping taxi fares after the player steals a taxi', () => {
+    const city = buildCity({ cols: 20, rows: 20, tile: 64, block: 5, roadWidth: 4, margin: 20, sidewalkWidth: 20 });
+    const depot = city.facilities.find((facility) => facility.kind === 'taxiDepot');
+    expect(depot).toBeDefined();
+
+    const w = new World({
+      player: { ...player(), pos: vec2(depot!.roadSpawn.x - 18, depot!.roadSpawn.y) },
+      cars: [{ pos: depot!.roadSpawn, heading: 0, speed: 0, radius: 14 }],
+      carDrivers: [{ dir: vec2(1, 0) }],
+      carKinds: ['taxi'],
+      city,
+      sidewalks: city.sidewalks,
+      walls: city.buildings,
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0,
+    });
+
+    w.tick(controls({ action: true }), 1 / 60);
+
+    expect(w.isDriving).toBe(true);
+    expect(w.carKind(w.drivingCarIndex!)).toBe('taxi');
+    expect(w.taxiMission?.stage).toBe('pickup');
+    expect(w.taxiTarget).not.toBeNull();
+    expect(w.pedestrians.some((ped) => ped.taxiPassengerRole === 'playerFare')).toBe(true);
+
+    const firstFareId = w.taxiMission!.id;
+    const pickup = w.taxiTarget!;
+    w.cars[0] = { ...w.cars[0], pos: pickup, speed: 0 };
+    w.tick(controls(), 1 / 60);
+
+    expect(w.taxiMission?.stage).toBe('dropoff');
+    const dropoff = w.taxiTarget!;
+    const beforeReward = w.score.current;
+    w.cars[0] = { ...w.cars[0], pos: dropoff, speed: 0 };
+    w.tick(controls(), 1 / 60);
+
+    expect(w.score.current).toBeGreaterThan(beforeReward);
+    expect(w.taxiMission?.stage).toBe('pickup');
+    expect(w.taxiMission?.id).not.toBe(firstFareId);
+  });
+
   it('tracks a reach-then-eliminate mission and banks the reward', () => {
     const w = new World({
       player: player(), // already at the reach target (0,0)

@@ -79,7 +79,7 @@ export interface ParkingSpot {
   heading: number;
 }
 
-export type FacilityKind = 'policeStation' | 'hospital' | 'towYard';
+export type FacilityKind = 'policeStation' | 'hospital' | 'towYard' | 'taxiDepot';
 
 /** A named civic/service building and the road point its vehicles emerge from. */
 export interface Facility {
@@ -214,6 +214,8 @@ function buildFacilities(
     { kind: 'hospital', target: vec2(east, south / 2), prefs: ['right', 'bottom', 'top', 'left'] },
     { kind: 'towYard', target: vec2(0, south), prefs: ['left', 'bottom', 'top', 'right'] },
     { kind: 'towYard', target: vec2(east / 2, south), prefs: ['bottom', 'left', 'right', 'top'] },
+    { kind: 'taxiDepot', target: vec2(0, south / 2), prefs: ['left', 'top', 'bottom', 'right'] },
+    { kind: 'taxiDepot', target: vec2(east, south * 0.25), prefs: ['right', 'top', 'bottom', 'left'] },
   ];
 
   const used = new Set<number>();
