@@ -1546,6 +1546,21 @@ describe('World combat', () => {
     for (let i = 0; i < 60; i++) w.tick(controls({ fire: true }), 1 / 60);
     expect(w.pedestrians).toHaveLength(1); // the wall shielded them
   });
+
+  it('still hits a pedestrian across a bullet spatial-hash cell boundary', () => {
+    const w = new World({
+      player: player(),
+      pedestrians: [pedAt(65, 0)],
+      bounds: { width: 1000, height: 1000 },
+      rng: () => 0.5,
+    });
+    w.bullets = [{ pos: vec2(63, 0), velocity: vec2(0, 0), life: 1, damage: 25 }];
+
+    w.tick(controls(), 1 / 60);
+
+    expect(w.pedestrians).toHaveLength(0);
+    expect(w.corpses).toHaveLength(1);
+  });
 });
 
 describe('World health', () => {
