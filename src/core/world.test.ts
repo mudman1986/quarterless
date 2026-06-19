@@ -1006,6 +1006,7 @@ describe('World traffic rerouting and lights', () => {
       player: player(),
       city,
       pedestrians: [ped],
+      walls: city.buildings,
       bounds: { width: city.width, height: city.height },
       rng: () => 0.5,
     });
@@ -1053,6 +1054,7 @@ describe('World traffic rerouting and lights', () => {
       player: player(),
       city,
       pedestrians: [ped],
+      walls: city.buildings,
       bounds: { width: city.width, height: city.height },
       rng: () => 0.5,
     });
@@ -1066,6 +1068,115 @@ describe('World traffic rerouting and lights', () => {
       }
     }
     expect(reachedFarSide).toBe(true); // it actually crossed, rather than being stuck
+  });
+
+  it('reroutes a calm pedestrian to a crosswalk instead of freezing at the kerb', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4, margin: 10 });
+    const x = 2 * city.spec.tile + city.spec.tile / 2;
+    const roadStart = 4 * city.spec.tile;
+    const roadEnd = 5 * city.spec.tile;
+    const northBuilding = city.buildings
+      .filter((b) => b.y + b.h <= roadStart && x >= b.x && x <= b.x + b.w)
+      .sort((a, b) => b.y + b.h - (a.y + a.h))[0];
+    const southBuilding = city.buildings
+      .filter((b) => b.y >= roadEnd && x >= b.x && x <= b.x + b.w)
+      .sort((a, b) => a.y - b.y)[0];
+    expect(northBuilding).toBeDefined();
+    expect(southBuilding).toBeDefined();
+    const radius = 7;
+    const start = vec2(x, northBuilding!.y + northBuilding!.h + radius);
+    const target = vec2(x, southBuilding!.y - radius); // straight path would jaywalk across road row 4
+    const ped: Pedestrian = {
+      pos: start,
+      heading: 0,
+      radius,
+      state: 'wander',
+      target,
+    };
+    const w = new World({
+      player: player(),
+      city,
+      pedestrians: [ped],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.5,
+    });
+
+    let reachedFarSide = false;
+    let steppedOnCrosswalk = false;
+    for (let i = 0; i < 1800; i++) {
+      w.tick(controls(), 1 / 60);
+      const p = w.pedestrians[0];
+      steppedOnCrosswalk ||= city.crosswalks.some((crosswalk) => pointInRect(p.pos, crosswalk));
+      if (p.pos.y >= target.y - 6) {
+        reachedFarSide = true;
+        break;
+      }
+    }
+
+    expect(steppedOnCrosswalk).toBe(true);
+    expect(reachedFarSide).toBe(true);
+  });
+
+  it('keeps a calm pedestrian out of the river while still reaching the far side by bridge', () => {
+    const spec = {
+      cols: 20,
+      rows: 20,
+      tile: 64,
+      block: 5,
+      margin: 10,
+      rivers: [{ orientation: 'horizontal' as const, start: 11, span: 3, bridgeEvery: 2 }],
+    };
+    const city = buildCity(spec);
+    const river = spec.rivers[0];
+    const riverTop = river.start * spec.tile;
+    const riverBottom = (river.start + river.span) * spec.tile;
+    const xWanted = 5 * spec.tile + spec.tile / 2; // a non-bridge column, so the route must detour
+    const centerOnStrip = (strip: { x: number; y: number; w: number; h: number }, x: number) =>
+      vec2(Math.max(strip.x + 8, Math.min(strip.x + strip.w - 8, x)), strip.y + strip.h / 2);
+    const northSidewalk = city.sidewalks
+      .filter((sidewalk) => sidewalk.y + sidewalk.h <= riverTop)
+      .sort(
+        (a, b) =>
+          Math.abs(a.y + a.h - riverTop) - Math.abs(b.y + b.h - riverTop) ||
+          Math.abs(a.x + a.w / 2 - xWanted) - Math.abs(b.x + b.w / 2 - xWanted),
+      )[0];
+    const southSidewalk = city.sidewalks
+      .filter((sidewalk) => sidewalk.y >= riverBottom)
+      .sort(
+        (a, b) =>
+          Math.abs(a.y - riverBottom) - Math.abs(b.y - riverBottom) ||
+          Math.abs(a.x + a.w / 2 - xWanted) - Math.abs(b.x + b.w / 2 - xWanted),
+      )[0];
+    expect(northSidewalk).toBeDefined();
+    expect(southSidewalk).toBeDefined();
+    const start = centerOnStrip(northSidewalk!, xWanted);
+    const target = centerOnStrip(southSidewalk!, xWanted); // direct line crosses river water
+    const ped: Pedestrian = {
+      pos: start,
+      heading: 0,
+      radius: 7,
+      state: 'wander',
+      target,
+    };
+    const w = new World({
+      player: player(),
+      city,
+      pedestrians: [ped],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.5,
+    });
+
+    let finalPos = start;
+    for (let i = 0; i < 3600; i++) {
+      w.tick(controls(), 1 / 60);
+      const p = w.pedestrians[0];
+      finalPos = p.pos;
+      expect(city.water.some((water) => pointInRect(p.pos, water))).toBe(false);
+    }
+
+    // The important regression is that calm pedestrians no longer walk over the
+    // river; instead they peel off toward a bridge approach.
+    expect(Math.abs(finalPos.x - start.x)).toBeGreaterThan(city.spec.tile);
   });
 });
 

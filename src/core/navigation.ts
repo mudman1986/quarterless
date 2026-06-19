@@ -14,6 +14,8 @@ export interface NavGrid {
   cols: number;
   rows: number;
   tile: number;
+  /** How a walker should aim for the next walkable cell. */
+  waypointMode?: 'center' | 'entry';
   /** Walkable flag per tile, indexed `ty * cols + tx`. */
   walkable: readonly boolean[];
 }
@@ -48,20 +50,86 @@ export function buildNavGrid(city: City): NavGrid {
       }
     }
   }
-  return { cols, rows, tile, walkable };
+  return { cols, rows, tile, waypointMode: 'center', walkable };
 }
 
-/** The walkable tile nearest to (tx, ty), searched in growing rings, or null. */
-function nearestWalkable(grid: NavGrid, tx: number, ty: number): { tx: number; ty: number } | null {
-  if (isWalkable(grid, tx, ty)) return { tx, ty };
+/**
+ * Build a calmer-foot-traffic grid: sidewalks, marked crosswalks, bridges, and
+ * other dry non-road open ground are walkable, but ordinary road lanes are not.
+ * This keeps wandering pedestrians on the pavement unless a crossing/bridge is
+ * the intended safe route.
+ */
+export function buildPedestrianNavGrid(city: City): NavGrid {
+  const base = city.spec.tile;
+  const cell = Math.max(8, Math.floor(base / 8));
+  const cols = Math.ceil(city.width / cell);
+  const rows = Math.ceil(city.height / cell);
+  const bridgeCols = new Set<number>();
+  const bridgeRows = new Set<number>();
+  for (let ty = 0; ty < city.spec.rows; ty++) {
+    for (let tx = 0; tx < city.spec.cols; tx++) {
+      if (!city.isBridge(tx, ty)) continue;
+      bridgeCols.add(tx);
+      bridgeRows.add(ty);
+    }
+  }
+  const walkable: boolean[] = new Array(cols * rows).fill(false);
+  for (let cy = 0; cy < rows; cy++) {
+    for (let cx = 0; cx < cols; cx++) {
+      const centre = vec2(cx * cell + cell / 2, cy * cell + cell / 2);
+      const tx = Math.floor(centre.x / base);
+      const ty = Math.floor(centre.y / base);
+      if (city.isWater(tx, ty)) continue;
+      const onSidewalk = city.sidewalks.some((sidewalk) => pointInRect(centre, sidewalk));
+      const onCrosswalk = city.crosswalks.some((crosswalk) => pointInRect(centre, crosswalk));
+      const onBridgeApproach = city.isRoad(tx, ty) && (bridgeCols.has(tx) || bridgeRows.has(ty));
+      if (onSidewalk || onCrosswalk || city.isBridge(tx, ty) || onBridgeApproach) {
+        walkable[cy * cols + cx] = true;
+        continue;
+      }
+      if (!city.isRoad(tx, ty) && !city.buildings.some((b) => pointInRect(centre, b))) {
+        walkable[cy * cols + cx] = true;
+      }
+    }
+  }
+  return { cols, rows, tile: cell, waypointMode: 'entry', walkable };
+}
+
+/** Pixel centre of a tile. */
+function tileCentre(grid: NavGrid, tx: number, ty: number): Vec2 {
+  return vec2(tx * grid.tile + grid.tile / 2, ty * grid.tile + grid.tile / 2);
+}
+
+/** The walkable tile nearest to (tx, ty), searched in growing rings, or null.
+ * When a flow field is supplied, prefer a nearby reachable tile with the lowest
+ * remaining distance to the target, so an actor nudged just off the grid still
+ * snaps back onto the route rather than the merely closest safe cell. */
+function nearestWalkable(
+  grid: NavGrid,
+  tx: number,
+  ty: number,
+  field?: FlowField,
+): { tx: number; ty: number } | null {
+  const here = inBounds(grid, tx, ty) ? ty * grid.cols + tx : -1;
+  if (isWalkable(grid, tx, ty) && (!field || field[here] !== -1)) return { tx, ty };
   const maxR = Math.max(grid.cols, grid.rows);
   for (let r = 1; r <= maxR; r++) {
+    let best: { tx: number; ty: number; dist: number; flow: number } | null = null;
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
         if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue; // ring perimeter only
-        if (isWalkable(grid, tx + dx, ty + dy)) return { tx: tx + dx, ty: ty + dy };
+        const nx = tx + dx;
+        const ny = ty + dy;
+        if (!isWalkable(grid, nx, ny)) continue;
+        const flow = field ? field[ny * grid.cols + nx] : 0;
+        if (field && flow === -1) continue;
+        const dist = Math.abs(dx) + Math.abs(dy);
+        if (!best || flow < best.flow || (flow === best.flow && dist < best.dist)) {
+          best = { tx: nx, ty: ny, dist, flow };
+        }
       }
     }
+    if (best) return { tx: best.tx, ty: best.ty };
   }
   return null;
 }
@@ -107,9 +175,22 @@ export function computeFlowField(grid: NavGrid, target: Vec2): FlowField {
   return field;
 }
 
-/** Pixel centre of a tile. */
-function tileCentre(grid: NavGrid, tx: number, ty: number): Vec2 {
-  return vec2(tx * grid.tile + grid.tile / 2, ty * grid.tile + grid.tile / 2);
+/** A point just inside the tile nearest to `from`, so a walker can enter a
+ * narrow safe cell (crosswalk edge, sidewalk strip, bridge apron) without first
+ * stepping through the unsafe space outside it. */
+function tileEntryPoint(grid: NavGrid, tx: number, ty: number, from: Vec2): Vec2 {
+  const x0 = tx * grid.tile;
+  const y0 = ty * grid.tile;
+  const x1 = x0 + grid.tile;
+  const y1 = y0 + grid.tile;
+  const eps = Math.min(1, grid.tile / 8);
+  const x = Math.max(x0 + eps, Math.min(x1 - eps, from.x));
+  const y = Math.max(y0 + eps, Math.min(y1 - eps, from.y));
+  return vec2(x, y);
+}
+
+function waypointPoint(grid: NavGrid, tx: number, ty: number, from: Vec2): Vec2 {
+  return grid.waypointMode === 'entry' ? tileEntryPoint(grid, tx, ty, from) : tileCentre(grid, tx, ty);
 }
 
 /**
@@ -124,9 +205,9 @@ export function flowWaypoint(grid: NavGrid, field: FlowField, from: Vec2): Vec2 
 
   // Off the walkable grid (e.g. nudged into a margin): aim for the nearest tile.
   if (!isWalkable(grid, tx, ty)) {
-    const near = nearestWalkable(grid, tx, ty);
+    const near = nearestWalkable(grid, tx, ty, field);
     if (!near) return null;
-    return tileCentre(grid, near.tx, near.ty);
+    return waypointPoint(grid, near.tx, near.ty, from);
   }
 
   const here = field[ty * grid.cols + tx];
@@ -144,5 +225,5 @@ export function flowWaypoint(grid: NavGrid, field: FlowField, from: Vec2): Vec2 
       bestTile = { tx: nx, ty: ny };
     }
   }
-  return bestTile ? tileCentre(grid, bestTile.tx, bestTile.ty) : null;
+  return bestTile ? waypointPoint(grid, bestTile.tx, bestTile.ty, from) : null;
 }

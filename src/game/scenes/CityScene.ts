@@ -157,6 +157,8 @@ export class CityScene extends Phaser.Scene {
   private world!: World;
   private input_!: KeyboardInput;
   private touchInput_!: TouchInput;
+  private touchAvailable = false;
+  private touchOptedOut = false;
   private touchEnabled = false;
   private touchLayout: TouchLayout | null = null;
 
@@ -207,6 +209,7 @@ export class CityScene extends Phaser.Scene {
   private pauseKey!: Phaser.Input.Keyboard.Key;
   private newGameKey!: Phaser.Input.Keyboard.Key;
   private pauseMenu!: Phaser.GameObjects.Text;
+  private pauseTouchButton!: Phaser.GameObjects.Text;
 
   /** High-score persistence. */
   private store: KeyValueStore = safeStorage();
@@ -304,8 +307,8 @@ export class CityScene extends Phaser.Scene {
 
     this.input_ = new KeyboardInput(this.input.keyboard!);
     this.touchInput_ = new TouchInput(this.input);
-    this.touchEnabled = touchDeviceLikely();
-    this.touchInput_.setEnabled(this.touchEnabled);
+    this.touchAvailable = touchDeviceLikely();
+    this.setTouchEnabled(this.touchAvailable);
     if (this.touchLayout) this.touchInput_.setLayout(this.touchLayout);
     // Menu keys: P pauses/resumes, N starts a fresh game.
     const kb = this.input.keyboard!;
@@ -317,10 +320,10 @@ export class CityScene extends Phaser.Scene {
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
       this.sfx.resume();
       const pointerType = (pointer.event as PointerEvent | undefined)?.pointerType;
-      if (!this.touchEnabled && pointerType === 'touch') {
-        this.touchEnabled = true;
-        this.touchInput_.setEnabled(true);
-        this.syncTouchControls();
+      if (pointerType === 'touch') {
+        this.touchAvailable = true;
+        if (!this.touchEnabled && !this.touchOptedOut) this.setTouchEnabled(true);
+        else this.refreshPauseTouchButton();
       }
     });
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -1111,6 +1114,7 @@ export class CityScene extends Phaser.Scene {
     place(this.banner, width / 2, 84); // mission announcement
     place(this.bustedText, width / 2, height / 2);
     place(this.pauseMenu, width / 2, height / 2);
+    place(this.pauseTouchButton, width / 2, height / 2 + 118);
 
     if (this.minimapBg) {
       // Clamp the top-right anchor so the whole map stays on screen even on a
@@ -1190,6 +1194,23 @@ export class CityScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(2500)
       .setVisible(false);
+
+    this.pauseTouchButton = this.add
+      .text(this.scale.width / 2, this.scale.height / 2 + 118, '', {
+        fontFamily: 'monospace',
+        fontSize: '18px',
+        color: '#67e8f9',
+        align: 'center',
+        backgroundColor: '#000000d0',
+        padding: { x: 18, y: 12 },
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(2501)
+      .setVisible(false)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => this.toggleTouchEnabled());
+    this.refreshPauseTouchButton();
 
     // A full-screen dimming overlay for the day/night cycle. Oversized and
     // centred so it covers the viewport at any camera zoom; depth below the HUD.
@@ -1374,7 +1395,30 @@ export class CityScene extends Phaser.Scene {
   private togglePause(): void {
     this.paused = !this.paused;
     this.pauseMenu.setVisible(this.paused);
+    this.refreshPauseTouchButton();
     this.syncTouchControls();
+  }
+
+  private setTouchEnabled(enabled: boolean): void {
+    this.touchEnabled = enabled;
+    this.touchOptedOut = this.touchAvailable && !enabled;
+    this.touchInput_?.setEnabled(enabled);
+    if (!enabled) this.prevTouchConfirm = false;
+    this.refreshPauseTouchButton();
+    this.syncTouchControls();
+  }
+
+  private toggleTouchEnabled(): void {
+    this.touchAvailable = true;
+    this.setTouchEnabled(!this.touchEnabled);
+  }
+
+  private refreshPauseTouchButton(): void {
+    if (!this.pauseTouchButton) return;
+    const show = this.paused && (this.touchAvailable || this.touchEnabled || this.touchOptedOut);
+    this.pauseTouchButton
+      .setText(this.touchEnabled ? 'Touch Controls: ON\nTap to disable' : 'Touch Controls: OFF\nTap to enable')
+      .setVisible(show);
   }
 
   /** Restart the scene, beginning a brand-new game (the high score persists). */

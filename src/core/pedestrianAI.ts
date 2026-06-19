@@ -30,6 +30,8 @@ export interface PedestrianContext {
   bounds: { width: number; height: number };
   /** Sidewalk strips a wandering pedestrian keeps to (omit for free roaming). */
   sidewalks?: readonly Rect[];
+  /** Optional per-tick steer waypoint, distinct from the pedestrian's final target. */
+  steerTarget?: Vec2;
 }
 
 export const PED_WALK_SPEED = 32;
@@ -102,7 +104,8 @@ export function stepPedestrian(
     target = wanderTarget(ctx, ped.pos, rng);
   }
 
-  const toTarget = sub(target, ped.pos);
+  const moveTarget = ctx.steerTarget ?? target;
+  const toTarget = sub(moveTarget, ped.pos);
   if (length(toTarget) === 0) {
     return { ...ped, state: 'wander', target };
   }

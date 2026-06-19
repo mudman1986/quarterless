@@ -43,6 +43,7 @@ import {
   type NavGrid,
   type FlowField,
   buildNavGrid,
+  buildPedestrianNavGrid,
   computeFlowField,
   flowWaypoint,
 } from './navigation';
@@ -425,6 +426,8 @@ export class World {
   private readonly city?: City;
   /** Walkability grid for on-foot NPC navigation (built from the city, if any). */
   private readonly navGrid?: NavGrid;
+  /** Calm-pedestrian walkability grid: sidewalks, crosswalks, bridges, dry open ground. */
+  private readonly pedestrianNavGrid?: NavGrid;
   /** Flow field to the player, recomputed each tick and shared by all foot cops. */
   private copFlow?: FlowField;
   private readonly spawn: Vec2;
@@ -492,6 +495,7 @@ export class World {
     this.rng = opts.rng ?? Math.random;
     this.city = opts.city;
     this.navGrid = opts.city ? buildNavGrid(opts.city) : undefined;
+    this.pedestrianNavGrid = opts.city ? buildPedestrianNavGrid(opts.city) : undefined;
     this.spawn = opts.spawn ?? opts.player.pos;
     this.carDrivers = this.cars.map((_, i) => opts.carDrivers?.[i] ?? null);
     this.carKinds = this.cars.map((_, i) => opts.carKinds?.[i] ?? 'car');
@@ -2412,9 +2416,14 @@ export class World {
         const homeFlow = computeFlowField(this.navGrid, returningTo);
         return flowWaypoint(this.navGrid, homeFlow, ped.pos) ?? returningTo;
       })();
+      const wanderTargetPoint = (() => {
+        if (returningTo || !this.pedestrianNavGrid) return undefined;
+        const onFootFlow = computeFlowField(this.pedestrianNavGrid, ped.target);
+        return flowWaypoint(this.pedestrianNavGrid, onFootFlow, ped.pos) ?? ped.target;
+      })();
       const stepped = stepPedestrian(
         { ...ped, target: homeTarget },
-        { threats, bounds: this.bounds, sidewalks: this.sidewalks },
+        { threats, bounds: this.bounds, sidewalks: this.sidewalks, steerTarget: wanderTargetPoint },
         dt,
         this.rng,
       );
@@ -2451,6 +2460,7 @@ export class World {
     if (this.sidewalks.some((sidewalk) => pointInRect(pos, sidewalk))) return false;
     const { tx, ty } = tileCoord(this.city.spec, pos);
     if (!this.city.isRoad(tx, ty) || this.city.isWater(tx, ty)) return false;
+    if (this.city.isBridge(tx, ty)) return false;
     return !this.city.crosswalks.some((cw) => pointInRect(pos, cw));
   }
 
