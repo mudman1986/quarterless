@@ -193,21 +193,25 @@ function waypointPoint(grid: NavGrid, tx: number, ty: number, from: Vec2): Vec2 
   return grid.waypointMode === 'entry' ? tileEntryPoint(grid, tx, ty, from) : tileCentre(grid, tx, ty);
 }
 
+export interface FlowTile {
+  tx: number;
+  ty: number;
+}
+
 /**
  * The next point a foot NPC at `from` should steer toward to follow the flow
  * field to its target: the centre of the adjacent walkable tile closest to the
  * target. Returns null when already in the target's tile (caller should then
  * home directly) or when no route exists. Pure.
  */
-export function flowWaypoint(grid: NavGrid, field: FlowField, from: Vec2): Vec2 | null {
+export function flowNextTile(grid: NavGrid, field: FlowField, from: Vec2): FlowTile | null {
   const tx = Math.floor(from.x / grid.tile);
   const ty = Math.floor(from.y / grid.tile);
 
   // Off the walkable grid (e.g. nudged into a margin): aim for the nearest tile.
   if (!isWalkable(grid, tx, ty)) {
     const near = nearestWalkable(grid, tx, ty, field);
-    if (!near) return null;
-    return waypointPoint(grid, near.tx, near.ty, from);
+    return near ? { tx: near.tx, ty: near.ty } : null;
   }
 
   const here = field[ty * grid.cols + tx];
@@ -225,5 +229,14 @@ export function flowWaypoint(grid: NavGrid, field: FlowField, from: Vec2): Vec2 
       bestTile = { tx: nx, ty: ny };
     }
   }
-  return bestTile ? waypointPoint(grid, bestTile.tx, bestTile.ty, from) : null;
+  return bestTile;
+}
+
+export function flowWaypointForTile(grid: NavGrid, tile: FlowTile, from: Vec2): Vec2 {
+  return waypointPoint(grid, tile.tx, tile.ty, from);
+}
+
+export function flowWaypoint(grid: NavGrid, field: FlowField, from: Vec2): Vec2 | null {
+  const tile = flowNextTile(grid, field, from);
+  return tile ? flowWaypointForTile(grid, tile, from) : null;
 }

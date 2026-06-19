@@ -19,6 +19,10 @@
         "/^node tmp/probe-keys\\.mjs$/": {
             "approve": true,
             "matchCommandLine": true
+        },
+        "/^node scripts/profile-runtime\\.mjs$/": {
+            "approve": true,
+            "matchCommandLine": true
         }
     },
     "cSpell.words": [

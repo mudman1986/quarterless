@@ -45,7 +45,9 @@ import {
   buildNavGrid,
   buildPedestrianNavGrid,
   computeFlowField,
+  flowNextTile,
   flowWaypoint,
+  flowWaypointForTile,
 } from './navigation';
 import {
   type WantedState,
@@ -154,6 +156,12 @@ const CAR_BUST_STOP_DELAY = 1;
 export const PLAYER_MAX_HEALTH = 100;
 /** Collision radius (px) of a bullet, for stopping it at walls. */
 export const BULLET_RADIUS = 2;
+/** Spatial-hash cell size for static rect lookups (walls/sidewalks/crosswalks). */
+const STATIC_RECT_SPATIAL_CELL = 128;
+/** Spatial-hash cell size for bullet broad-phase lookups. */
+const BULLET_SPATIAL_CELL = 64;
+/** Largest circular target radius bullets currently test against. */
+const MAX_BULLET_TARGET_RADIUS = 14;
 /** Score awarded for eliminating a pedestrian. */
 export const SCORE_PER_PEDESTRIAN = 50;
 /** Score awarded for eliminating a police officer. */
@@ -372,7 +380,11 @@ type PedestrianRouteCache = {
   kind: 'home' | 'wander';
   tx: number;
   ty: number;
+  sx: number;
+  sy: number;
   field: FlowField;
+  nextTile: { tx: number; ty: number } | null;
+  needsRoute?: boolean;
 };
 
 type HazardVehicle = {
@@ -387,6 +399,16 @@ type TickSpatialCache = {
   hazardVehicles: readonly HazardVehicle[];
   fireThreats: readonly Vec2[];
   civilianThreats: readonly Vec2[];
+};
+
+type SpatialHash<T> = Map<string, T[]>;
+
+type BulletSpatialIndex = {
+  pedestrians: SpatialHash<Pedestrian>;
+  police: SpatialHash<Police>;
+  cars: SpatialHash<number>;
+  tows: SpatialHash<TowTruck>;
+  towCrews: SpatialHash<TowTruck>;
 };
 
 /**
@@ -447,6 +469,10 @@ export class World {
   private readonly bounds: { width: number; height: number };
   private readonly water: Rect[];
   private readonly sidewalks: Rect[];
+  private readonly crosswalks: Rect[];
+  private readonly wallSpatial?: SpatialHash<Rect>;
+  private readonly sidewalkSpatial?: SpatialHash<Rect>;
+  private readonly crosswalkSpatial?: SpatialHash<Rect>;
   private readonly viewRadius: number;
   private readonly rng: () => number;
   private readonly city?: City;
@@ -523,12 +549,16 @@ export class World {
     this.policeSpawns = opts.policeSpawns ?? [];
     this.bounds = opts.bounds ?? { width: 1600, height: 1600 };
     this.water = opts.water ?? [];
-    this.sidewalks = opts.sidewalks ?? opts.city?.sidewalks ?? [];
+    this.city = opts.city;
+    this.sidewalks = opts.sidewalks ?? this.city?.sidewalks ?? [];
+    this.crosswalks = this.city?.crosswalks ?? [];
+    this.wallSpatial = this.walls.length > 0 ? this.buildRectSpatialHash(this.walls) : undefined;
+    this.sidewalkSpatial = this.sidewalks.length > 0 ? this.buildRectSpatialHash(this.sidewalks) : undefined;
+    this.crosswalkSpatial = this.crosswalks.length > 0 ? this.buildRectSpatialHash(this.crosswalks) : undefined;
     this.viewRadius = opts.viewRadius ?? DEFAULT_VIEW_RADIUS;
     this.enterRadius = opts.enterRadius ?? 28;
     this.tuning = opts.carTuning ?? DEFAULT_CAR_TUNING;
     this.rng = opts.rng ?? Math.random;
-    this.city = opts.city;
     this.navGrid = opts.city ? buildNavGrid(opts.city) : undefined;
     this.pedestrianNavGrid = opts.city ? buildPedestrianNavGrid(opts.city) : undefined;
     this.ammoRespawnPoints = opts.city ? this.buildAmmoRespawnPoints(opts.city) : [];
@@ -853,6 +883,145 @@ export class World {
       ...this.gunfireThreats,
     ];
     return { blockingCars, hazardVehicles, fireThreats, civilianThreats };
+  }
+
+  private spatialHashKey(cellX: number, cellY: number): string {
+    return `${cellX},${cellY}`;
+  }
+
+  private addToSpatialHash<T>(hash: SpatialHash<T>, item: T, pos: Vec2): void {
+    const cellX = Math.floor(pos.x / BULLET_SPATIAL_CELL);
+    const cellY = Math.floor(pos.y / BULLET_SPATIAL_CELL);
+    const key = this.spatialHashKey(cellX, cellY);
+    const bucket = hash.get(key);
+    if (bucket) bucket.push(item);
+    else hash.set(key, [item]);
+  }
+
+  private buildRectSpatialHash(rects: readonly Rect[]): SpatialHash<Rect> {
+    const hash = new Map<string, Rect[]>();
+    for (const r of rects) {
+      const minX = Math.floor(r.x / STATIC_RECT_SPATIAL_CELL);
+      const maxX = Math.floor((r.x + r.w) / STATIC_RECT_SPATIAL_CELL);
+      const minY = Math.floor(r.y / STATIC_RECT_SPATIAL_CELL);
+      const maxY = Math.floor((r.y + r.h) / STATIC_RECT_SPATIAL_CELL);
+      for (let cellY = minY; cellY <= maxY; cellY++) {
+        for (let cellX = minX; cellX <= maxX; cellX++) {
+          const key = this.spatialHashKey(cellX, cellY);
+          const bucket = hash.get(key);
+          if (bucket) bucket.push(r);
+          else hash.set(key, [r]);
+        }
+      }
+    }
+    return hash;
+  }
+
+  private nearbyRects(
+    hash: SpatialHash<Rect> | undefined,
+    pos: Vec2,
+    radius: number,
+    fallback: readonly Rect[],
+  ): readonly Rect[] {
+    if (!hash) return fallback;
+    const minX = Math.floor((pos.x - radius) / STATIC_RECT_SPATIAL_CELL);
+    const maxX = Math.floor((pos.x + radius) / STATIC_RECT_SPATIAL_CELL);
+    const minY = Math.floor((pos.y - radius) / STATIC_RECT_SPATIAL_CELL);
+    const maxY = Math.floor((pos.y + radius) / STATIC_RECT_SPATIAL_CELL);
+    const unique = new Set<Rect>();
+    for (let cellY = minY; cellY <= maxY; cellY++) {
+      for (let cellX = minX; cellX <= maxX; cellX++) {
+        const bucket = hash.get(this.spatialHashKey(cellX, cellY));
+        if (!bucket) continue;
+        for (const rect of bucket) unique.add(rect);
+      }
+    }
+    return unique.size > 0 ? [...unique] : [];
+  }
+
+  private nearbyWalls(pos: Vec2, radius: number): readonly Rect[] {
+    return this.nearbyRects(this.wallSpatial, pos, radius, this.walls);
+  }
+
+  private nearbySidewalks(pos: Vec2): readonly Rect[] {
+    return this.nearbyRects(this.sidewalkSpatial, pos, 0, this.sidewalks);
+  }
+
+  private nearbyCrosswalks(pos: Vec2): readonly Rect[] {
+    return this.nearbyRects(this.crosswalkSpatial, pos, 0, this.crosswalks);
+  }
+
+  private forEachNearbyInSpatialHash<T>(
+    hash: SpatialHash<T>,
+    pos: Vec2,
+    radius: number,
+    visit: (item: T) => void,
+  ): void {
+    const minX = Math.floor((pos.x - radius) / BULLET_SPATIAL_CELL);
+    const maxX = Math.floor((pos.x + radius) / BULLET_SPATIAL_CELL);
+    const minY = Math.floor((pos.y - radius) / BULLET_SPATIAL_CELL);
+    const maxY = Math.floor((pos.y + radius) / BULLET_SPATIAL_CELL);
+    for (let cellY = minY; cellY <= maxY; cellY++) {
+      for (let cellX = minX; cellX <= maxX; cellX++) {
+        const bucket = hash.get(this.spatialHashKey(cellX, cellY));
+        if (!bucket) continue;
+        for (const item of bucket) visit(item);
+      }
+    }
+  }
+
+  private findNearbyArrayEntry<T>(
+    hash: SpatialHash<T>,
+    pos: Vec2,
+    radius: number,
+    items: readonly T[],
+    predicate: (item: T) => boolean,
+  ): { item: T; index: number } | null {
+    let bestItem: T | undefined;
+    let bestIndex = Infinity;
+    this.forEachNearbyInSpatialHash(hash, pos, radius, (item) => {
+      if (!predicate(item)) return;
+      const index = items.indexOf(item);
+      if (index === -1 || index >= bestIndex) return;
+      bestItem = item;
+      bestIndex = index;
+    });
+    return bestItem === undefined ? null : { item: bestItem, index: bestIndex };
+  }
+
+  private findNearbyCarIndex(
+    hash: SpatialHash<number>,
+    pos: Vec2,
+    radius: number,
+    predicate: (index: number) => boolean,
+  ): number {
+    let best = -1;
+    this.forEachNearbyInSpatialHash(hash, pos, radius, (index) => {
+      if (!predicate(index)) return;
+      if (best === -1 || index < best) best = index;
+    });
+    return best;
+  }
+
+  private buildBulletSpatialIndex(): BulletSpatialIndex {
+    const pedestrians = new Map<string, Pedestrian[]>();
+    const police = new Map<string, Police[]>();
+    const cars = new Map<string, number[]>();
+    const tows = new Map<string, TowTruck[]>();
+    const towCrews = new Map<string, TowTruck[]>();
+
+    for (const ped of this.pedestrians) this.addToSpatialHash(pedestrians, ped, ped.pos);
+    for (const cop of this.police) this.addToSpatialHash(police, cop, cop.pos);
+    for (let i = 0; i < this.cars.length; i++) {
+      if (this.wreckedCars[i] || i === this.drivingCarIndex) continue;
+      this.addToSpatialHash(cars, i, this.cars[i].pos);
+    }
+    for (const tow of this.tows) {
+      this.addToSpatialHash(tows, tow, tow.pos);
+      if (tow.crew) this.addToSpatialHash(towCrews, tow, tow.crew);
+    }
+
+    return { pedestrians, police, cars, tows, towCrews };
   }
 
   /** Every vehicle that can currently run an actor over — player, NPC and police
@@ -2561,7 +2730,7 @@ export class World {
         if (returningTo || !this.pedestrianNavGrid) return undefined;
         const route = this.routePedestrianTo(ped, this.pedestrianNavGrid, ped.target, 'wander');
         routeCache = route.cache;
-        return route.waypoint ?? ped.target;
+        return route.cache.needsRoute ? (route.waypoint ?? ped.target) : undefined;
       })();
       const stepped = stepPedestrian(
         { ...ped, target: homeTarget },
@@ -2572,7 +2741,7 @@ export class World {
       // Pedestrians cannot walk through cars too slow to have run them over
       // (handled above); buildings are resolved last so they stay authoritative.
       const offCars = resolveCircleCircles(stepped.pos, stepped.radius, blockers);
-      let pos = resolveCircleRects(offCars, stepped.radius, this.walls);
+      let pos = resolveCircleRects(offCars, stepped.radius, this.nearbyWalls(offCars, stepped.radius));
       // When calm, a pedestrian keeps to the pavement and only steps onto the
       // road at a crosswalk; a fleeing pedestrian will bolt across anywhere.
       if (!returningTo && stepped.state === 'wander' && this.onForbiddenRoad(pos)) {
@@ -2605,26 +2774,66 @@ export class World {
   ): { waypoint: Vec2 | null; cache: PedestrianRouteCache } {
     const tx = Math.floor(target.x / grid.tile);
     const ty = Math.floor(target.y / grid.tile);
+    const sx = Math.floor(ped.pos.x / grid.tile);
+    const sy = Math.floor(ped.pos.y / grid.tile);
     const cached = this.pedestrianRouteCache.get(ped);
-    const field =
-      cached && cached.kind === kind && cached.tx === tx && cached.ty === ty
-        ? cached.field
-        : computeFlowField(grid, target);
+    const targetMatches = cached && cached.kind === kind && cached.tx === tx && cached.ty === ty;
+    if (kind === 'wander') {
+      const needsRoute = targetMatches && cached.needsRoute !== undefined ? cached.needsRoute : this.wanderRouteNeeded(ped.pos, target);
+      if (!needsRoute) {
+        return {
+          waypoint: null,
+          cache: {
+            kind,
+            tx,
+            ty,
+            sx,
+            sy,
+            field: targetMatches ? cached.field : new Int32Array(0),
+            nextTile: null,
+            needsRoute: false,
+          },
+        };
+      }
+      const field = targetMatches ? cached.field : computeFlowField(grid, target);
+      const sourceMatches = targetMatches && cached.sx === sx && cached.sy === sy;
+      const nextTile = sourceMatches ? cached.nextTile : flowNextTile(grid, field, ped.pos);
+      return {
+        waypoint: nextTile ? flowWaypointForTile(grid, nextTile, ped.pos) : null,
+        cache: { kind, tx, ty, sx, sy, field, nextTile, needsRoute: true },
+      };
+    }
+    const field = targetMatches ? cached.field : computeFlowField(grid, target);
+    const sourceMatches = targetMatches && cached.sx === sx && cached.sy === sy;
+    const nextTile = sourceMatches ? cached.nextTile : flowNextTile(grid, field, ped.pos);
     return {
-      waypoint: flowWaypoint(grid, field, ped.pos),
-      cache: { kind, tx, ty, field },
+      waypoint: nextTile ? flowWaypointForTile(grid, nextTile, ped.pos) : null,
+      cache: { kind, tx, ty, sx, sy, field, nextTile },
     };
+  }
+
+  private wanderRouteNeeded(from: Vec2, target: Vec2): boolean {
+    if (!this.city) return false;
+    if (this.walls.some((wall) => segmentIntersectsRect(from, target, wall))) return true;
+    if (this.water.some((water) => segmentIntersectsRect(from, target, water))) return true;
+    const samples = Math.max(1, Math.ceil(distance(from, target) / Math.max(this.city.spec.tile, 1)));
+    for (let i = 1; i < samples; i++) {
+      const t = i / samples;
+      const sample = vec2(from.x + (target.x - from.x) * t, from.y + (target.y - from.y) * t);
+      if (this.onForbiddenRoad(sample)) return true;
+    }
+    return false;
   }
 
   /** Whether a point is on an open road lane that is not a marked crossing, so a
    * calm pedestrian should not step there (no jaywalking). */
   private onForbiddenRoad(pos: Vec2): boolean {
     if (!this.city) return false;
-    if (this.sidewalks.some((sidewalk) => pointInRect(pos, sidewalk))) return false;
+    if (this.nearbySidewalks(pos).some((sidewalk) => pointInRect(pos, sidewalk))) return false;
     const { tx, ty } = tileCoord(this.city.spec, pos);
     if (!this.city.isRoad(tx, ty) || this.city.isWater(tx, ty)) return false;
     if (this.city.isBridge(tx, ty)) return false;
-    return !this.city.crosswalks.some((cw) => pointInRect(pos, cw));
+    return !this.nearbyCrosswalks(pos).some((cw) => pointInRect(pos, cw));
   }
 
   /** Kill the player if a fast vehicle strikes them while on foot. */
@@ -2681,24 +2890,37 @@ export class World {
   /** Advance bullets, removing those that expire, hit a wall, or hit a target. */
   private updateBullets(dt: number): void {
     const surviving: Bullet[] = [];
+    const spatial = this.buildBulletSpatialIndex();
     for (const current of this.bullets) {
       const stepped = stepBullet(current, dt);
       if (!stepped) continue; // expired
       if (this.walls.some((w) => circleIntersectsRect(stepped.pos, BULLET_RADIUS, w))) {
         continue; // stopped by a building
       }
-      const pedIdx = this.pedestrians.findIndex((p) => bulletHits(stepped, p.pos, p.radius));
-      if (pedIdx !== -1) {
-        const ped = this.pedestrians[pedIdx];
+      const pedHit = this.findNearbyArrayEntry(
+        spatial.pedestrians,
+        stepped.pos,
+        MAX_BULLET_TARGET_RADIUS,
+        this.pedestrians,
+        (ped) => bulletHits(stepped, ped.pos, ped.radius),
+      );
+      if (pedHit) {
+        const ped = pedHit.item;
         this.killOnFootNpc(ped.pos, 'pedestrian', true, !!ped.missionTarget);
-        this.pedestrians.splice(pedIdx, 1);
+        this.pedestrians.splice(pedHit.index, 1);
         continue;
       }
-      const copIdx = this.police.findIndex((cop) => bulletHits(stepped, cop.pos, cop.radius));
-      if (copIdx !== -1) {
-        const cop = this.police[copIdx];
+      const copHit = this.findNearbyArrayEntry(
+        spatial.police,
+        stepped.pos,
+        MAX_BULLET_TARGET_RADIUS,
+        this.police,
+        (cop) => bulletHits(stepped, cop.pos, cop.radius),
+      );
+      if (copHit) {
+        const cop = copHit.item;
         if (cop.kind === 'foot') {
-          this.police.splice(copIdx, 1);
+          this.police.splice(copHit.index, 1);
           this.killOnFootNpc(cop.pos, 'police', true);
         } else {
           this.damageVehicle({ kind: 'patrol', vehicle: cop }, stepped.damage, true);
@@ -2709,30 +2931,40 @@ export class World {
         this.killAmbulanceCrew(true);
         continue;
       }
-      const towIdx = this.tows.findIndex(
-        (tow) => tow.crew && bulletHits(stepped, tow.crew, this.player.radius),
+      const towCrewHit = this.findNearbyArrayEntry(
+        spatial.towCrews,
+        stepped.pos,
+        MAX_BULLET_TARGET_RADIUS,
+        this.tows,
+        (tow) => !!tow.crew && bulletHits(stepped, tow.crew, this.player.radius),
       );
-      if (towIdx !== -1) {
-        this.killTowCrew(towIdx, true);
+      if (towCrewHit) {
+        this.killTowCrew(towCrewHit.index, true);
         continue;
       }
       if (this.ambulance && bulletHits(stepped, this.ambulance.pos, this.ambulance.radius)) {
         this.damageVehicle({ kind: 'ambulance', vehicle: this.ambulance }, stepped.damage, true);
         continue;
       }
-      const tow = this.tows.find((t) => bulletHits(stepped, t.pos, t.radius));
-      if (tow) {
-        this.damageVehicle({ kind: 'tow', vehicle: tow }, stepped.damage, true);
+      const towHit = this.findNearbyArrayEntry(
+        spatial.tows,
+        stepped.pos,
+        MAX_BULLET_TARGET_RADIUS,
+        this.tows,
+        (tow) => bulletHits(stepped, tow.pos, tow.radius),
+      );
+      if (towHit) {
+        this.damageVehicle({ kind: 'tow', vehicle: towHit.item }, stepped.damage, true);
         continue;
       }
-      this.reactToNearbyGunfire(stepped.pos, stepped.velocity);
+      this.reactToNearbyGunfire(stepped.pos, stepped.velocity, spatial.cars);
       // Shooting a car damages it; enough hits destroy it. The car the player is
       // driving is excluded (their muzzle sits ahead of it anyway).
-      const carIdx = this.cars.findIndex(
-        (car, i) =>
-          !this.wreckedCars[i] &&
-          i !== this.drivingCarIndex &&
-          bulletHits(stepped, car.pos, car.radius),
+      const carIdx = this.findNearbyCarIndex(
+        spatial.cars,
+        stepped.pos,
+        MAX_BULLET_TARGET_RADIUS,
+        (i) => !this.wreckedCars[i] && i !== this.drivingCarIndex && bulletHits(stepped, this.cars[i].pos, this.cars[i].radius),
       );
       if (carIdx !== -1) {
         this.redirectNpcDriverFromShot(carIdx, stepped.velocity);
@@ -2744,18 +2976,26 @@ export class World {
     this.bullets = surviving;
   }
 
-  private reactToNearbyGunfire(pos: Vec2, travel: Vec2): void {
+  private reactToNearbyGunfire(pos: Vec2, travel: Vec2, carsHash?: SpatialHash<number>): void {
     this.gunfireThreats.push(pos);
     if (!this.city) return;
-    for (let i = 0; i < this.cars.length; i++) {
+    const panicRadius = PANIC_RADIUS / 2 + MAX_BULLET_TARGET_RADIUS;
+    const visitCar = (i: number): void => {
       if (i === this.drivingCarIndex || this.wreckedCars[i] || this.carIsBurning(i) || !this.isCivilianRoadCar(i)) {
-        continue;
+        return;
       }
       const driver = this.carDrivers[i];
-      if (!driver) continue;
+      if (!driver) return;
       const car = this.cars[i];
-      if (distance(pos, car.pos) > car.radius + PANIC_RADIUS / 2) continue;
+      if (distance(pos, car.pos) > car.radius + PANIC_RADIUS / 2) return;
       this.redirectNpcDriverFromShot(i, travel);
+    };
+    if (carsHash) {
+      this.forEachNearbyInSpatialHash(carsHash, pos, panicRadius, visitCar);
+      return;
+    }
+    for (let i = 0; i < this.cars.length; i++) {
+      visitCar(i);
     }
   }
 
@@ -3176,21 +3416,25 @@ export class World {
   private updatePoliceBullets(dt: number): void {
     if (this.policeBullets.length === 0) return;
     const surviving: Bullet[] = [];
+    const spatial = this.buildBulletSpatialIndex();
     for (const current of this.policeBullets) {
       const stepped = stepBullet(current, dt);
       if (!stepped) continue; // expired
       if (this.walls.some((w) => circleIntersectsRect(stepped.pos, BULLET_RADIUS, w))) {
         continue; // stopped by a building
       }
-      const carIdx = this.cars.findIndex(
-        (car, i) => !this.wreckedCars[i] && i !== this.drivingCarIndex && bulletHits(stepped, car.pos, car.radius),
+      const carIdx = this.findNearbyCarIndex(
+        spatial.cars,
+        stepped.pos,
+        MAX_BULLET_TARGET_RADIUS,
+        (i) => !this.wreckedCars[i] && i !== this.drivingCarIndex && bulletHits(stepped, this.cars[i].pos, this.cars[i].radius),
       );
       if (carIdx !== -1) {
         this.redirectNpcDriverFromShot(carIdx, stepped.velocity);
         this.damageCar(carIdx, stepped.damage, false);
         continue;
       }
-      this.reactToNearbyGunfire(stepped.pos, stepped.velocity);
+      this.reactToNearbyGunfire(stepped.pos, stepped.velocity, spatial.cars);
       const hitRadius = this.drivingCar?.radius ?? this.player.radius;
       if (this.status === 'playing' && bulletHits(stepped, this.focus, hitRadius)) {
         this.applyPlayerDamage(stepped.damage);
