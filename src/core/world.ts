@@ -442,6 +442,8 @@ export class World {
   private copFlow?: FlowField;
   /** Reuse a pedestrian's last route field until its destination tile changes. */
   private readonly pedestrianRouteCache = new WeakMap<Pedestrian, PedestrianRouteCache>();
+  /** Candidate city locations at which ammo crates may respawn. */
+  private readonly ammoRespawnPoints: Vec2[];
   private readonly spawn: Vec2;
   private carDrivers: (TrafficAI | null)[];
   private carKinds: VehicleKind[];
@@ -511,6 +513,7 @@ export class World {
     this.city = opts.city;
     this.navGrid = opts.city ? buildNavGrid(opts.city) : undefined;
     this.pedestrianNavGrid = opts.city ? buildPedestrianNavGrid(opts.city) : undefined;
+    this.ammoRespawnPoints = opts.city ? this.buildAmmoRespawnPoints(opts.city) : [];
     this.spawn = opts.spawn ?? opts.player.pos;
     this.carDrivers = this.cars.map((_, i) => opts.carDrivers?.[i] ?? null);
     this.carKinds = this.cars.map((_, i) => opts.carKinds?.[i] ?? 'car');
@@ -1901,15 +1904,57 @@ export class World {
     if (this.ammoPickups.length === 0) return;
     const reach = AMMO_PICKUP_RADIUS + this.player.radius;
     const remaining: AmmoPickup[] = [];
+    const collected: AmmoPickup[] = [];
     for (const pickup of this.ammoPickups) {
       if (distance(this.focus, pickup.pos) <= reach) {
         this.weapon = giveAmmo(this.weapon, pickup.amount);
         this.collected += 1;
+        collected.push(pickup);
       } else {
         remaining.push(pickup);
       }
     }
+    const occupied = remaining.map((pickup) => pickup.pos);
+    for (const pickup of collected) {
+      const respawn = this.respawnAmmoPickup(pickup, occupied, reach);
+      if (!respawn) continue;
+      remaining.push(respawn);
+      occupied.push(respawn.pos);
+    }
     this.ammoPickups = remaining;
+  }
+
+  private buildAmmoRespawnPoints(city: City): Vec2[] {
+    const { spec } = city;
+    const roadWidth = Math.max(1, Math.min(spec.block, spec.roadWidth ?? 1));
+    const lane = Math.floor((roadWidth - 1) / 2);
+    const points: Vec2[] = [];
+    for (let tx = 0; tx < spec.cols; tx += spec.block) {
+      for (let ty = 0; ty < spec.rows; ty += spec.block) {
+        const px = Math.min(spec.cols - 1, tx + lane);
+        const py = Math.min(spec.rows - 1, ty + lane);
+        if (!city.isRoad(px, py) || city.isWater(px, py)) continue;
+        points.push(tileCenter(spec, px, py));
+      }
+    }
+    return points;
+  }
+
+  private respawnAmmoPickup(
+    collected: AmmoPickup,
+    occupied: readonly Vec2[],
+    reach: number,
+  ): AmmoPickup | null {
+    if (this.ammoRespawnPoints.length === 0) return null;
+    const isFree = (pos: Vec2) => occupied.every((other) => distance(pos, other) > 1);
+    const moved = (pos: Vec2) => distance(pos, collected.pos) > 1;
+    const farFromFocus = (pos: Vec2) => distance(pos, this.focus) > reach * 2;
+    const options = this.ammoRespawnPoints.filter((pos) => moved(pos) && farFromFocus(pos) && isFree(pos));
+    const fallback = this.ammoRespawnPoints.filter((pos) => moved(pos) && isFree(pos));
+    const pool = options.length > 0 ? options : fallback;
+    if (pool.length === 0) return null;
+    const pos = pool[Math.floor(this.rng() * pool.length)] ?? pool[0];
+    return { pos, amount: collected.amount };
   }
 
   /** Wrap a position so leaving one edge of the map re-enters the opposite one. */

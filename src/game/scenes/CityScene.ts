@@ -1391,11 +1391,6 @@ export class CityScene extends Phaser.Scene {
       g.strokeCircle(serviceTarget.x * scale, serviceTarget.y * scale, 4);
     }
 
-    g.fillStyle(COLORS.mmAmmo, 1);
-    for (const a of this.world.ammoPickups) {
-      g.fillRect(a.pos.x * scale - 1, a.pos.y * scale - 1, 3, 3);
-    }
-
     g.fillStyle(COLORS.mmPolice, 1);
     for (const cop of this.world.police) {
       g.fillCircle(cop.pos.x * scale, cop.pos.y * scale, 2);
@@ -1661,9 +1656,22 @@ export class CityScene extends Phaser.Scene {
       this.pedSprites[i].setVisible(false);
     }
 
-    // Ammo crates disappear once their specific pickup is collected.
-    for (const { sprite, pickup } of this.ammoSprites) {
-      sprite.setVisible(this.world.ammoPickups.includes(pickup));
+    // Ammo crates can respawn as fresh pickup objects, so the pool must grow
+    // dynamically and track the current live pickups by index rather than identity.
+    this.world.ammoPickups.forEach((pickup, i) => {
+      let entry = this.ammoSprites[i];
+      if (!entry) {
+        entry = {
+          pickup,
+          sprite: this.add.image(pickup.pos.x, pickup.pos.y, TEX.ammo).setDepth(5),
+        };
+        this.ammoSprites[i] = entry;
+      }
+      entry.pickup = pickup;
+      entry.sprite.setVisible(true).setPosition(pickup.pos.x, pickup.pos.y);
+    });
+    for (let i = this.world.ammoPickups.length; i < this.ammoSprites.length; i++) {
+      this.ammoSprites[i].sprite.setVisible(false);
     }
 
     // Police spawn dynamically and arrive on foot or in patrol cars. While a

@@ -3385,6 +3385,29 @@ describe('World ammo pickups', () => {
     expect(w.weapon.ammo).toBe(before);
     expect(w.ammoPickups).toHaveLength(1);
   });
+
+  it('respawns a collected pickup at a different city location', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    const start = tileCenter(city.spec, 4, 4);
+    const w = new World({
+      player: { ...player(), pos: start },
+      city,
+      walls: city.buildings,
+      water: city.water,
+      bounds: { width: city.width, height: city.height },
+      ammoPickups: [{ pos: start, amount: 12 }],
+      rng: () => 0,
+    });
+
+    const before = w.weapon.ammo;
+    w.tick(controls(), 1 / 60);
+
+    expect(w.weapon.ammo).toBe(before + 12);
+    expect(w.ammoPickups).toHaveLength(1);
+    expect(w.ammoPickups[0].pos).not.toEqual(start);
+    const respawned = tileCoord(city.spec, w.ammoPickups[0].pos);
+    expect(city.isWater(respawned.tx, respawned.ty)).toBe(false);
+  });
 });
 
 describe('World patrol car collisions', () => {
