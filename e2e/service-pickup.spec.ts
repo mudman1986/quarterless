@@ -88,6 +88,18 @@ interface RuntimeWorld {
   serviceMission: PlayerServiceMissionProbe | null;
   serviceTarget: Vec2 | null;
   carKind(index: number): string;
+  tick(
+    controls: {
+      up: boolean;
+      down: boolean;
+      left: boolean;
+      right: boolean;
+      action: boolean;
+      confirm: boolean;
+      fire: boolean;
+    },
+    dt: number,
+  ): void;
 }
 
 interface GameProbe {
@@ -97,12 +109,62 @@ interface GameProbe {
       serviceMarker: { visible: boolean };
       world: RuntimeWorld;
       pedSprites: Array<{ texture: { key: string } }>;
+      syncSprites(): void;
+      syncMinimap(): void;
     };
   };
 }
 
+type ParkedServiceKind = 'police' | 'ambulance' | 'tow';
+
+interface FacilityProbe {
+  kind: 'policeStation' | 'hospital' | 'towYard' | 'taxiDepot';
+  roadSpawn: Vec2;
+  building: { x: number; y: number; w: number; h: number };
+}
+
+interface ParkedServiceCase {
+  kind: ParkedServiceKind;
+  facilityKind: FacilityProbe['kind'];
+  campaignTitle: string;
+  genericDescription: string;
+  detail: string;
+  serviceHud: string;
+}
+
+const parkedServiceCases: readonly ParkedServiceCase[] = [
+  {
+    kind: 'police',
+    facilityKind: 'policeStation',
+    campaignTitle: 'Patrol Duty',
+    genericDescription: 'Steal a patrol car and bust 1 suspect',
+    detail: 'Bust the suspect',
+    serviceHud: 'POLICE: Bust the suspect',
+  },
+  {
+    kind: 'ambulance',
+    facilityKind: 'hospital',
+    campaignTitle: 'Hospital Run',
+    genericDescription: 'Steal an ambulance and complete 1 recovery',
+    detail: 'Recover the body',
+    serviceHud: 'AMBULANCE: Recover the body',
+  },
+  {
+    kind: 'tow',
+    facilityKind: 'towYard',
+    campaignTitle: 'Tow Shift',
+    genericDescription: 'Steal a tow truck and complete 1 recovery',
+    detail: 'Recover the wreck',
+    serviceHud: 'TOW: Recover the wreck',
+  },
+];
+
 const GAME = '() => window.__game';
 const LIVE_CITY = buildCity(CITY_SPEC);
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 function nearestLiveRoadPoint(target: Vec2): Vec2 {
   let best = tileCenter(LIVE_CITY.spec, 0, 0);
@@ -335,6 +397,148 @@ async function seedPolicePatrolMission(page: Page): Promise<{ patrol: Vec2; susp
   }, { patrolPos: patrol, patrolHomePos: patrolHome, suspectPosA: suspectA, suspectPosB: suspectB });
 
   return { patrol, suspectA, suspectB };
+}
+
+async function seedParkedFacilityServiceRun(page: Page, serviceCase: ParkedServiceCase): Promise<void> {
+  await page.evaluate(({ config }) => {
+    const g = (window as unknown as { __game: GameProbe }).__game;
+    const w = g.scene.getScene('City').world as RuntimeWorld & {
+      city?: { width: number; height: number; facilities: FacilityProbe[] };
+      campaign?: {
+        missions: Array<{
+          id: string;
+          title: string;
+          objectives: Array<{
+            kind: 'service';
+            description: string;
+            service: ParkedServiceKind;
+            count: number;
+          }>;
+          currentIndex: number;
+          status: 'active';
+          reward: number;
+        }>;
+        currentIndex: number;
+      } | null;
+      objectiveBaseline?: {
+        kills: number;
+        targetKills: number;
+        collected: number;
+        elapsed: number;
+        serviceCompleted: { police: number; ambulance: number; tow: number };
+      };
+      completedServiceJobs?: { police: number; ambulance: number; tow: number };
+      playerServiceMission?: PlayerServiceMissionProbe | null;
+      playerTaxiMission?: unknown | null;
+      stolenServiceVehicles?: boolean[];
+      prevAction?: boolean;
+      prevConfirm?: boolean;
+    };
+
+    const facility = w.city?.facilities.find((entry) => entry.kind === config.facilityKind);
+    if (!facility || !w.city) throw new Error(`expected a ${config.facilityKind} facility in the live city`);
+
+    let parkedIndex = -1;
+    let bestDistance = Infinity;
+    for (let i = 0; i < w.cars.length; i++) {
+      if (w.carKind(i) !== config.kind) continue;
+      const dx = w.cars[i].pos.x - facility.roadSpawn.x;
+      const dy = w.cars[i].pos.y - facility.roadSpawn.y;
+      const d = Math.hypot(dx, dy);
+      if (d >= bestDistance) continue;
+      bestDistance = d;
+      parkedIndex = i;
+    }
+    if (parkedIndex < 0) throw new Error(`expected a parked ${config.kind} at the ${config.facilityKind}`);
+
+    const parked = { ...w.cars[parkedIndex].pos };
+    const verticalRoad =
+      facility.roadSpawn.x < facility.building.x || facility.roadSpawn.x > facility.building.x + facility.building.w;
+    const inwardOffset = verticalRoad
+      ? { x: 0, y: facility.roadSpawn.y < w.city.height / 2 ? 160 : -160 }
+      : { x: facility.roadSpawn.x < w.city.width / 2 ? 160 : -160, y: 0 };
+    const jobPos = { x: parked.x + inwardOffset.x, y: parked.y + inwardOffset.y };
+
+    w.status = 'playing';
+    w.health.current = w.health.max;
+    w.wanted.heat = 0;
+    w.score.current = 0;
+    w.bullets = [];
+    w.policeBullets = [];
+    w.explosions = [];
+    w.police = [];
+    w.corpses = [];
+    w.pedestrians = [];
+    w.ambulance = null;
+    w.tows = [];
+    w.drivingCarIndex = null;
+    w.player.pos = { ...parked };
+    w.player.angle = 0;
+    w.playerServiceMission = null;
+    w.playerTaxiMission = null;
+    w.completedServiceJobs = { police: 0, ambulance: 0, tow: 0 };
+    w.stolenServiceVehicles = w.cars.map(() => false);
+    w.prevAction = false;
+    w.prevConfirm = false;
+    w.campaign = {
+      missions: [
+        {
+          id: `parked-${config.kind}`,
+          title: config.campaignTitle,
+          objectives: [
+            {
+              kind: 'service',
+              description: config.genericDescription,
+              service: config.kind,
+              count: 1,
+            },
+          ],
+          currentIndex: 0,
+          status: 'active',
+          reward: 300,
+        },
+      ],
+      currentIndex: 0,
+    };
+    w.objectiveBaseline = {
+      kills: 0,
+      targetKills: 0,
+      collected: 0,
+      elapsed: 0,
+      serviceCompleted: { police: 0, ambulance: 0, tow: 0 },
+    };
+
+    for (let i = 0; i < w.cars.length; i++) {
+      if (i === parkedIndex) continue;
+      w.cars[i] = { ...w.cars[i], pos: { x: 5000 + i * 24, y: 5000 }, heading: 0, speed: 0 };
+      w.wreckedCars[i] = false;
+      w.towedCars[i] = false;
+      w.carDrivers[i] = null;
+      if (i < w.towDispatchCooldowns.length) w.towDispatchCooldowns[i] = 0;
+    }
+
+    w.cars[parkedIndex] = { ...w.cars[parkedIndex], pos: parked, speed: 0 };
+    w.wreckedCars[parkedIndex] = false;
+    w.towedCars[parkedIndex] = false;
+    w.carDrivers[parkedIndex] = null;
+
+    if (config.kind === 'police') {
+      w.pedestrians = [{ pos: jobPos, heading: 0, radius: 7, state: 'wander', target: jobPos }];
+      return;
+    }
+
+    if (config.kind === 'ambulance') {
+      w.corpses = [{ pos: jobPos, offscreenFor: 0, inFrameFor: 0 }];
+      return;
+    }
+
+    const wreckIndex = parkedIndex === 0 ? 1 : 0;
+    w.cars[wreckIndex] = { pos: jobPos, heading: 0, speed: 0, radius: 12 };
+    w.wreckedCars[wreckIndex] = true;
+    w.towedCars[wreckIndex] = false;
+    w.carDrivers[wreckIndex] = null;
+    if (wreckIndex < w.towDispatchCooldowns.length) w.towDispatchCooldowns[wreckIndex] = 0;
+  }, { config: serviceCase });
 }
 
 test('ambulance pickup waits 3 seconds before the body is removed', async ({ page }) => {
@@ -871,3 +1075,59 @@ test('an ambulance reaches a corpse on a wide sidewalk in the live game instead 
   expect(state.speed).toBe(0);
   expect(state.target).not.toBeNull();
 });
+
+for (const serviceCase of parkedServiceCases) {
+  test(`stealing the parked ${serviceCase.kind} at its facility raises wanted and shows live service HUD text`, async ({
+    page,
+  }) => {
+    await boot(page);
+    await seedParkedFacilityServiceRun(page, serviceCase);
+
+    await page.evaluate(() => {
+      const g = (window as unknown as { __game: GameProbe }).__game;
+      const scene = g.scene.getScene('City');
+      const w = scene.world;
+      const press = {
+        up: false,
+        down: false,
+        left: false,
+        right: false,
+        action: true,
+        confirm: false,
+        fire: false,
+      };
+      const release = { ...press, action: false };
+      w.tick(press, 1 / 60);
+      w.tick(release, 1 / 60);
+      scene.syncSprites();
+      scene.syncMinimap();
+    });
+
+    const state = await page.evaluate(() => {
+      const g = (window as unknown as { __game: GameProbe }).__game;
+      const scene = g.scene.getScene('City');
+      const w = scene.world;
+      return {
+        drivingKind: w.drivingCarIndex === null ? null : w.carKind(w.drivingCarIndex),
+        wantedHeat: w.wanted.heat,
+        police: w.police.length,
+        mission: w.serviceMission,
+        target: w.serviceTarget,
+        markerVisible: scene.serviceMarker.visible,
+        hud: scene.hud.text,
+      };
+    });
+
+    expect(state.drivingKind).toBe(serviceCase.kind);
+    expect(state.wantedHeat).toBeGreaterThan(0);
+    expect(state.police).toBeGreaterThan(0);
+    expect(state.mission?.kind).toBe(serviceCase.kind);
+    expect(state.target).not.toBeNull();
+    expect(state.markerVisible).toBe(true);
+    expect(state.hud).toContain(serviceCase.serviceHud);
+    expect(state.hud).toMatch(
+      new RegExp(`▶ ${escapeRegExp(serviceCase.campaignTitle)}: ${escapeRegExp(serviceCase.detail)}\\s+\\(0/1\\)`),
+    );
+    expect(state.hud).not.toContain(serviceCase.genericDescription);
+  });
+}

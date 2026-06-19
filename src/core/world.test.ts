@@ -1412,6 +1412,17 @@ describe('World road deaths', () => {
     expect(w.kills).toBe(0); // and gets no credit or score
     expect(w.score.current).toBe(0);
   });
+
+  it('does not kill a pedestrian when a slow car nudges them', () => {
+    const w = new World({
+      player: player(),
+      cars: [{ pos: vec2(55, 0), heading: 0, speed: 10, radius: 12 }],
+      pedestrians: [pedAt(60, 0)],
+      bounds: { width: 4000, height: 4000 },
+    });
+    w.tick(controls(), 1 / 60);
+    expect(w.pedestrians).toHaveLength(1);
+  });
 });
 
 describe('World water', () => {
@@ -3386,7 +3397,7 @@ describe('World ammo pickups', () => {
     expect(w.ammoPickups).toHaveLength(1);
   });
 
-  it('respawns a collected pickup at a different city location', () => {
+  it('respawns a collected pickup later at a different city location', () => {
     const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
     const start = tileCenter(city.spec, 4, 4);
     const w = new World({
@@ -3403,6 +3414,10 @@ describe('World ammo pickups', () => {
     w.tick(controls(), 1 / 60);
 
     expect(w.weapon.ammo).toBe(before + 12);
+    expect(w.ammoPickups).toHaveLength(0);
+
+    advance(w, 8);
+
     expect(w.ammoPickups).toHaveLength(1);
     expect(w.ammoPickups[0].pos).not.toEqual(start);
     const respawned = tileCoord(city.spec, w.ammoPickups[0].pos);

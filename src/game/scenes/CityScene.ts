@@ -1759,6 +1759,36 @@ export class CityScene extends Phaser.Scene {
     return p ? `  (${p.current}/${p.goal})` : '';
   }
 
+  private serviceDetail(mission: { kind: 'police' | 'ambulance' | 'tow'; stage?: 'pickup' | 'return' }): string {
+    if (mission.kind === 'police') return 'Bust the suspect';
+    if (mission.kind === 'ambulance') return mission.stage === 'pickup' ? 'Recover the body' : 'Return to the hospital';
+    return mission.stage === 'pickup' ? 'Recover the wreck' : 'Return to the tow yard';
+  }
+
+  private serviceUnavailableText(kind: 'police' | 'ambulance' | 'tow'): string {
+    if (kind === 'police') return 'No suspect available';
+    if (kind === 'ambulance') return 'No corpses to recover';
+    return 'No wrecks to recover';
+  }
+
+  private missionText(): string {
+    const w = this.world;
+    if (w.missionComplete) return 'ALL MISSIONS COMPLETE';
+    if (!w.mission || !w.missionObjective) return '';
+    const objective = w.missionObjective;
+    const detail =
+      objective.kind === 'service'
+        ? (() => {
+            if (w.serviceMission?.kind === objective.service) return this.serviceDetail(w.serviceMission);
+            if (w.drivingCarIndex !== null && w.carKind(w.drivingCarIndex) === objective.service) {
+              return this.serviceUnavailableText(objective.service);
+            }
+            return objective.description;
+          })()
+        : objective.description;
+    return `▶ ${w.mission.title}: ${detail}${this.progressText()}`;
+  }
+
   /** Build the multi-line HUD: wanted, health, money, weapon, mission, controls. */
   private hudText(): string {
     const w = this.world;
@@ -1768,26 +1798,18 @@ export class CityScene extends Phaser.Scene {
       w.score.best > 0 ? `$${w.score.current}  (best $${w.score.best})` : `$${w.score.current}`;
     const speed = w.drivingCar ? Math.round(Math.abs(w.drivingCar.speed)) : 0;
 
-    const mission = w.missionComplete
-      ? 'ALL MISSIONS COMPLETE'
-      : w.mission
-        ? `▶ ${w.mission.title}: ${w.missionObjective?.description ?? ''}${this.progressText()}`
-        : '';
+    const mission = this.missionText();
     const taxi = w.taxiMission
       ? `TAXI: ${w.taxiMission.stage === 'pickup' ? `Pick up ${w.taxiMission.passengerName}` : `Drop off ${w.taxiMission.passengerName}`}  +$${w.taxiMission.reward}`
       : '';
     const service = w.serviceMission
-      ? w.serviceMission.kind === 'police'
-        ? `POLICE: Bust the suspect  +$${w.serviceMission.reward}`
-        : w.serviceMission.kind === 'ambulance'
-          ? `AMBULANCE: ${w.serviceMission.stage === 'pickup' ? 'Recover the body' : 'Return to the hospital'}  +$${w.serviceMission.reward}`
-          : `TOW: ${w.serviceMission.stage === 'pickup' ? 'Recover the wreck' : 'Return to the tow yard'}  +$${w.serviceMission.reward}`
+      ? `${w.serviceMission.kind.toUpperCase()}: ${this.serviceDetail(w.serviceMission)}  +$${w.serviceMission.reward}`
       : w.drivingCarIndex !== null && w.carKind(w.drivingCarIndex) === 'police'
-        ? 'POLICE: No suspect available'
+        ? `POLICE: ${this.serviceUnavailableText('police')}`
         : w.drivingCarIndex !== null && w.carKind(w.drivingCarIndex) === 'ambulance'
-          ? 'AMBULANCE: No corpses to recover'
+          ? `AMBULANCE: ${this.serviceUnavailableText('ambulance')}`
           : w.drivingCarIndex !== null && w.carKind(w.drivingCarIndex) === 'tow'
-            ? 'TOW: No wrecks to recover'
+            ? `TOW: ${this.serviceUnavailableText('tow')}`
             : '';
 
     const ammo =

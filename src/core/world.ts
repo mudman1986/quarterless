@@ -160,6 +160,8 @@ export const SCORE_PER_PEDESTRIAN = 50;
 export const SCORE_PER_POLICE = 150;
 /** How close the player must be to an ammo pickup to collect it. */
 export const AMMO_PICKUP_RADIUS = 22;
+/** Seconds after collection before an ammo crate may reappear elsewhere. */
+export const AMMO_RESPAWN_DELAY = 6;
 /** Minimum wanted level at which officers open fire on the player. */
 export const POLICE_SHOOT_MIN_STARS = 3;
 /** How far (px) an officer will shoot from. */
@@ -444,6 +446,8 @@ export class World {
   private readonly pedestrianRouteCache = new WeakMap<Pedestrian, PedestrianRouteCache>();
   /** Candidate city locations at which ammo crates may respawn. */
   private readonly ammoRespawnPoints: Vec2[];
+  /** Collected ammo crates waiting to respawn after a delay. */
+  private ammoRespawns: { pickup: AmmoPickup; cooldown: number }[] = [];
   private readonly spawn: Vec2;
   private carDrivers: (TrafficAI | null)[];
   private carKinds: VehicleKind[];
@@ -672,6 +676,7 @@ export class World {
     this.checkRoadKill();
     this.checkDrowning();
     this.collectAmmo();
+    this.updateAmmoRespawns(dt);
     this.gunfireThreats = [];
     this.updateWeapon(c, dt);
     this.updateBullets(dt);
@@ -1904,24 +1909,37 @@ export class World {
     if (this.ammoPickups.length === 0) return;
     const reach = AMMO_PICKUP_RADIUS + this.player.radius;
     const remaining: AmmoPickup[] = [];
-    const collected: AmmoPickup[] = [];
     for (const pickup of this.ammoPickups) {
       if (distance(this.focus, pickup.pos) <= reach) {
         this.weapon = giveAmmo(this.weapon, pickup.amount);
         this.collected += 1;
-        collected.push(pickup);
+        if (this.ammoRespawnPoints.length > 0) this.ammoRespawns.push({ pickup, cooldown: AMMO_RESPAWN_DELAY });
       } else {
         remaining.push(pickup);
       }
     }
-    const occupied = remaining.map((pickup) => pickup.pos);
-    for (const pickup of collected) {
-      const respawn = this.respawnAmmoPickup(pickup, occupied, reach);
-      if (!respawn) continue;
-      remaining.push(respawn);
-      occupied.push(respawn.pos);
-    }
     this.ammoPickups = remaining;
+  }
+
+  private updateAmmoRespawns(dt: number): void {
+    if (this.ammoRespawns.length === 0) return;
+    const occupied = this.ammoPickups.map((pickup) => pickup.pos);
+    const pending: { pickup: AmmoPickup; cooldown: number }[] = [];
+    for (const respawn of this.ammoRespawns) {
+      const cooldown = Math.max(0, respawn.cooldown - dt);
+      if (cooldown > 0) {
+        pending.push({ ...respawn, cooldown });
+        continue;
+      }
+      const pickup = this.respawnAmmoPickup(respawn.pickup, occupied);
+      if (!pickup) {
+        pending.push({ ...respawn, cooldown: 0 });
+        continue;
+      }
+      this.ammoPickups.push(pickup);
+      occupied.push(pickup.pos);
+    }
+    this.ammoRespawns = pending;
   }
 
   private buildAmmoRespawnPoints(city: City): Vec2[] {
@@ -1940,16 +1958,12 @@ export class World {
     return points;
   }
 
-  private respawnAmmoPickup(
-    collected: AmmoPickup,
-    occupied: readonly Vec2[],
-    reach: number,
-  ): AmmoPickup | null {
+  private respawnAmmoPickup(collected: AmmoPickup, occupied: readonly Vec2[]): AmmoPickup | null {
     if (this.ammoRespawnPoints.length === 0) return null;
     const isFree = (pos: Vec2) => occupied.every((other) => distance(pos, other) > 1);
     const moved = (pos: Vec2) => distance(pos, collected.pos) > 1;
-    const farFromFocus = (pos: Vec2) => distance(pos, this.focus) > reach * 2;
-    const options = this.ammoRespawnPoints.filter((pos) => moved(pos) && farFromFocus(pos) && isFree(pos));
+    const offCamera = (pos: Vec2) => !this.inFrame(pos);
+    const options = this.ammoRespawnPoints.filter((pos) => moved(pos) && offCamera(pos) && isFree(pos));
     const fallback = this.ammoRespawnPoints.filter((pos) => moved(pos) && isFree(pos));
     const pool = options.length > 0 ? options : fallback;
     if (pool.length === 0) return null;
