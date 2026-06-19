@@ -17,6 +17,7 @@ import { controls } from './types';
 import { addHeat, createWanted, CRIME_HEAT } from './wantedLevel';
 import { createMission } from './mission';
 import { createTrafficLights, LIGHT_GREEN, LIGHT_PERIOD } from './trafficLight';
+import { type Bullet } from './weapon';
 import { vec2, distance } from './vector';
 
 const player = (): OnFootActor => ({ pos: vec2(0, 0), angle: 0, radius: 8 });
@@ -349,6 +350,50 @@ describe('World NPC traffic', () => {
 
     expect(w.cars[0].pos.x).toBeLessThan(startX);
   });
+
+  it('makes an NPC driver flee when police gunfire passes close to the car', () => {
+    const city = miniCity();
+    const npcCar: Car = { pos: tileCenter(city.spec, 2, 4), heading: Math.PI, speed: 0, radius: 12 };
+    const w = new World({
+      player: player(),
+      cars: [npcCar],
+      city,
+      carDrivers: [{ dir: vec2(-1, 0) }],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+    w.wanted = addHeat(createWanted(), CRIME_HEAT.hitPolice); // keep police bullets active this tick
+    w.policeBullets = [
+      { pos: vec2(npcCar.pos.x - 24, npcCar.pos.y + 28), velocity: vec2(240, 0), life: 1, damage: 0 },
+    ];
+
+    const startX = w.cars[0].pos.x;
+    w.tick(controls(), 1 / 60); // register the near miss
+    for (let i = 0; i < 60; i++) w.tick(controls(), 1 / 60);
+
+    expect(w.cars[0].pos.x).toBeGreaterThan(startX);
+  });
+
+  it('runs a red light to flee after being shot at', () => {
+    const city = miniCity();
+    const npc: Car = { pos: tileCenter(city.spec, 4, 2), heading: Math.PI / 2, speed: 0, radius: 12 };
+    const shooter = vec2(npc.pos.x, npc.pos.y - 120);
+    const w = new World({
+      player: { pos: shooter, angle: Math.PI / 2, radius: 8 },
+      cars: [npc],
+      city,
+      carDrivers: [{ dir: vec2(0, 1) }],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+    w.lights = createTrafficLights(0); // vertical traffic is red
+
+    const intersectionY = tileCenter(city.spec, 4, 4).y - city.spec.tile / 2;
+    w.tick(controls({ fire: true }), 1 / 60);
+    for (let i = 0; i < 90; i++) w.tick(controls(), 1 / 60);
+
+    expect(w.cars[0].pos.y).toBeGreaterThanOrEqual(intersectionY);
+  });
 });
 
 describe('World busted and respawn', () => {
@@ -457,7 +502,6 @@ describe('World police obey buildings', () => {
       expect(inside).toBe(false);
     }
   });
-
   it('routes a foot officer around a block to reach the player instead of getting stuck', () => {
     const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
     // Player on road row 4; officer two intersections away. The block between
@@ -1063,6 +1107,48 @@ describe('World living world', () => {
     for (let i = 0; i < 30 && w.pedestrians.length > 0; i++) w.tick(controls({ fire: true }), 1 / 60);
     expect(w.pedestrians).toHaveLength(0);
     expect(w.corpses).toHaveLength(1);
+  });
+
+  it('makes a nearby pedestrian flee when a shot passes close by', () => {
+    const pedestrian = pedAt(90, 30);
+    const w = new World({
+      player: player(), // origin, facing +x
+      pedestrians: [pedestrian],
+      bounds: { width: 1000, height: 1000 },
+      rng: () => 0.5,
+    });
+
+    const before = { ...w.pedestrians[0].pos };
+    w.tick(controls({ fire: true }), 1 / 60);
+    w.tick(controls(), 1 / 60);
+
+    expect(w.pedestrians[0].state).toBe('flee');
+    expect(w.pedestrians[0].pos.y).toBeGreaterThan(before.y);
+  });
+
+  it('makes a walking pedestrian flee when gunfire passes nearby', () => {
+    const ped = pedAt(80, 40);
+    ped.target = vec2(160, 40);
+    const w = new World({
+      player: player(),
+      pedestrians: [ped],
+      bounds: { width: 1000, height: 1000 },
+      rng: () => 0.5,
+    });
+    const nearMiss: Bullet = {
+      pos: vec2(36, 58),
+      velocity: vec2(240, 0),
+      life: 1,
+      damage: 25,
+    };
+    w.bullets = [nearMiss];
+
+    w.tick(controls(), 1 / 60); // record the gunfire threat
+    const before = { ...w.pedestrians[0].pos };
+    w.tick(controls(), 1 / 60);
+
+    expect(w.pedestrians[0].state).toBe('flee');
+    expect(distance(w.pedestrians[0].pos, vec2(40, 58))).toBeGreaterThan(distance(before, vec2(40, 58)));
   });
 
   it('clears a corpse left out of frame and respawns a pedestrian', () => {

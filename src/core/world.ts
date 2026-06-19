@@ -334,6 +334,8 @@ export class World {
   explosions: Explosion[] = [];
   /** Total explosions triggered this run (lets the view play a boom once each). */
   explosionsTriggered = 0;
+  /** Bullet positions from the previous tick that nearby pedestrians react to as gunfire. */
+  private gunfireThreats: Vec2[] = [];
   /** Whether each car (parallel to `cars`) has been destroyed into a wreck. */
   wreckedCars: boolean[] = [];
   /** Whether each wreck (parallel to `cars`) has been hauled away by a tow truck. */
@@ -549,6 +551,7 @@ export class World {
     this.checkRoadKill();
     this.checkDrowning();
     this.collectAmmo();
+    this.gunfireThreats = [];
     this.updateWeapon(c, dt);
     this.updateBullets(dt);
     this.updateWantedAndPolice(dt);
@@ -730,7 +733,7 @@ export class World {
             speed = 0;
           }
         }
-      } else if (this.redLightAhead(car, ai.dir)) {
+      } else if (!escapeTarget && this.redLightAhead(car, dir)) {
         speed = 0; // hold at the red light (not counted as being stuck)
         blocked = 0;
       } else {
@@ -1758,7 +1761,7 @@ export class World {
 
     for (const ped of this.pedestrians) {
       const returningTo = ped.returningTo;
-      const threats = returningTo ? fireThreats : [...playerThreats, ...fireThreats];
+      const threats = returningTo ? fireThreats : [...playerThreats, ...fireThreats, ...this.gunfireThreats];
       if (returningTo && distance(ped.pos, returningTo) <= ARRIVE_RADIUS) {
         continue; // reached the building entrance: disappear inside
       }
@@ -1915,6 +1918,7 @@ export class World {
         this.damageVehicle({ kind: 'tow', vehicle: tow }, stepped.damage, true);
         continue;
       }
+      this.reactToNearbyGunfire(stepped.pos, stepped.velocity);
       // Shooting a car damages it; enough hits destroy it. The car the player is
       // driving is excluded (their muzzle sits ahead of it anyway).
       const carIdx = this.cars.findIndex(
@@ -1931,6 +1935,21 @@ export class World {
       surviving.push(stepped);
     }
     this.bullets = surviving;
+  }
+
+  private reactToNearbyGunfire(pos: Vec2, travel: Vec2): void {
+    this.gunfireThreats.push(pos);
+    if (!this.city) return;
+    for (let i = 0; i < this.cars.length; i++) {
+      if (i === this.drivingCarIndex || this.wreckedCars[i] || this.carIsBurning(i) || this.carKind(i) !== 'car') {
+        continue;
+      }
+      const driver = this.carDrivers[i];
+      if (!driver) continue;
+      const car = this.cars[i];
+      if (distance(pos, car.pos) > car.radius + PANIC_RADIUS / 2) continue;
+      this.redirectNpcDriverFromShot(i, travel);
+    }
   }
 
   /** Apply damage to a car; destroy it into a wreck once its health runs out.
@@ -2355,6 +2374,7 @@ export class World {
         this.damageCar(carIdx, stepped.damage, false);
         continue;
       }
+      this.reactToNearbyGunfire(stepped.pos, stepped.velocity);
       const hitRadius = this.drivingCar?.radius ?? this.player.radius;
       if (this.status === 'playing' && bulletHits(stepped, this.focus, hitRadius)) {
         this.applyPlayerDamage(stepped.damage);
