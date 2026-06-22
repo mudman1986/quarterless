@@ -1388,7 +1388,7 @@ export class CityScene extends Phaser.Scene {
     this.minimapDots = this.add.graphics().setScrollFactor(0).setDepth(1401);
   }
 
-  /** Redraw the minimap's moving dots (player, police, ammo, objective). */
+  /** Redraw the minimap's live markers (player, police, objectives, mission targets). */
   private syncMinimap(): void {
     const scale = MINIMAP_SIZE / this.city.width;
     // Dots are drawn in the minimap's own local space (0..MINIMAP_SIZE). The
@@ -1412,6 +1412,12 @@ export class CityScene extends Phaser.Scene {
     if (serviceMission && serviceTarget) {
       g.lineStyle(2, this.serviceMarkerColor(serviceMission.kind, true), 1);
       g.strokeCircle(serviceTarget.x * scale, serviceTarget.y * scale, 4);
+    }
+
+    g.fillStyle(COLORS.mmTarget, 1);
+    for (const ped of this.world.pedestrians) {
+      if (!ped.missionTarget) continue;
+      g.fillCircle(ped.pos.x * scale, ped.pos.y * scale, 2);
     }
 
     g.fillStyle(COLORS.mmPolice, 1);

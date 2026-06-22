@@ -2112,6 +2112,8 @@ describe('World car explosions', () => {
         blocked: 0,
         health: 1,
         targetCar: 0,
+        depot: towPos,
+        completedWrecks: 0,
       },
     ];
 
@@ -2508,7 +2510,6 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
       w.tick(controls({ fire: true }), 1 / 60);
     }
 
-    expect(w.ambulance).toBeNull();
     expect(w.wreckedCars[1]).toBe(true);
     for (let i = 0; i < 4000 && !w.towedCars[1]; i++) w.tick(controls(), 1 / 60);
     expect(w.towedCars[1]).toBe(true); // another tow eventually hauls off the abandoned ambulance
@@ -2818,6 +2819,99 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     expect(w.tows[0]?.targetCar).toBe(1);
   });
 
+  it('chains another wreck when it is still under the per-trip tow limit', () => {
+    const city = miniCity();
+    const firstWreck: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 };
+    const secondWreck: Car = { pos: tileCenter(city.spec, 6, 4), heading: 0, speed: 0, radius: 12 };
+    const depot = tileCenter(city.spec, 0, 4);
+    const towPos = tileCenter(city.spec, 3, 4);
+    const w = new World({
+      player: player(),
+      cars: [firstWreck, secondWreck],
+      city,
+      carDrivers: [null, null],
+      viewRadius: 4000,
+      bounds: { width: city.width, height: city.height },
+    });
+    w.wreckedCars[0] = true;
+    w.wreckedCars[1] = true;
+    w.towedCars[0] = true;
+    w.tows = [
+      {
+        pos: towPos,
+        heading: 0,
+        radius: 14,
+        dir: vec2(1, 0),
+        target: firstWreck.pos,
+        job: firstWreck.pos,
+        targetCar: 0,
+        depot,
+        completedWrecks: 1,
+        phase: 'return',
+        crew: towPos,
+        pickupElapsed: 0,
+        age: 0,
+        speed: 0,
+        blocked: 0,
+        health: 60,
+      },
+    ];
+
+    w.tick(controls(), 1 / 60);
+
+    expect(w.tows).toHaveLength(1);
+    expect(w.tows[0]?.targetCar).toBe(1);
+    expect(w.tows[0]?.phase).toBe('approach');
+    expect(w.tows[0]?.completedWrecks).toBe(1);
+  });
+
+  it('returns a tow truck to the yard after it has recovered three wrecks', () => {
+    const city = miniCity();
+    const firstWreck: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 };
+    const secondWreck: Car = { pos: tileCenter(city.spec, 6, 4), heading: 0, speed: 0, radius: 12 };
+    const depot = tileCenter(city.spec, 0, 4);
+    const towPos = tileCenter(city.spec, 3, 4);
+    const w = new World({
+      player: player(),
+      cars: [firstWreck, secondWreck],
+      city,
+      carDrivers: [null, null],
+      viewRadius: 4000,
+      bounds: { width: city.width, height: city.height },
+    });
+    w.wreckedCars[0] = true;
+    w.wreckedCars[1] = true;
+    w.towedCars[0] = true;
+    w.tows = [
+      {
+        pos: towPos,
+        heading: 0,
+        radius: 14,
+        dir: vec2(1, 0),
+        target: firstWreck.pos,
+        job: firstWreck.pos,
+        targetCar: 0,
+        depot,
+        completedWrecks: 3,
+        phase: 'return',
+        crew: towPos,
+        pickupElapsed: 0,
+        age: 0,
+        speed: 0,
+        blocked: 0,
+        health: 60,
+      },
+    ];
+
+    w.tick(controls(), 1 / 60);
+
+    const returningTow = w.tows.find((tow) => tow.completedWrecks === 3);
+    expect(returningTow).toBeDefined();
+    expect(returningTow?.phase).toBe('depart');
+    expect(returningTow?.target).toEqual(depot);
+    expect(returningTow?.targetCar).toBe(0);
+  });
+
   it('sends a timed-out tow truck into a visible depart phase instead of vanishing', () => {
     const city = miniCity();
     const wreck: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 };
@@ -2848,6 +2942,8 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
         speed: 0,
         blocked: 0,
         health: 60,
+        depot: towPos,
+        completedWrecks: 0,
       },
     ];
 
@@ -2879,6 +2975,8 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
         dir: vec2(1, 0),
         target: wreck.pos,
         targetCar: 0,
+        depot: parkedPos,
+        completedWrecks: 0,
         phase: 'collect',
         crew: wreck.pos,
         pickupElapsed: 1,

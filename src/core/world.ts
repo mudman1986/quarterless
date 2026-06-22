@@ -230,6 +230,8 @@ export const TOW_SPEED = 150;
 export const TOW_DISPATCH_DELAY = 2.5;
 /** Most tow trucks active at once (each handles a different wreck). */
 export const MAX_TOWS = 3;
+/** A dispatched tow truck can recover up to this many wrecks before it must head back to the yard. */
+const MAX_WRECKS_PER_TOW_RUN = 3;
 /** Seconds a dispatched service vehicle keeps trying before giving up and leaving. */
 export const SERVICE_TIMEOUT = 40;
 /** Spacing (px) between vehicles fanning out from the same facility frontage. */
@@ -322,10 +324,15 @@ export interface ServiceVehicle {
 export type Ambulance = ServiceVehicle;
 
 /** A tow truck that drives to a wreck, parks, sends an operator out to hook it
- * on foot, then hauls it away. Carries one car at a time. */
+ * on foot, then hauls it away. Carries one car at a time, and can chain a few
+ * recoveries before returning to its yard. */
 export interface TowTruck extends ServiceVehicle {
   /** Index into `cars` of the wreck it was sent to collect. */
   targetCar: number;
+  /** Road-side point at the tow yard this truck must return to between runs. */
+  depot: Vec2;
+  /** How many wrecks this truck has already recovered since leaving the yard. */
+  completedWrecks: number;
 }
 
 /** A live explosion, for rendering its expanding blast. */
@@ -1589,7 +1596,7 @@ export class World {
 
     // Crew on foot: the medic is walking out to the body or carrying it back.
     if (amb.crew) {
-      this.ambulance = this.stepCrew(amb, dt, () => {
+      this.ambulance = this.stepCrew(amb, dt, (loaded) => {
         const idx = this.corpses.findIndex(
           (c) => distance(c.pos, job) <= AMBULANCE_PICKUP_RADIUS,
         );
@@ -1598,6 +1605,7 @@ export class World {
           this.corpses.splice(idx, 1); // body loaded aboard
           this.respawnPedestrian(corpse.pos);
         }
+        return loaded;
       });
       return;
     }
@@ -1632,8 +1640,8 @@ export class World {
   /**
    * Drive the active tow trucks and dispatch new ones so every wrecked car is
    * eventually hauled away. Several tows run at once (one per wreck, capped by
-   * {@link MAX_TOWS}) and target the nearest untowed wreck not already claimed,
-   * so a pile-up of explosions all get cleared rather than just the first.
+   * {@link MAX_TOWS}); each truck can chain nearby jobs until it has hauled
+   * {@link MAX_WRECKS_PER_TOW_RUN} wrecks, then it returns to its tow yard.
    */
   private updateTow(dt: number): void {
     if (!this.city) return;
@@ -1645,11 +1653,17 @@ export class World {
       // Crew on foot: the operator walks out to hook the wreck or back to the cab.
       if (prev.crew) {
         alive.push(
-          this.stepCrew(prev, dt, () => {
-            this.towedCars[prev.targetCar] = true; // hooked up; removed from play
-            const slot = Math.max(0, this.tows.indexOf(prev));
-            this.respawnCarAtTowYard(prev.targetCar, slot);
-          }),
+          this.stepCrew(
+            prev,
+            dt,
+            (loaded) => {
+              this.towedCars[prev.targetCar] = true; // hooked up; removed from play
+              const slot = Math.max(0, this.tows.indexOf(prev));
+              this.respawnCarAtTowYard(prev.targetCar, slot);
+              return { ...loaded, completedWrecks: loaded.completedWrecks + 1 };
+            },
+            (boarded) => this.nextTowTruckJob(boarded),
+          ),
         );
         continue;
       }
@@ -1663,13 +1677,7 @@ export class World {
         continue;
       }
       if (this.towedCars[tow.targetCar]) {
-        const claimed = new Set(
-          this.tows
-            .filter((other) => other !== prev && other.phase !== 'depart')
-            .map((other) => other.targetCar),
-        );
-        const nextTarget = this.nearestUntowedWreckFrom(tow.pos, claimed);
-        alive.push(nextTarget === -1 ? this.departTowTruck(tow) : this.redirectTowTruck(tow, nextTarget));
+        alive.push(this.nextTowTruckJob(tow));
         continue;
       }
       if (distance(tow.pos, this.cars[tow.targetCar].pos) <= tow.radius + AMBULANCE_PICKUP_RADIUS) {
@@ -1693,7 +1701,8 @@ export class World {
     while (this.tows.length < MAX_TOWS) {
       const idx = this.nearestUntowedWreck(claimed);
       if (idx === -1) break;
-      this.tows.push({ ...this.dispatchService(this.cars[idx].pos, 'towYard', claimed.size), targetCar: idx });
+      const tow = this.dispatchService(this.cars[idx].pos, 'towYard', claimed.size);
+      this.tows.push({ ...tow, targetCar: idx, depot: tow.pos, completedWrecks: 0 });
       claimed.add(idx);
     }
   }
@@ -1765,6 +1774,21 @@ export class World {
 
   private redirectTowTruck(vehicle: TowTruck, targetCar: number): TowTruck {
     return { ...this.redirectServiceVehicle(vehicle, this.cars[targetCar].pos), targetCar };
+  }
+
+  private returnTowTruckToDepot(vehicle: TowTruck): TowTruck {
+    return { ...this.departServiceVehicle(vehicle), target: vehicle.depot };
+  }
+
+  private nextTowTruckJob(vehicle: TowTruck): TowTruck {
+    if (vehicle.completedWrecks >= MAX_WRECKS_PER_TOW_RUN) return this.returnTowTruckToDepot(vehicle);
+    const claimed = new Set(
+      this.tows
+        .filter((other) => other.phase !== 'depart' && other.targetCar !== vehicle.targetCar)
+        .map((other) => other.targetCar),
+    );
+    const nextTarget = this.nearestUntowedWreckFrom(vehicle.pos, claimed);
+    return nextTarget === -1 ? this.returnTowTruckToDepot(vehicle) : this.redirectTowTruck(vehicle, nextTarget);
   }
 
   private departTowTruck(vehicle: TowTruck): TowTruck {
@@ -1909,12 +1933,17 @@ export class World {
    * Advance a parked service vehicle whose crew member is out on foot. They walk
    * from the vehicle to the cargo ('collect'), and the moment they reach it
    * `onCollect` fires so the caller can load the body / hook the wreck; then they
-   * carry it back to the vehicle ('return') and climb aboard, after which it
-   * drives off toward the map edge. The vehicle stays put (speed 0) the whole
-   * time the crew are out, so it cannot run anyone over while parked. Returns the
-   * updated vehicle.
+   * carry it back to the vehicle ('return') and climb aboard, after which the
+   * caller chooses the next driving phase (depart, retarget, return home, etc.).
+   * The vehicle stays put (speed 0) the whole time the crew are out, so it cannot
+   * run anyone over while parked. Returns the updated vehicle.
    */
-  private stepCrew<T extends ServiceVehicle>(v: T, dt: number, onCollect: () => void): T {
+  private stepCrew<T extends ServiceVehicle>(
+    v: T,
+    dt: number,
+    onCollect: (vehicle: T) => T,
+    onBoard: (vehicle: T) => T = (vehicle) => this.departServiceVehicle(vehicle),
+  ): T {
     const step = CREW_WALK_SPEED * dt;
     const advance = (from: Vec2, to: Vec2): Vec2 => {
       const delta = sub(to, from);
@@ -1930,20 +1959,13 @@ export class World {
       if (pickupElapsed < SERVICE_PICKUP_DWELL) {
         return { ...v, crew, pickupElapsed, speed: 0 };
       }
-      onCollect(); // finished loading it: pick the body up / hook the wreck
-      return { ...v, crew, phase: 'return', pickupElapsed: 0, speed: 0 };
+      return onCollect({ ...v, crew, phase: 'return', pickupElapsed: 0, speed: 0 });
     }
-    // 'return': carry it back to the vehicle, then climb in and prepare to leave.
+    // 'return': carry it back to the vehicle, then climb in and hand control
+    // back to the caller so it can pick the next route.
     const crew = advance(v.crew!, v.pos);
     if (distance(crew, v.pos) <= CREW_REACH_RADIUS) {
-      return {
-        ...v,
-        crew: null,
-        phase: 'depart',
-        target: this.farthestCornerTile(v.pos),
-        pickupElapsed: 0,
-        speed: 0,
-      };
+      return onBoard({ ...v, crew: null, pickupElapsed: 0, speed: 0 });
     }
     return { ...v, crew, pickupElapsed: 0, speed: 0 };
   }
