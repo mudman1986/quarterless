@@ -708,7 +708,8 @@ test('stealing a patrol car starts and completes a live suspect bust side missio
   await page.locator('#game canvas').click();
   await page.evaluate(({ patrolPos }) => {
     const g = (window as unknown as { __game: GameProbe }).__game;
-    const w = g.scene.getScene('City').world;
+    const scene = g.scene.getScene('City');
+    const w = scene.world;
     const patrolWorld = w as RuntimeWorld & {
       appendVehicleSlot(
         car: CarProbe,
@@ -730,6 +731,8 @@ test('stealing a patrol car starts and completes a live suspect bust side missio
     );
     patrolWorld.wanted.heat = 250;
     patrolWorld.playerServiceMission = patrolWorld.startPlayerPoliceMission(patrolPos);
+    scene.syncSprites();
+    scene.syncMinimap();
   }, { patrolPos: patrol });
 
   await page.waitForFunction(() => {
@@ -764,24 +767,22 @@ test('stealing a patrol car starts and completes a live suspect bust side missio
   expect(start.markerVisible).toBe(true);
   expect(start.hud).toContain('POLICE: Bust the suspect');
 
-  await page.evaluate(({ target }) => {
-    const g = (window as unknown as { __game: GameProbe }).__game;
-    const w = g.scene.getScene('City').world;
-    w.police = [];
-    w.wanted.heat = 0;
-    if (w.drivingCarIndex === null) throw new Error('expected to be driving the stolen patrol car');
-    w.cars[w.drivingCarIndex] = { ...w.cars[w.drivingCarIndex], pos: target, speed: 0 };
-  }, { target: suspectA });
-
-  await page.waitForFunction(({ firstMissionId, reward }) => {
+  await page.evaluate(() => {
     const g = (window as unknown as { __game: GameProbe }).__game;
     const scene = g.scene.getScene('City');
     const w = scene.world;
-    return w.score.current === reward &&
-      w.serviceMission?.kind === 'police' &&
-      w.serviceMission.id !== firstMissionId &&
-      scene.hud.text.includes('POLICE: Bust the suspect');
-  }, { firstMissionId: start.mission!.id, reward: start.mission!.reward }, { timeout: 5000 });
+    w.police = [];
+    w.wanted.heat = 0;
+    if (w.drivingCarIndex === null) throw new Error('expected to be driving the stolen patrol car');
+    if (!w.serviceTarget) throw new Error('expected an active police service target');
+    w.cars[w.drivingCarIndex] = { ...w.cars[w.drivingCarIndex], pos: w.serviceTarget, speed: 0 };
+    w.tick(
+      { up: false, down: false, left: false, right: false, action: false, confirm: false, fire: false },
+      1 / 60,
+    );
+    scene.syncSprites();
+    scene.syncMinimap();
+  });
 
   const completed = await page.evaluate(() => {
     const g = (window as unknown as { __game: GameProbe }).__game;

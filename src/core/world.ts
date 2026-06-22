@@ -6,7 +6,6 @@ import {
   circleIntersectsRect,
   pointInRect,
   randomPointInRect,
-  segmentIntersectsRect,
 } from './collision';
 import { wrap } from './math';
 import {
@@ -873,7 +872,6 @@ export class World {
     const hazardVehicles = this.hazardVehicles();
     const fireThreats = this.burningCarThreats();
     const civilianThreats = [
-      ...(this.drivingCar ? [this.drivingCar.pos] : []),
       ...fireThreats,
       ...this.gunfireThreats,
     ];
@@ -2009,6 +2007,20 @@ export class World {
     return add(from, scale(dir, panicDistance));
   }
 
+  private playerCarThreatFor(ped: Pedestrian): Vec2 | null {
+    if (!this.drivingCar) return null;
+    const mission = this.playerServiceMission;
+    if (
+      mission?.kind === 'police' &&
+      ped.policeSuspectId === mission.suspectId &&
+      this.drivingCarIndex !== null &&
+      this.carKind(this.drivingCarIndex) === 'police'
+    ) {
+      return null;
+    }
+    return this.drivingCar.pos;
+  }
+
   /** Positions NPC traffic brakes for: pedestrians and the player when on foot. */
   private yieldObstacles(): Vec2[] {
     const obstacles = this.pedestrians.map((p) => p.pos);
@@ -2692,7 +2704,6 @@ export class World {
     const fireThreats = tickSpatial?.fireThreats ?? this.burningCarThreats();
     const civilianThreats =
       tickSpatial?.civilianThreats ?? [
-        ...(this.drivingCar ? [this.drivingCar.pos] : []),
         ...fireThreats,
         ...this.gunfireThreats,
       ];
@@ -2700,7 +2711,12 @@ export class World {
 
     for (const ped of this.pedestrians) {
       const returningTo = ped.returningTo;
-      const threats = returningTo ? fireThreats : civilianThreats;
+      const playerCarThreat = returningTo ? null : this.playerCarThreatFor(ped);
+      const threats = returningTo
+        ? fireThreats
+        : playerCarThreat
+          ? [playerCarThreat, ...civilianThreats]
+          : civilianThreats;
       let routeCache: PedestrianRouteCache | undefined;
       if (returningTo && distance(ped.pos, returningTo) <= ARRIVE_RADIUS) {
         continue; // reached the building entrance: disappear inside

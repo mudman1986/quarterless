@@ -285,6 +285,44 @@ describe('World police and wanted level', () => {
   });
 });
 
+describe('World police service missions', () => {
+  it('keeps the active suspect from fleeing the stolen patrol car before the bust radius', () => {
+    const suspect: Pedestrian = {
+      ...pedAt(220, 0),
+      target: vec2(220, 100),
+    };
+    const w = new World({
+      player: player(),
+      cars: [carAt(20, 0)],
+      carKinds: ['police'],
+      pedestrians: [suspect],
+      bounds: { width: 1000, height: 1000 },
+      rng: () => 0.5,
+    });
+
+    w.tick(controls({ action: true }), 1 / 60);
+    w.tick(controls(), 1 / 60);
+
+    expect(w.isDriving).toBe(true);
+    expect(w.drivingCarIndex).not.toBeNull();
+    expect(w.carKind(w.drivingCarIndex!)).toBe('police');
+
+    const mission = w.serviceMission;
+    expect(mission?.kind).toBe('police');
+    if (!mission || mission.kind !== 'police') throw new Error('expected an active police mission');
+
+    const suspectIndex = w.pedestrians.findIndex((ped) => ped.policeSuspectId === mission.suspectId);
+    expect(suspectIndex).toBeGreaterThanOrEqual(0);
+
+    w.cars[w.drivingCarIndex!] = { ...w.cars[w.drivingCarIndex!], pos: vec2(150, 0), speed: 0 };
+    w.tick(controls(), 1 / 60);
+
+    expect(w.serviceMission?.kind).toBe('police');
+    expect(w.pedestrians[suspectIndex]?.state).toBe('wander');
+    expect(w.pedestrians[suspectIndex]?.pos.x).toBeLessThanOrEqual(220 + 1e-6);
+  });
+});
+
 describe('World NPC traffic', () => {
   const miniCity = () => buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
 
