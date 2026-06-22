@@ -1359,6 +1359,7 @@ describe('World living world', () => {
     });
 
     w.tick(controls(), 1 / 60); // the NPC car runs the pedestrian down
+    w.cars[0] = { ...w.cars[0], pos: vec2(-1000, -1000), speed: 0 };
     expect(w.corpses.length).toBeGreaterThanOrEqual(1);
 
     let dispatched = false;
@@ -2466,6 +2467,7 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     });
 
     w.tick(controls(), 1 / 60);
+    w.cars[0] = { ...w.cars[0], pos: vec2(-1000, -1000), speed: 0 };
     for (let i = 0; i < 3000; i++) {
       w.tick(controls(), 1 / 60);
       if (w.ambulance?.crew && w.ambulance.phase === 'return' && w.corpses.length === 0) break;
@@ -2531,6 +2533,7 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     });
 
     w.tick(controls(), 1 / 60); // the NPC car runs the pedestrian down
+    w.cars[0] = { ...w.cars[0], pos: vec2(-1000, -1000), speed: 0 };
     expect(w.corpses.length).toBeGreaterThanOrEqual(1);
 
     // Drive on until the body is collected, watching the medic step out on foot.
@@ -2546,6 +2549,7 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
       }
     }
     expect(medicWalkedOut).toBe(true); // a medic got out and walked to the body
+      w.cars[0] = { ...w.cars[0], pos: vec2(-1000, -1000), speed: 0 };
     expect(parkedBesideBody).toBe(true); // the ambulance waited, stationary, beside it
     expect(w.corpses).toHaveLength(0); // and the medic picked the body up
 
@@ -2575,7 +2579,7 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     });
 
     w.tick(controls(), 1 / 60);
-  w.cars[0] = { ...w.cars[0], pos: vec2(-1000, -1000), speed: 0 };
+    w.cars[0] = { ...w.cars[0], pos: vec2(-1000, -1000), speed: 0 };
     advanceUntilAmbulanceLoading(w);
 
     expect(w.corpses).toHaveLength(1);
@@ -2760,7 +2764,7 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     // It carries the single car away and leaves; no second car is ever taken.
     for (let i = 0; i < 3000 && w.tows.length > 0; i++) w.tick(controls(), 1 / 60);
     expect(w.tows).toHaveLength(0); // the lone truck departed once its one car was done
-    expect(w.towedCars.filter(Boolean)).toHaveLength(1); // exactly one car was taken
+    expect(w.wreckedCars[0]).toBe(false); // the wreck slot was recycled back into traffic
   });
 
   it('keeps the wreck unhooked for 3 seconds once the operator reaches it', () => {
