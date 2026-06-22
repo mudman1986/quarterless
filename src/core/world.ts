@@ -4,6 +4,7 @@ import {
   resolveCircleRects,
   resolveCircleCircles,
   circleIntersectsRect,
+  segmentIntersectsRect,
   pointInRect,
   randomPointInRect,
 } from './collision';
