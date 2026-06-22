@@ -43,12 +43,10 @@ import {
   type NavGrid,
   type FlowField,
   buildNavGrid,
-  buildPedestrianNavGrid,
   computeFlowField,
-  flowNextTile,
   flowWaypoint,
-  flowWaypointForTile,
 } from './navigation';
+import { type PedestrianGraph, buildPedestrianGraph, nextWanderNode } from './pedestrianGraph';
 import {
   type WantedState,
   createWanted,
@@ -377,14 +375,9 @@ type DamageableVehicleRef =
   | { kind: 'patrol'; vehicle: Police };
 
 type PedestrianRouteCache = {
-  kind: 'home' | 'wander';
   tx: number;
   ty: number;
-  sx: number;
-  sy: number;
   field: FlowField;
-  nextTile: { tx: number; ty: number } | null;
-  needsRoute?: boolean;
 };
 
 type HazardVehicle = {
@@ -478,10 +471,12 @@ export class World {
   private readonly city?: City;
   /** Walkability grid for on-foot NPC navigation (built from the city, if any). */
   private readonly navGrid?: NavGrid;
-  /** Calm-pedestrian walkability grid: sidewalks, crosswalks, bridges, dry open ground. */
-  private readonly pedestrianNavGrid?: NavGrid;
+  /** Waypoint network calm pedestrians stroll along (built once from the city). */
+  private readonly pedestrianGraph?: PedestrianGraph;
   /** Flow field to the player, recomputed each tick and shared by all foot cops. */
   private copFlow?: FlowField;
+  /** Count of expensive pedestrian flow-field computations; a perf-regression guard. */
+  pedestrianFlowFieldComputations = 0;
   /** Reuse a pedestrian's last route field until its destination tile changes. */
   private readonly pedestrianRouteCache = new WeakMap<Pedestrian, PedestrianRouteCache>();
   /** Candidate city locations at which ammo crates may respawn. */
@@ -560,7 +555,7 @@ export class World {
     this.tuning = opts.carTuning ?? DEFAULT_CAR_TUNING;
     this.rng = opts.rng ?? Math.random;
     this.navGrid = opts.city ? buildNavGrid(opts.city) : undefined;
-    this.pedestrianNavGrid = opts.city ? buildPedestrianNavGrid(opts.city) : undefined;
+    this.pedestrianGraph = opts.city ? buildPedestrianGraph(opts.city) : undefined;
     this.ammoRespawnPoints = opts.city ? this.buildAmmoRespawnPoints(opts.city) : [];
     this.spawn = opts.spawn ?? opts.player.pos;
     this.carDrivers = this.cars.map((_, i) => opts.carDrivers?.[i] ?? null);
@@ -2722,19 +2717,35 @@ export class World {
         if (!returningTo) return ped.target;
         const sightBlocked = this.walls.some((wll) => segmentIntersectsRect(ped.pos, returningTo, wll));
         if (!sightBlocked || !this.navGrid) return returningTo;
-        const route = this.routePedestrianTo(ped, this.navGrid, returningTo, 'home');
+        const route = this.routePedestrianTo(ped, this.navGrid, returningTo);
         routeCache = route.cache;
         return route.waypoint ?? returningTo;
       })();
-      const wanderTargetPoint = (() => {
-        if (returningTo || !this.pedestrianNavGrid) return undefined;
-        const route = this.routePedestrianTo(ped, this.pedestrianNavGrid, ped.target, 'wander');
-        routeCache = route.cache;
-        return route.cache.needsRoute ? (route.waypoint ?? ped.target) : undefined;
+      // A calm pedestrian strolls the precomputed waypoint graph: it walks
+      // straight to its current node and, on arrival, picks a neighbouring node
+      // (never doubling straight back). Edges only cross a road over a crosswalk,
+      // so this keeps NPCs on the pavement and over zebra crossings with no
+      // per-tick routing search. Worlds without a city keep the free-roam wander.
+      let navNode = ped.navNode;
+      let navFrom = ped.navFrom;
+      const graph = !returningTo ? this.pedestrianGraph : undefined;
+      const steerPoint = (() => {
+        if (!graph) return undefined;
+        if (navNode === undefined || navNode < 0 || navNode >= graph.nodes.length) {
+          navNode = graph.nearestNode(ped.pos);
+          navFrom = -1;
+        }
+        if (navNode < 0) return undefined;
+        if (distance(ped.pos, graph.nodes[navNode]) <= ARRIVE_RADIUS) {
+          const next = nextWanderNode(graph, navNode, navFrom ?? -1, this.rng);
+          navFrom = navNode;
+          navNode = next;
+        }
+        return graph.nodes[navNode];
       })();
       const stepped = stepPedestrian(
-        { ...ped, target: homeTarget },
-        { threats, bounds: this.bounds, sidewalks: this.sidewalks, steerTarget: wanderTargetPoint },
+        { ...ped, target: steerPoint ?? homeTarget },
+        { threats, bounds: this.bounds, sidewalks: this.sidewalks, steerTarget: steerPoint },
         dt,
         this.rng,
       );
@@ -2748,18 +2759,25 @@ export class World {
         pos = ped.pos; // hold at the kerb instead of jaywalking
       }
       const blocked = pos.x !== stepped.pos.x || pos.y !== stepped.pos.y;
-      // A wandering pedestrian that walks into a building (or up to the kerb)
-      // turns around (picks a new target) rather than grinding against it.
-      const target =
-        blocked && stepped.state === 'wander'
-          ? (returningTo
-              ? returningTo
-              : wanderTarget({ threats, bounds: this.bounds, sidewalks: this.sidewalks }, pos, this.rng))
-          : stepped.target;
+      // A blocked graph walker re-acquires the nearest reachable node so it
+      // never grinds against an obstacle; a blocked free-roamer turns around.
+      if (graph && blocked && navNode !== undefined && navNode >= 0) {
+        navNode = graph.nearestNode(pos);
+        navFrom = -1;
+      }
+      const target = (() => {
+        if (graph && navNode !== undefined && navNode >= 0) return graph.nodes[navNode];
+        if (blocked && stepped.state === 'wander') {
+          return returningTo
+            ? returningTo
+            : wanderTarget({ threats, bounds: this.bounds, sidewalks: this.sidewalks }, pos, this.rng);
+        }
+        return stepped.target;
+      })();
       if (returningTo && distance(pos, returningTo) <= ARRIVE_RADIUS) {
         continue;
       }
-      const survivor = { ...stepped, pos, target, returningTo };
+      const survivor = { ...stepped, pos, target, returningTo, navNode, navFrom };
       if (routeCache) this.pedestrianRouteCache.set(survivor, routeCache);
       survivors.push(survivor);
     }
@@ -2770,59 +2788,22 @@ export class World {
     ped: Pedestrian,
     grid: NavGrid,
     target: Vec2,
-    kind: PedestrianRouteCache['kind'],
   ): { waypoint: Vec2 | null; cache: PedestrianRouteCache } {
     const tx = Math.floor(target.x / grid.tile);
     const ty = Math.floor(target.y / grid.tile);
-    const sx = Math.floor(ped.pos.x / grid.tile);
-    const sy = Math.floor(ped.pos.y / grid.tile);
     const cached = this.pedestrianRouteCache.get(ped);
-    const targetMatches = cached && cached.kind === kind && cached.tx === tx && cached.ty === ty;
-    if (kind === 'wander') {
-      const needsRoute = targetMatches && cached.needsRoute !== undefined ? cached.needsRoute : this.wanderRouteNeeded(ped.pos, target);
-      if (!needsRoute) {
-        return {
-          waypoint: null,
-          cache: {
-            kind,
-            tx,
-            ty,
-            sx,
-            sy,
-            field: targetMatches ? cached.field : new Int32Array(0),
-            nextTile: null,
-            needsRoute: false,
-          },
-        };
-      }
-      const field = targetMatches ? cached.field : computeFlowField(grid, target);
-      const sourceMatches = targetMatches && cached.sx === sx && cached.sy === sy;
-      const nextTile = sourceMatches ? cached.nextTile : flowNextTile(grid, field, ped.pos);
-      return {
-        waypoint: nextTile ? flowWaypointForTile(grid, nextTile, ped.pos) : null,
-        cache: { kind, tx, ty, sx, sy, field, nextTile, needsRoute: true },
-      };
+    const targetMatches = cached && cached.tx === tx && cached.ty === ty;
+    let field: FlowField;
+    if (targetMatches) {
+      field = cached.field;
+    } else {
+      field = computeFlowField(grid, target);
+      this.pedestrianFlowFieldComputations++;
     }
-    const field = targetMatches ? cached.field : computeFlowField(grid, target);
-    const sourceMatches = targetMatches && cached.sx === sx && cached.sy === sy;
-    const nextTile = sourceMatches ? cached.nextTile : flowNextTile(grid, field, ped.pos);
     return {
-      waypoint: nextTile ? flowWaypointForTile(grid, nextTile, ped.pos) : null,
-      cache: { kind, tx, ty, sx, sy, field, nextTile },
+      waypoint: flowWaypoint(grid, field, ped.pos),
+      cache: { tx, ty, field },
     };
-  }
-
-  private wanderRouteNeeded(from: Vec2, target: Vec2): boolean {
-    if (!this.city) return false;
-    if (this.walls.some((wall) => segmentIntersectsRect(from, target, wall))) return true;
-    if (this.water.some((water) => segmentIntersectsRect(from, target, water))) return true;
-    const samples = Math.max(1, Math.ceil(distance(from, target) / Math.max(this.city.spec.tile, 1)));
-    for (let i = 1; i < samples; i++) {
-      const t = i / samples;
-      const sample = vec2(from.x + (target.x - from.x) * t, from.y + (target.y - from.y) * t);
-      if (this.onForbiddenRoad(sample)) return true;
-    }
-    return false;
   }
 
   /** Whether a point is on an open road lane that is not a marked crossing, so a

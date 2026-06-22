@@ -53,48 +53,6 @@ export function buildNavGrid(city: City): NavGrid {
   return { cols, rows, tile, waypointMode: 'center', walkable };
 }
 
-/**
- * Build a calmer-foot-traffic grid: sidewalks, marked crosswalks, bridges, and
- * other dry non-road open ground are walkable, but ordinary road lanes are not.
- * This keeps wandering pedestrians on the pavement unless a crossing/bridge is
- * the intended safe route.
- */
-export function buildPedestrianNavGrid(city: City): NavGrid {
-  const base = city.spec.tile;
-  const cell = Math.max(8, Math.floor(base / 8));
-  const cols = Math.ceil(city.width / cell);
-  const rows = Math.ceil(city.height / cell);
-  const bridgeCols = new Set<number>();
-  const bridgeRows = new Set<number>();
-  for (let ty = 0; ty < city.spec.rows; ty++) {
-    for (let tx = 0; tx < city.spec.cols; tx++) {
-      if (!city.isBridge(tx, ty)) continue;
-      bridgeCols.add(tx);
-      bridgeRows.add(ty);
-    }
-  }
-  const walkable: boolean[] = new Array(cols * rows).fill(false);
-  for (let cy = 0; cy < rows; cy++) {
-    for (let cx = 0; cx < cols; cx++) {
-      const centre = vec2(cx * cell + cell / 2, cy * cell + cell / 2);
-      const tx = Math.floor(centre.x / base);
-      const ty = Math.floor(centre.y / base);
-      if (city.isWater(tx, ty)) continue;
-      const onSidewalk = city.sidewalks.some((sidewalk) => pointInRect(centre, sidewalk));
-      const onCrosswalk = city.crosswalks.some((crosswalk) => pointInRect(centre, crosswalk));
-      const onBridgeApproach = city.isRoad(tx, ty) && (bridgeCols.has(tx) || bridgeRows.has(ty));
-      if (onSidewalk || onCrosswalk || city.isBridge(tx, ty) || onBridgeApproach) {
-        walkable[cy * cols + cx] = true;
-        continue;
-      }
-      if (!city.isRoad(tx, ty) && !city.buildings.some((b) => pointInRect(centre, b))) {
-        walkable[cy * cols + cx] = true;
-      }
-    }
-  }
-  return { cols, rows, tile: cell, waypointMode: 'entry', walkable };
-}
-
 /** Pixel centre of a tile. */
 function tileCentre(grid: NavGrid, tx: number, ty: number): Vec2 {
   return vec2(tx * grid.tile + grid.tile / 2, ty * grid.tile + grid.tile / 2);

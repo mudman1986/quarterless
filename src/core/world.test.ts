@@ -20,6 +20,7 @@ import { createMission } from './mission';
 import { createTrafficLights, LIGHT_GREEN, LIGHT_PERIOD } from './trafficLight';
 import { type Bullet } from './weapon';
 import { vec2, distance } from './vector';
+import { CITY_SPEC } from '../game/citySpec';
 
 const player = (): OnFootActor => ({ pos: vec2(0, 0), angle: 0, radius: 8 });
 const carAt = (x: number, y: number): Car => ({
@@ -1025,96 +1026,109 @@ describe('World traffic rerouting and lights', () => {
     }
   });
 
-  it('lets a calm pedestrian cross the road at a crosswalk to reach the far side', () => {
+  it('lets calm pedestrians cross the road only at crosswalks (endpoint-graph navigation)', () => {
     // A city with a building margin so sidewalks sit just off the road.
     const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4, margin: 10 });
-    const y = 3 * city.spec.tile + city.spec.tile / 2;
     const roadStart = 4 * city.spec.tile;
     const roadEnd = 5 * city.spec.tile;
-    const westBuilding = city.buildings
-      .filter((b) => b.x + b.w <= roadStart && y >= b.y && y <= b.y + b.h)
-      .sort((a, b) => b.x + b.w - (a.x + a.w))[0];
-    const eastBuilding = city.buildings
-      .filter((b) => b.x >= roadEnd && y >= b.y && y <= b.y + b.h)
-      .sort((a, b) => a.x - b.x)[0];
-    expect(westBuilding).toBeDefined();
-    expect(eastBuilding).toBeDefined();
-    const radius = 7;
-    // Crosswalks are the road tiles adjacent to an intersection; (4,3) is the
-    // approach just north of junction (4,4) on the vertical road. A pedestrian
-    // crosses it east-west from the west sidewalk to the east sidewalk.
-    const ped: Pedestrian = {
-      pos: vec2(westBuilding!.x + westBuilding!.w + radius, y),
+    // A cluster of calm pedestrians on the pavements just west of the vertical
+    // road, beside the junction crosswalks.
+    const spawns = city.sidewalks
+      .map((s) => vec2(s.x + s.w / 2, s.y + s.h / 2))
+      .filter((c) => c.x >= roadStart - 2 * city.spec.tile && c.x < roadStart);
+    expect(spawns.length).toBeGreaterThan(0);
+    const peds: Pedestrian[] = spawns.map((pos) => ({
+      pos,
       heading: 0,
-      radius,
+      radius: 7,
       state: 'wander',
-      target: vec2(eastBuilding!.x - radius, y),
-    };
+      target: pos,
+    }));
+    let seed = 11;
+    const rng = (): number => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
     const w = new World({
       player: player(),
       city,
-      pedestrians: [ped],
+      pedestrians: peds,
       walls: city.buildings,
       bounds: { width: city.width, height: city.height },
-      rng: () => 0.5,
+      rng,
     });
 
-    let reachedFarSide = false;
-    for (let i = 0; i < 1200; i++) {
+    let usedCrosswalk = false;
+    let crossedEast = false;
+    for (let i = 0; i < 4000; i++) {
       w.tick(controls(), 1 / 60);
-      if (w.pedestrians[0].pos.x >= ped.target.x - 5) {
-        reachedFarSide = true; // made it across the road to the east side
-        break;
+      for (const p of w.pedestrians) {
+        const tx = Math.floor(p.pos.x / city.spec.tile);
+        const ty = Math.floor(p.pos.y / city.spec.tile);
+        const onSidewalk = city.sidewalks.some((s) => pointInRect(p.pos, s));
+        const onCrosswalk = city.crosswalks.some((c) => pointInRect(p.pos, c));
+        const onRoad = city.isRoad(tx, ty) && !city.isWater(tx, ty) && !city.isBridge(tx, ty);
+        // The only way a calm pedestrian may stand on a road lane is a crossing.
+        if (onRoad && !onSidewalk) expect(onCrosswalk).toBe(true);
+        usedCrosswalk ||= onCrosswalk;
+        crossedEast ||= p.pos.x >= roadEnd;
       }
     }
-    expect(reachedFarSide).toBe(true); // it actually crossed, rather than being stuck
+    expect(usedCrosswalk).toBe(true); // they stroll over the zebra crossings
+    expect(crossedEast).toBe(true); // and actually reach the far kerb, not frozen
   });
 
-  it('reroutes a calm pedestrian to a crosswalk instead of freezing at the kerb', () => {
+  it('reroutes calm pedestrians over a crosswalk instead of freezing at the kerb', () => {
     const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4, margin: 10 });
-    const x = 2 * city.spec.tile + city.spec.tile / 2;
     const roadStart = 4 * city.spec.tile;
     const roadEnd = 5 * city.spec.tile;
-    const northBuilding = city.buildings
-      .filter((b) => b.y + b.h <= roadStart && x >= b.x && x <= b.x + b.w)
-      .sort((a, b) => b.y + b.h - (a.y + a.h))[0];
-    const southBuilding = city.buildings
-      .filter((b) => b.y >= roadEnd && x >= b.x && x <= b.x + b.w)
-      .sort((a, b) => a.y - b.y)[0];
-    expect(northBuilding).toBeDefined();
-    expect(southBuilding).toBeDefined();
-    const radius = 7;
-    const start = vec2(x, northBuilding!.y + northBuilding!.h + radius);
-    const target = vec2(x, southBuilding!.y - radius); // straight path would jaywalk across road row 4
-    const ped: Pedestrian = {
-      pos: start,
+    // Pedestrians on the pavements just north of the horizontal road, where the
+    // old flow-field router used to freeze them at the kerb.
+    const spawns = city.sidewalks
+      .map((s) => vec2(s.x + s.w / 2, s.y + s.h / 2))
+      .filter((c) => c.y >= roadStart - 2 * city.spec.tile && c.y < roadStart);
+    expect(spawns.length).toBeGreaterThan(0);
+    const peds: Pedestrian[] = spawns.map((pos) => ({
+      pos,
       heading: 0,
-      radius,
+      radius: 7,
       state: 'wander',
-      target,
-    };
+      target: pos,
+    }));
+    const starts = spawns.map((c) => ({ ...c }));
+    let seed = 5;
+    const rng = (): number => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
     const w = new World({
       player: player(),
       city,
-      pedestrians: [ped],
+      pedestrians: peds,
+      walls: city.buildings,
       bounds: { width: city.width, height: city.height },
-      rng: () => 0.5,
+      rng,
     });
 
-    let reachedFarSide = false;
-    let steppedOnCrosswalk = false;
-    for (let i = 0; i < 1800; i++) {
+    let usedCrosswalk = false;
+    let crossedSouth = false;
+    let maxDisplacement = 0;
+    for (let i = 0; i < 4000; i++) {
       w.tick(controls(), 1 / 60);
-      const p = w.pedestrians[0];
-      steppedOnCrosswalk ||= city.crosswalks.some((crosswalk) => pointInRect(p.pos, crosswalk));
-      if (p.pos.y >= target.y - 6) {
-        reachedFarSide = true;
-        break;
-      }
+      w.pedestrians.forEach((p, idx) => {
+        const tx = Math.floor(p.pos.x / city.spec.tile);
+        const ty = Math.floor(p.pos.y / city.spec.tile);
+        const onSidewalk = city.sidewalks.some((s) => pointInRect(p.pos, s));
+        const onCrosswalk = city.crosswalks.some((c) => pointInRect(p.pos, c));
+        const onRoad = city.isRoad(tx, ty) && !city.isWater(tx, ty) && !city.isBridge(tx, ty);
+        if (onRoad && !onSidewalk) expect(onCrosswalk).toBe(true);
+        usedCrosswalk ||= onCrosswalk;
+        crossedSouth ||= p.pos.y >= roadEnd;
+        if (idx < starts.length) {
+          maxDisplacement = Math.max(
+            maxDisplacement,
+            Math.hypot(p.pos.x - starts[idx].x, p.pos.y - starts[idx].y),
+          );
+        }
+      });
     }
-
-    expect(steppedOnCrosswalk).toBe(true);
-    expect(reachedFarSide).toBe(true);
+    expect(maxDisplacement).toBeGreaterThan(city.spec.tile); // they left the kerb, not frozen
+    expect(usedCrosswalk).toBe(true);
+    expect(crossedSouth).toBe(true); // and crossed to the south side at a crossing
   });
 
   it('keeps a calm pedestrian out of the river while still reaching the far side by bridge', () => {
@@ -3466,3 +3480,43 @@ describe('World patrol car collisions', () => {
     }
   });
 });
+
+describe('World pedestrian navigation performance', () => {
+  it('strolls a full city of pedestrians without recomputing flow fields (perf guard)', () => {
+    // Spawn a couple hundred calm pedestrians spread across the city sidewalks.
+    const city = buildCity(CITY_SPEC);
+    const stride = Math.max(1, Math.floor(city.sidewalks.length / 200));
+    const peds: Pedestrian[] = [];
+    for (let i = 0; i < city.sidewalks.length; i += stride) {
+      const s = city.sidewalks[i];
+      const pos = vec2(s.x + s.w / 2, s.y + s.h / 2);
+      peds.push({ pos, heading: 0, radius: 7, state: 'wander', target: pos });
+    }
+    expect(peds.length).toBeGreaterThan(100);
+    let seed = 99;
+    const rng = (): number => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const w = new World({
+      player: player(),
+      city,
+      pedestrians: peds,
+      walls: [...city.buildings, ...city.fences],
+      water: city.water,
+      bounds: { width: city.width, height: city.height },
+      rng,
+    });
+
+    const startedAt = performance.now();
+    for (let i = 0; i < 1000; i++) w.tick(controls(), 1 / 60);
+    const elapsed = performance.now() - startedAt;
+
+    // The regression guard: calm wandering must NEVER trigger an expensive
+    // pedestrian flow-field recompute — that per-tick cost over a 560x560 grid
+    // is what used to grind the game to a crawl after a few minutes.
+    expect(w.pedestrianFlowFieldComputations).toBe(0);
+    // And a city packed with pedestrians stays comfortably real-time. The old
+    // flow-field router blew past this budget by orders of magnitude and would
+    // have tripped the runner's per-test timeout.
+    expect(elapsed).toBeLessThan(3000);
+  });
+});
+

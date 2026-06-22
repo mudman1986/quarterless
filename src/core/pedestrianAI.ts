@@ -21,6 +21,10 @@ export interface Pedestrian {
   taxiPassengerRole?: 'playerFare' | 'npcFare';
   /** Stable id for a suspect the player is meant to bust in a stolen police car. */
   policeSuspectId?: number;
+  /** Index of the waypoint-graph node this pedestrian is currently walking to. */
+  navNode?: number;
+  /** Index of the waypoint-graph node it came from, to avoid immediate U-turns. */
+  navFrom?: number;
 }
 
 export interface PedestrianContext {
