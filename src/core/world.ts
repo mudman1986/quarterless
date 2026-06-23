@@ -2044,10 +2044,23 @@ export class World {
     return this.drivingCar.pos;
   }
 
-  /** Positions NPC traffic brakes for: pedestrians and the player when on foot. */
+  /** Positions of every live vehicle body, so traffic can queue behind it rather
+   * than ploughing straight into it. */
+  private liveVehicleObstacles(): Vec2[] {
+    const obstacles: Vec2[] = [];
+    for (const ref of this.damageableVehicles()) {
+      const body = this.vehicleBody(ref);
+      if (body) obstacles.push(body.pos);
+    }
+    return obstacles;
+  }
+
+  /** Positions NPC traffic and service vehicles brake for: pedestrians, the
+   * player on foot, other live vehicles, and static wrecks. */
   private yieldObstacles(): Vec2[] {
     const obstacles = this.pedestrians.map((p) => p.pos);
     if (!this.isDriving) obstacles.push(this.player.pos);
+    obstacles.push(...this.liveVehicleObstacles());
     obstacles.push(...this.wreckObstacles().map((wreck) => wreck.pos));
     return obstacles;
   }

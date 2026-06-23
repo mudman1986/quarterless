@@ -813,6 +813,62 @@ describe('World traffic rerouting and lights', () => {
     expect(w.cars[0].pos.x).toBeLessThan(standing.x - 10);
   });
 
+  it('stops an NPC car behind queued traffic instead of rear-ending it', () => {
+    const city = miniCity();
+    const queued: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 };
+    const npc: Car = { pos: tileCenter(city.spec, 0, 4), heading: 0, speed: 0, radius: 12 };
+    const w = new World({
+      player: player(),
+      cars: [npc, queued],
+      city,
+      carDrivers: [{ dir: vec2(1, 0) }, null],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+
+    advance(w, 2);
+
+    expect(w.cars[0].speed).toBe(0);
+    expect(distance(w.cars[0].pos, w.cars[1].pos)).toBeGreaterThan(
+      w.cars[0].radius + w.cars[1].radius + 8,
+    );
+    expect(w.explosionsTriggered).toBe(0);
+  });
+
+  it('makes an ambulance queue behind traffic instead of rear-ending it', () => {
+    const city = miniCity();
+    const queued: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 };
+    const w = new World({
+      player: player(),
+      cars: [queued],
+      city,
+      carDrivers: [null],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+    w.ambulance = {
+      pos: tileCenter(city.spec, 0, 4),
+      heading: 0,
+      radius: 14,
+      dir: vec2(1, 0),
+      target: tileCenter(city.spec, 6, 4),
+      phase: 'depart',
+      crew: null,
+      pickupElapsed: 0,
+      age: 0,
+      speed: 0,
+      blocked: 0,
+      health: 60,
+    };
+
+    advance(w, 2);
+
+    expect(w.ambulance).not.toBeNull();
+    expect(w.ambulance!.speed).toBe(0);
+    expect(distance(w.ambulance!.pos, queued.pos)).toBeGreaterThan(w.ambulance!.radius + queued.radius + 8);
+    expect(w.explosionsTriggered).toBe(0);
+  });
+
   it('stops an NPC car at a red light instead of crossing the intersection', () => {
     const city = miniCity();
     // Southbound car approaching the intersection at (4,4); horizontal has the
@@ -1908,26 +1964,23 @@ describe('World car explosions', () => {
   });
 
   it('lets the player get out of a burning car before the delayed explosion', () => {
-    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
-    const playerCar: Car = { pos: tileCenter(city.spec, 3, 4), heading: 0, speed: 0, radius: 12 };
-    const rammer: Car = { pos: tileCenter(city.spec, 1, 4), heading: 0, speed: 0, radius: 12 };
+    const playerCar: Car = { pos: vec2(80, 0), heading: 0, speed: 0, radius: 12 };
     const w = new World({
       player: { pos: playerCar.pos, angle: 0, radius: 8 },
-      cars: [playerCar, rammer],
-      city,
-      carDrivers: [null, { dir: vec2(1, 0) }],
-      bounds: { width: city.width, height: city.height },
-      rng: () => 0.9,
+      cars: [playerCar],
+      bounds: { width: 4000, height: 4000 },
     });
-    w.lights = createTrafficLights(0);
 
     w.tick(controls({ action: true }), 1 / 60); // get into the car
-    (w as unknown as { carHealth: number[] }).carHealth[0] = 1;
+    const state = w as unknown as { carHealth: number[]; carBurnTimers: number[]; carBurnByPlayer: boolean[] };
+    state.carHealth[0] = 0;
+    state.carBurnTimers[0] = VEHICLE_BURN_DURATION;
+    state.carBurnByPlayer[0] = false;
 
-    for (let i = 0; i < 900 && !w.carIsBurning(0); i++) w.tick(controls(), 1 / 60);
     expect(w.carIsBurning(0)).toBe(true);
     expect(w.isWasted).toBe(false);
 
+    w.tick(controls(), 1 / 60); // release action before trying to bail out
     w.tick(controls({ action: true }), 1 / 60); // bail out
     expect(w.isDriving).toBe(false);
 
@@ -1978,46 +2031,45 @@ describe('World car explosions', () => {
     expect(w.pedestrians[0].state).toBe('flee');
   });
 
-  it('blows up a car that is repeatedly rammed by another car', () => {
-    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
-    // A stopped car sits in the lane; an NPC keeps driving into it.
-    const stopped: Car = { pos: tileCenter(city.spec, 3, 4), heading: 0, speed: 0, radius: 12 };
-    const rammer: Car = { pos: tileCenter(city.spec, 1, 4), heading: 0, speed: 0, radius: 12 };
+  it('starts a burning fuse when the player repeatedly rams a weakened car', () => {
+    const stopped: Car = { pos: vec2(140, 0), heading: 0, speed: 0, radius: 12 };
+    const rammer: Car = { pos: vec2(40, 0), heading: 0, speed: 0, radius: 12 };
     const w = new World({
-      player: player(), // far away at the origin
-      cars: [stopped, rammer],
-      city,
-      carDrivers: [null, { dir: vec2(1, 0) }],
-      bounds: { width: city.width, height: city.height },
-      rng: () => 0.9, // the NPC keeps driving straight
+      player: { pos: rammer.pos, angle: 0, radius: 8 },
+      cars: [rammer, stopped],
+      bounds: { width: 4000, height: 4000 },
     });
-    w.lights = createTrafficLights(0); // east-west green, so the rammer never stops
+    w.tick(controls({ action: true }), 1 / 60);
+    (w as unknown as { carHealth: number[] }).carHealth[1] = 1;
 
-    for (let i = 0; i < 1800 && w.explosionsTriggered === 0; i++) w.tick(controls(), 1 / 60);
-    expect(w.explosionsTriggered).toBeGreaterThanOrEqual(1); // rammed to destruction
-    expect(w.wreckedCars.some(Boolean)).toBe(true);
-    // The player was nowhere near it, so the crash must NOT make them wanted.
-    expect(w.wantedStars).toBe(0);
-    expect(w.kills).toBe(0);
+    for (let i = 0; i < 240 && !w.carIsBurning(1); i++) w.tick(controls({ up: true }), 1 / 60);
+    expect(w.carIsBurning(1)).toBe(true);
+
+    w.tick(controls({ action: true }), 1 / 60); // step out before the blast
+    w.player = { ...w.player, pos: vec2(-9999, -9999) };
+
+    advance(w, VEHICLE_BURN_DURATION + 1);
+    expect(w.wreckedCars[1]).toBe(true);
+    expect(w.score.current).toBeGreaterThanOrEqual(100);
   });
 
-  it('does not make the player wanted when two NPC cars crash and explode', () => {
-    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
-    // Two NPC cars driving head-on toward each other on the same lane.
-    const east: Car = { pos: tileCenter(city.spec, 1, 4), heading: 0, speed: 0, radius: 12 };
-    const west: Car = { pos: tileCenter(city.spec, 6, 4), heading: Math.PI, speed: 0, radius: 12 };
+  it('does not make the player wanted when NPC vehicle explosions chain together', () => {
     const w = new World({
-      player: player(), // far away at the origin, doing nothing
-      cars: [east, west],
-      city,
-      carDrivers: [{ dir: vec2(1, 0) }, { dir: vec2(-1, 0) }],
-      bounds: { width: city.width, height: city.height },
-      rng: () => 0.9, // neither turns off the lane
+      player: { pos: vec2(-9999, -9999), angle: 0, radius: 8 },
+      cars: [carAt(60, 0), carAt(110, 0)],
+      bounds: { width: 4000, height: 4000 },
     });
-    w.lights = createTrafficLights(0); // east-west green: both keep driving
+    const state = w as unknown as { carHealth: number[]; carBurnTimers: number[]; carBurnByPlayer: boolean[] };
+    state.carHealth[0] = 0;
+    state.carBurnTimers[0] = 1 / 60;
+    state.carBurnByPlayer[0] = false;
 
-    for (let i = 0; i < 1200 && w.explosionsTriggered === 0; i++) w.tick(controls(), 1 / 60);
-    expect(w.explosionsTriggered).toBeGreaterThanOrEqual(1); // they crashed and blew up
+    w.tick(controls(), 1 / 60);
+    expect(w.wreckedCars[0]).toBe(true);
+    expect(w.carIsBurning(1)).toBe(true);
+
+    advance(w, VEHICLE_BURN_DURATION + 1);
+    expect(w.wreckedCars[1]).toBe(true);
     expect(w.wantedStars).toBe(0); // the player did nothing: no heat
     expect(w.kills).toBe(0);
     expect(w.score.current).toBe(0);
