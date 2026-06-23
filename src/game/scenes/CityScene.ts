@@ -129,6 +129,8 @@ const VIEW_SPAN = 760;
 /** Clamp the derived zoom so it never becomes extreme on unusual displays. */
 const MIN_ZOOM = 0.6;
 const MAX_ZOOM = 2.5;
+/** Extra camera room beyond the wrapped map so edge actors are fully visible. */
+const CAMERA_EDGE_GUTTER = 48;
 /** On-screen size of the square minimap. */
 const MINIMAP_SIZE = 168;
 /** Seconds a mission announcement banner stays on screen. */
@@ -1173,7 +1175,12 @@ export class CityScene extends Phaser.Scene {
   private setupCamera(): void {
     const f = this.world.focus;
     this.focusPoint = this.add.rectangle(f.x, f.y, 1, 1, 0x000000, 0);
-    this.cameras.main.setBounds(0, 0, this.city.width, this.city.height);
+    this.cameras.main.setBounds(
+      -CAMERA_EDGE_GUTTER,
+      -CAMERA_EDGE_GUTTER,
+      this.city.width + CAMERA_EDGE_GUTTER * 2,
+      this.city.height + CAMERA_EDGE_GUTTER * 2,
+    );
     this.cameras.main.startFollow(this.focusPoint, true, 0.15, 0.15);
     this.applyZoom();
     // Re-fit when the viewport changes — window resize, device rotation, or

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { vec2 } from '../../core/vector';
-import { clampStick, readTouchSnapshot, touchSupported, type TouchLayout } from './touchControls';
+import { clampStick, readTouchSnapshot, touchLayoutForViewport, touchSupported, type TouchLayout } from './touchControls';
 
 const layout: TouchLayout = {
   move: {
@@ -70,5 +70,27 @@ describe('readTouchSnapshot', () => {
     expect(snapshot.controls.left).toBe(false);
     expect(snapshot.controls.right).toBe(false);
     expect(snapshot.knob).toEqual(layout.move.center);
+  });
+});
+
+describe('touchLayoutForViewport', () => {
+  it('keeps every touch control circle fully inside mobile and tablet viewports', () => {
+    const viewports = [
+      { width: 320, height: 568 },
+      { width: 390, height: 844 },
+      { width: 768, height: 1024 },
+      { width: 1024, height: 768 },
+    ];
+
+    for (const viewport of viewports) {
+      const l = touchLayoutForViewport(viewport.width, viewport.height);
+      const circles = [l.move, l.action, l.fire, l.confirm].filter((circle) => !!circle);
+      for (const circle of circles) {
+        expect(circle.center.x - circle.radius).toBeGreaterThanOrEqual(0);
+        expect(circle.center.y - circle.radius).toBeGreaterThanOrEqual(0);
+        expect(circle.center.x + circle.radius).toBeLessThanOrEqual(viewport.width);
+        expect(circle.center.y + circle.radius).toBeLessThanOrEqual(viewport.height);
+      }
+    }
   });
 });

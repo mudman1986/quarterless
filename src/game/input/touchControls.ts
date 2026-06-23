@@ -54,7 +54,7 @@ export function touchDeviceLikely(): boolean {
 /** Screen-space layout for tablet/phone touch controls. */
 export function touchLayoutForViewport(width: number, height: number): TouchLayout {
   const span = Math.min(width, height);
-  const margin = clamp(span * 0.035, 18, 34);
+  const margin = clamp(span * 0.05, 28, 44);
   const stickRadius = clamp(span * 0.1, 48, 74);
   const buttonRadius = clamp(span * 0.078, 40, 62);
   const confirmRadius = clamp(span * 0.038, 18, 28);
