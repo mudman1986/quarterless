@@ -57,6 +57,9 @@ const COLORS = {
   policeMarker: 0x60a5fa,
   ambulanceMarker: 0xf8fafc,
   towMarker: 0xf59e0b,
+  garageApron: 0x3f3f46,
+  garageDoor: 0x18181b,
+  garageStripe: 0xf8fafc,
   ammo: 0xfacc15,
   // Water & bridges.
   water: 0x1d4e6f,
@@ -761,6 +764,10 @@ export class CityScene extends Phaser.Scene {
       }
     });
 
+    for (const facility of this.city.facilities) {
+      this.drawFacilityGarage(g, facility);
+    }
+
     // Forecourt markers where service vehicles / police emerge from the facility.
     g.fillStyle(0xffffff, 0.9);
     for (const facility of this.city.facilities) {
@@ -768,6 +775,60 @@ export class CityScene extends Phaser.Scene {
       g.lineStyle(2, COLORS.buildingEdge, 1);
       g.strokeCircle(facility.spawn.x, facility.spawn.y, 6);
     }
+  }
+
+  private drawFacilityGarage(g: Phaser.GameObjects.Graphics, facility: Facility): void {
+    const b = facility.building;
+    const road = facility.roadSpawn;
+    const doorColor =
+      facility.kind === 'hospital'
+        ? 0xdc2626
+        : facility.kind === 'towYard'
+          ? 0x111114
+          : facility.kind === 'policeStation'
+            ? 0xbfdbfe
+            : 0x111114;
+    const doorSpan = Math.min(42, Math.max(26, Math.min(b.w, b.h) * 0.45));
+    const doorDepth = 12;
+    const apronSpan = doorSpan + 14;
+    const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
+
+    if (road.x < b.x || road.x > b.x + b.w) {
+      const side = road.x < b.x ? -1 : 1;
+      const edgeX = side < 0 ? b.x : b.x + b.w;
+      const cy = clamp(road.y, b.y + doorSpan / 2, b.y + b.h - doorSpan / 2);
+      const apronX = Math.min(edgeX, road.x);
+      const apronW = Math.max(doorDepth, Math.abs(edgeX - road.x));
+      g.fillStyle(COLORS.garageApron, 0.92);
+      g.fillRect(apronX, cy - apronSpan / 2, apronW, apronSpan);
+      g.lineStyle(2, COLORS.garageStripe, 0.55);
+      g.lineBetween(road.x, cy, edgeX, cy);
+      const doorX = side < 0 ? b.x - doorDepth : b.x + b.w;
+      g.fillStyle(COLORS.garageDoor, 1);
+      g.fillRect(doorX, cy - doorSpan / 2, doorDepth, doorSpan);
+      g.fillStyle(doorColor, 1);
+      g.fillRect(doorX, cy - doorSpan / 2, doorDepth, 5);
+      g.lineStyle(2, COLORS.buildingEdge, 1);
+      g.strokeRect(doorX, cy - doorSpan / 2, doorDepth, doorSpan);
+      return;
+    }
+
+    const side = road.y < b.y ? -1 : 1;
+    const edgeY = side < 0 ? b.y : b.y + b.h;
+    const cx = clamp(road.x, b.x + doorSpan / 2, b.x + b.w - doorSpan / 2);
+    const apronY = Math.min(edgeY, road.y);
+    const apronH = Math.max(doorDepth, Math.abs(edgeY - road.y));
+    g.fillStyle(COLORS.garageApron, 0.92);
+    g.fillRect(cx - apronSpan / 2, apronY, apronSpan, apronH);
+    g.lineStyle(2, COLORS.garageStripe, 0.55);
+    g.lineBetween(cx, road.y, cx, edgeY);
+    const doorY = side < 0 ? b.y - doorDepth : b.y + b.h;
+    g.fillStyle(COLORS.garageDoor, 1);
+    g.fillRect(cx - doorSpan / 2, doorY, doorSpan, doorDepth);
+    g.fillStyle(doorColor, 1);
+    g.fillRect(cx - doorSpan / 2, doorY, doorSpan, 5);
+    g.lineStyle(2, COLORS.buildingEdge, 1);
+    g.strokeRect(cx - doorSpan / 2, doorY, doorSpan, doorDepth);
   }
 
   /** Draw the river water, the bridge decks crossing it, and the bridge rails. */

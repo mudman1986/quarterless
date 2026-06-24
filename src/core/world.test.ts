@@ -1447,6 +1447,30 @@ describe('World living world', () => {
     w.tick(controls(), 0); // dispatch without advancing away from the spawn point
     expect(w.ambulance?.pos).toEqual(hospital!.roadSpawn);
   });
+
+  it('sends a timed-out ambulance back to its hospital garage bay', () => {
+    const city = miniCity();
+    const corpsePos = tileCenter(city.spec, 2, 4);
+    const hospital = city.facilities
+      .filter((f) => f.kind === 'hospital')
+      .sort((a, b) => distance(a.roadSpawn, corpsePos) - distance(b.roadSpawn, corpsePos))[0];
+    expect(hospital).toBeDefined();
+    const w = new World({
+      player: player(),
+      city,
+      bounds: { width: city.width, height: city.height },
+    });
+    w.corpses = [
+      { pos: corpsePos, offscreenFor: 0, inFrameFor: AMBULANCE_DISPATCH_DELAY },
+    ];
+    w.tick(controls(), 0);
+
+    w.ambulance = { ...w.ambulance!, age: SERVICE_TIMEOUT };
+    w.tick(controls(), 1 / 60);
+
+    expect(w.ambulance?.phase).toBe('depart');
+    expect(w.ambulance?.target).toEqual(hospital!.roadSpawn);
+  });
 });
 
 describe('World road deaths', () => {
@@ -2396,6 +2420,30 @@ describe('World tow truck', () => {
 
     w.tick(controls(), 0); // dispatch without advancing away from the spawn point
     expect(w.tows[0]?.pos).toEqual(towYard!.roadSpawn);
+  });
+
+  it('sends a timed-out tow truck back to its tow-yard garage bay', () => {
+    const city = miniCity();
+    const wreckPos = tileCenter(city.spec, 2, 4);
+    const towYard = city.facilities
+      .filter((f) => f.kind === 'towYard')
+      .sort((a, b) => distance(a.roadSpawn, wreckPos) - distance(b.roadSpawn, wreckPos))[0];
+    expect(towYard).toBeDefined();
+    const w = new World({
+      player: player(),
+      cars: [{ pos: wreckPos, heading: 0, speed: 0, radius: 12 }],
+      city,
+      carDrivers: [null],
+      bounds: { width: city.width, height: city.height },
+    });
+    w.wreckedCars[0] = true;
+    w.tick(controls(), 0);
+
+    w.tows[0] = { ...w.tows[0], age: SERVICE_TIMEOUT };
+    w.tick(controls(), 1 / 60);
+
+    expect(w.tows[0]?.phase).toBe('depart');
+    expect(w.tows[0]?.target).toEqual(towYard!.roadSpawn);
   });
 
   it('respawns a picked-up exploded car at the nearest tow yard', () => {

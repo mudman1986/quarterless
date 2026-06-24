@@ -289,8 +289,11 @@ export interface ServiceVehicle {
   /** Current cardinal travel direction (for the shared road-following model). */
   dir: Vec2;
   /** Where it is currently headed (a reachable road stop beside the job, then
-   * the on-foot pickup point, then the map edge to leave by). */
+   * the on-foot pickup point, then its garage bay to leave by). */
   target: Vec2;
+  /** Road-side garage bay this vehicle emerged from and returns to. Older test
+   * fixtures may omit it and fall back to the legacy edge departure. */
+  depot?: Vec2;
   /** Actual body / wreck location the crew must fetch on foot once parked. */
   job?: Vec2;
   /** Which step of the pickup sequence it is in: driving out to the job
@@ -1761,7 +1764,7 @@ export class World {
   private departServiceVehicle<T extends ServiceVehicle>(vehicle: T): T {
     return {
       ...vehicle,
-      target: this.farthestCornerTile(vehicle.pos),
+      target: vehicle.depot ?? this.farthestCornerTile(vehicle.pos),
       phase: 'depart',
       crew: null,
       pickupElapsed: 0,
@@ -1811,6 +1814,7 @@ export class World {
       radius: 14,
       dir: nearestCardinal(angle(sub(approach, pos))),
       target: approach,
+      depot: pos,
       job: target,
       phase: 'approach',
       crew: null,
