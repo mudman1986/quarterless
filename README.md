@@ -1,225 +1,158 @@
-# Sindicate
+# Retro Arcade
 
-A top-down, **GTA 2-style** browser game built with **TypeScript** and **Phaser 3**,
-bundled by **Vite**, developed **test-first (TDD)**, and deployed automatically to
-**GitHub Pages**.
+A static browser arcade for GitHub Pages. The site opens on a lightweight game
+selection page, then lazy-loads the selected game so the first page load stays
+small.
 
-> ⚠️ **Assets:** This project uses only original or CC0/public-domain placeholder
-> art and audio. It does **not** use any Rockstar/GTA copyrighted assets. "GTA 2-style"
-> describes the genre (top-down, open-city, drive-and-shoot arcade), not the IP.
+Current lineup:
 
----
+- **Sindicate** - the main playable game, a top-down open-city arcade sandbox.
+- **Pixel Sprint** - a small canvas runner, **Work in progress**.
+- **Void Sweep** - a small canvas shooter, **Work in progress**.
 
-## Quick start (build & play locally)
+All art, previews, and sounds are original/procedural placeholders. Sindicate is
+inspired by the top-down open-city arcade genre, but this project does not use
+any Rockstar/GTA copyrighted assets.
 
-```bash
-npm install        # one-time: install dependencies
-npm run dev        # start the dev server and open the game in your browser
-```
-
-`npm run dev` serves the game at <http://localhost:5173/sindicate/> with hot-module
-reload — edit a file and the game updates instantly.
-
-To build and play the exact artifact that gets deployed to GitHub Pages:
+## Quick Start
 
 ```bash
-npm run build      # produce the static site in dist/
-npm run preview     # serve dist/ at http://127.0.0.1:4173/sindicate/
+npm install
+npm run dev
 ```
 
-## Available scripts
-
-| Script | What it does |
-| --- | --- |
-| `npm run dev` | Start Vite dev server with HMR and open the browser. |
-| `npm run build` | Type-safe production build into `dist/`. |
-| `npm run preview` | Serve the production build locally (same as GitHub Pages). |
-| `npm test` | Run unit tests in **watch** mode — the TDD inner loop. |
-| `npm run test:run` | Run unit tests once with a coverage report. |
-| `npm run test:e2e` | Run the Playwright browser smoke test against the build. |
-| `npm run lint` | Lint with ESLint. |
-| `npm run typecheck` | Type-check with `tsc --noEmit`. |
-| `npm run format` | Format the codebase with Prettier. |
-
-## Testing & TDD
-
-Tests are written **alongside the code, test-first**. The key to making a game
-testable is the architecture:
-
-- **`src/core/`** — pure, framework-agnostic TypeScript game logic (movement,
-  physics, collision, AI, wanted level, missions, score). No Phaser import, fully
-  deterministic, **100% unit-tested with Vitest**. A unit test sits next to each
-  module (e.g. [src/core/vector.ts](src/core/vector.ts) ↔
-  [src/core/vector.test.ts](src/core/vector.test.ts)).
-- **`src/game/`** — a thin **Phaser adapter** (scenes, sprites, input wiring,
-  rendering). It only draws what `core/` simulates, and is covered by a Playwright
-  smoke test ([e2e/smoke.spec.ts](e2e/smoke.spec.ts)).
-
-The TDD loop: write a failing test in `src/core/*.test.ts`, run `npm test`
-(watch mode), implement until green, refactor. Coverage on `src/core/` is gated at
-80% in CI.
-
-## Deployment (GitHub Pages)
-
-Deployment is automated via GitHub Actions
-([.github/workflows/deploy.yml](.github/workflows/deploy.yml)):
-
-1. On every push and pull request to `main`, the **`test`** job runs lint →
-   type-check → unit tests (coverage) → build → E2E smoke test.
-2. The **`deploy`** job has `needs: test`, so a deploy **only happens if every test
-   passes**, and only on pushes to `main` (not PRs).
-
-### One-time repository setup
-
-1. Push this repository to GitHub with the default branch named `main`.
-2. In **Settings → Pages**, set **Source** to **GitHub Actions**.
-3. The site will publish at `https://<your-user>.github.io/sindicate/`.
-
-> If you name the repository something other than `sindicate`, update `BASE_PATH`
-> in [vite.config.ts](vite.config.ts) and the URLs in
-> [playwright.config.ts](playwright.config.ts) and
-> [e2e/smoke.spec.ts](e2e/smoke.spec.ts) to match.
-
-## Tech stack
-
-- **Language:** TypeScript
-- **Engine:** Phaser 3
-- **Bundler / dev server:** Vite
-- **Unit tests:** Vitest (+ v8 coverage)
-- **E2E tests:** Playwright
-- **Lint/format:** ESLint + Prettier
-- **CI/CD:** GitHub Actions → GitHub Pages
-
-## Project structure
+The dev server serves the arcade at:
 
 ```text
-.
-├─ src/
-│  ├─ core/        # pure game logic (TDD, no engine) + *.test.ts
-│  │  ├─ vector.ts entity.ts vehicle.ts collision.ts city.ts world.ts math.ts types.ts
-│  │  ├─ pedestrianAI.ts policeAI.ts wantedLevel.ts trafficAI.ts
-│  │  └─ weapon.ts health.ts mission.ts campaign.ts score.ts highScore.ts
-│  └─ game/        # Phaser adapter: scenes, sprites, input, rendering
-│     ├─ main.ts
-│     ├─ input/KeyboardInput.ts
-│     ├─ audio/Sound.ts
-│     ├─ art/textures.ts
-│     └─ scenes/CityScene.ts
-├─ e2e/            # Playwright smoke tests
-├─ .github/workflows/deploy.yml
-├─ .github/dependabot.yml   # automated dependency updates (7-day min age)
-├─ index.html
-├─ vite.config.ts  # build + Vitest config (base path lives here)
-└─ playwright.config.ts
+http://localhost:5173/sindicate/
 ```
 
----
+To build and preview the same static artifact that gets deployed to GitHub
+Pages:
 
-## Development plan / roadmap
+```bash
+npm run build
+npm run preview
+```
 
-The game is built in small, independently verifiable and **playable** phases. Each
-gameplay phase adds pure logic to `src/core/` **test-first**, then wires it into the
-Phaser adapter.
+Preview serves the production build at:
 
-### Phase 0 — Scaffolding & local play loop ✅
+```text
+http://127.0.0.1:4173/sindicate/
+```
 
-TypeScript + Vite + Phaser, Vitest + Playwright, ESLint/Prettier, npm scripts, the
-`core/` + `game/` split, a "hello Phaser" scene, and the first unit test. Proves the
-local build/play/test loop works.
+## Current Status
 
-### Phase 1 — CI/CD pipeline ✅
+The repo has moved from a single-game page to a small retro arcade shell.
 
-GitHub Actions workflow with a `test` job and a `deploy` job (`needs: test`) so tests
-always gate deployment to GitHub Pages.
+- The root page renders the **Retro Arcade** landing page from [src/bootstrap.ts](src/bootstrap.ts).
+- Animated gameplay-style card previews are drawn with canvas in [src/arcade/previews.ts](src/arcade/previews.ts).
+- The two new mini games live in [src/games](src/games) and use small vanilla canvas loops.
+- Sindicate remains the main Phaser game and loads only after choosing it from the landing page.
+- Playwright smoke tests now verify both the landing page and the Sindicate launch flow.
 
-Also set up **Dependabot** (`.github/dependabot.yml`) to keep dependencies updated
-automatically, covering **every** package ecosystem used by the project (`npm` for
-app dependencies and `github-actions` for workflow actions). Every update is held to
-a **minimum age of 7 days** via a 7-day cooldown across all semver levels (major,
-minor, patch), so brand-new releases are given time to prove stable before a PR is
-opened. Updates are **grouped per ecosystem** into a single pull request, and all
-GitHub Actions in the workflow are **pinned to full commit SHAs** for supply-chain
-safety (Dependabot bumps the SHAs and keeps the version comments accurate).
+Production bundle shape is intentionally split:
 
-### Phase 2 — Movement & the city (first playable MVP) ✅
+- Landing page code and CSS load first.
+- Pixel Sprint and Void Sweep are separate tiny lazy chunks.
+- Sindicate game code is a separate lazy chunk.
+- Phaser is isolated in its own vendor chunk and is not loaded for the landing page.
 
-Test-first `core` modules: `entity` (walking), `vehicle` (arcade car physics),
-`collision` (circle-vs-rect resolution), `city` (block layout), and the `world`
-tick loop. Adapter ([src/game/scenes/CityScene.ts](src/game/scenes/CityScene.ts)):
-a tile-based city, a player on foot, camera follow, building collision, and the
-ability to enter and drive a car (Arrows/WASD to move, Space to enter/exit).
+## Available Scripts
 
-### Phase 3 — Pedestrians & police ✅
+| Script              | What it does                                                     |
+| ------------------- | ---------------------------------------------------------------- |
+| `npm run dev`       | Start the Vite dev server with hot reload.                       |
+| `npm run build`     | Build the static production site into `dist/`.                   |
+| `npm run preview`   | Serve the production build locally.                              |
+| `npm test`          | Run Vitest in watch mode.                                        |
+| `npm run test:run`  | Run Vitest once with coverage.                                   |
+| `npm run test:e2e`  | Run the Playwright browser suite against the production preview. |
+| `npm run lint`      | Run ESLint.                                                      |
+| `npm run typecheck` | Run `tsc --noEmit`.                                              |
+| `npm run format`    | Format the codebase with Prettier.                               |
 
-Test-first `pedestrianAI` (wander + flee from threats), `policeAI` (pursuit, speed
-scales with wanted level), and the `wantedLevel` heat/star model. Integrated into the
-`world`: pedestrians wander and flee the player's car, running one over raises the
-wanted level, police spawn from the map corners to pursue, and heat decays over time
-(police disperse when clear). The HUD shows the wanted stars.
+## Architecture
 
-### Phase 3.5 — A living city & getting busted ✅
+```text
+src/
+  arcade/        Landing-page styles, animated previews, and shared game types
+  core/          Pure Sindicate game logic, tested with Vitest
+  game/          Sindicate Phaser adapter: scene, rendering, input, audio
+  games/         Lightweight extra arcade games
+  bootstrap.ts   Arcade landing entry point and lazy game launcher
+```
 
-Test-first `trafficAI` (NPC cars that follow the road grid, turn at intersections, and
-turn back at dead ends). Integrated into the `world`:
+Sindicate keeps a clean split between simulation and rendering:
 
-- **Bigger map** — the city is now a roomy 60×60 tile grid.
-- **Traffic** — cars appear as a mix of **parked** vehicles and ones **driven by NPCs**;
-  the player can hijack a moving car, which stops its driver.
-- **Police variety** — officers arrive both **on foot** and in **patrol cars**
-  (`Police.kind`), with patrol cars faster than officers on foot.
-- **Run them over** — a speeding car can mow down officers on foot (extra heat);
-  patrol cars are not so easily dealt with.
-- **Busted & respawn** — if the police catch the player, the game shows a **BUSTED**
-  screen and respawns at the start after a 10s timer or immediately on **Enter**.
+- [src/core](src/core) contains deterministic TypeScript game logic with no Phaser import.
+- [src/game](src/game) adapts that logic to Phaser rendering, input, HUD, audio, and touch controls.
+- [e2e](e2e) exercises the built site in a real browser through Playwright.
 
-### Phase 4 — Combat, missions & score ✅
+The two work-in-progress games are deliberately lightweight and dependency-free.
+They are useful placeholders for the arcade experience without increasing the
+initial landing-page cost.
 
-Test-first `weapon` (pistol, bullets), `health` (player pool), `mission` (objective
-state machine), and `score`. Integrated into the `world`:
+## Testing
 
-- **Shooting** — press **F** (or Shift) to fire; bullets travel, stop at buildings,
-  and kill pedestrians or police on contact.
-- **Score & kills** — eliminating a pedestrian or officer (by gun or by car) scores
-  points and counts toward objectives; the high score is kept across runs.
-- **Health** — the player has a health pool; a fast car drains it and a lethal hit
-  shows the **WASTED** screen (respawn on timer or **Enter**), restoring full health.
-- **Mission** — one scripted mission (reach the marked junction, then take out three
-  targets) banks a reward on completion.
-- **HUD** — wanted stars, health, money (with best), ammo, and the current objective.
+The core Sindicate logic is covered by Vitest unit tests next to the source files.
+The browser behavior is covered by Playwright against the production build.
 
-### Phase 5 — Polish ✅
+Recommended local check before pushing:
 
-Test-first `campaign` (a chain of missions played one after another) and `highScore`
-(persistence through a small key/value port). Integrated into the game:
+```bash
+npm run typecheck
+npm run lint
+npm run test:run
+npm run build
+npm run test:e2e
+```
 
-- **A short campaign** — three escalating missions (reach + eliminate), each banking
-  a bigger reward; the HUD shows the active mission and “ALL MISSIONS COMPLETE”.
-- **High score** — the best score is saved to `localStorage` (with an in-memory
-  fallback) and seeded back into each run, shown on the HUD.
-- **Art pass** — cars and the player are drawn with a windshield/nose so facing is
-  clear; pedestrians and foot officers are round tokens.
-- **Audio** — defensive procedural Web Audio sound effects (shot, hit, busted/wasted,
-  mission fanfare); no asset files, unlocked on first key press.
+Note for this Windows/PowerShell setup: run each `npm run ...` command as its own
+standalone command. Do not chain npm scripts with `;`, because this environment
+can leak trailing shell tokens into npm script arguments.
 
-### Phase 6 — Depth & feel ✅
+## Deployment
 
-A round of new features and fixes on top of the MVP:
+Deployment is automated through GitHub Actions in [.github/workflows/deploy.yml](.github/workflows/deploy.yml).
 
-- **Varied campaign** — five missions spanning `reach`, `eliminate`, `collect`,
-  `survive`, and `wanted`-level objectives (test-first `campaign` + new objective
-  kinds). Each new mission/objective is announced with an on-screen banner.
-- **Ammo pickups** — ammo crates sit at intersections; driving or walking over one
-  refills the pistol. The HUD warns when ammo is low, and crates show on the minimap.
-- **Minimap** — a corner minimap shows the streets, the player, police, ammo crates,
-  and the current objective.
-- **Generated sprite art** — cars, the player, pedestrians, police, and crates are
-  drawn from runtime-generated textures; buildings gain rooftops and lit windows.
-- **Smoother driving** — buildings are inset from the roads (`CitySpec.margin`) for
-  wider, more forgiving streets.
-- **Smarter police** — patrol cars follow the road grid toward the player instead of
-  cutting through buildings, and now physically collide with the player's car.
+The deployment pipeline gates GitHub Pages behind the normal verification path:
 
-### Out of scope (for now)
+1. Lint
+2. Type-check
+3. Unit tests with coverage
+4. Production build
+5. Playwright browser tests
 
-Multiplayer, mobile/touch controls (keyboard-only MVP), and any backend — the game
-is a fully static site.
+GitHub Pages serves this repository as a project site under `/sindicate/`, so the
+Vite base path is configured in [vite.config.ts](vite.config.ts).
+
+If the repository name changes, update:
+
+- `BASE_PATH` in [vite.config.ts](vite.config.ts)
+- Playwright URLs in [playwright.config.ts](playwright.config.ts)
+- Any hard-coded `/sindicate/` test navigation in [e2e](e2e)
+
+## Tech Stack
+
+- TypeScript
+- Vite
+- Phaser 4 for Sindicate
+- Vanilla canvas for the two work-in-progress mini games
+- Vitest with v8 coverage
+- Playwright
+- ESLint and Prettier
+- GitHub Actions and GitHub Pages
+
+## Roadmap
+
+Near-term arcade work:
+
+- Replace the generated canvas previews with recorded or authored gameplay clips if better media is available.
+- Promote Pixel Sprint and Void Sweep from placeholders into fuller games, or swap them for stronger game concepts.
+- Keep each game lazy-loaded so the landing page remains fast.
+
+Near-term Sindicate work:
+
+- Continue expanding the city sandbox, missions, service-vehicle jobs, touch controls, and browser regression coverage.
+- Keep gameplay logic in [src/core](src/core) where it can be tested quickly and deterministically.

@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { launchSindicate } from './helpers';
 
 /**
  * Regression tests for the wanted level resetting. These drive the REAL built
@@ -29,9 +30,7 @@ interface GameProbe {
 const GAME = '() => window.__game';
 
 async function boot(page: Page): Promise<void> {
-  await page.goto('/sindicate/');
-  await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
-  await page.locator('#game canvas').click(); // give Phaser keyboard focus
+  await launchSindicate(page);
   await page.keyboard.press('Space'); // unlock audio / first input
   await page.waitForFunction(GAME);
   await page.waitForTimeout(300);
@@ -80,7 +79,9 @@ test('wanted level resets when the player is busted', async ({ page }) => {
   });
   // Let the chase resolve into an arrest.
   await page.waitForFunction(
-    () => (window as unknown as { __game: GameProbe }).__game.scene.getScene('City').world.status === 'busted',
+    () =>
+      (window as unknown as { __game: GameProbe }).__game.scene.getScene('City').world.status ===
+      'busted',
     undefined,
     { timeout: 5000 },
   );
@@ -99,7 +100,9 @@ test('wanted level resets when the player is wasted', async ({ page }) => {
     w.cars.push({ pos: { x: f.x, y: f.y }, heading: 0, speed: 220, radius: 12 });
   });
   await page.waitForFunction(
-    () => (window as unknown as { __game: GameProbe }).__game.scene.getScene('City').world.status === 'wasted',
+    () =>
+      (window as unknown as { __game: GameProbe }).__game.scene.getScene('City').world.status ===
+      'wasted',
     undefined,
     { timeout: 5000 },
   );

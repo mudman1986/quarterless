@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { launchSindicate } from './helpers';
 
 /** Minimal structural view of the running game used by this regression. */
 interface GameProbe {
@@ -26,9 +27,7 @@ interface GameProbe {
 }
 
 async function boot(page: Page): Promise<void> {
-  await page.goto('/sindicate/');
-  await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
-  await page.locator('#game canvas').click();
+  await launchSindicate(page);
   await page.keyboard.press('Space');
   await page.waitForFunction(() => !!(window as unknown as { __game?: unknown }).__game);
   await page.waitForFunction(() => {
@@ -61,17 +60,23 @@ test('stealing a taxi lets the player pick up and drop off a live fare', async (
 
   await page.keyboard.press('Space');
 
-  await page.waitForFunction(() => {
-    const game = (window as unknown as { __game: GameProbe }).__game;
-    const scene = game.scene.getScene('City');
-    const world = scene.world;
-    const driving = world.drivingCarIndex;
-    return driving !== null &&
-      world.carKind(driving) === 'taxi' &&
-      !!world.taxiMission &&
-      scene.hud.text.includes('TAXI:') &&
-      scene.taxiMarker.visible;
-  }, undefined, { timeout: 5_000 });
+  await page.waitForFunction(
+    () => {
+      const game = (window as unknown as { __game: GameProbe }).__game;
+      const scene = game.scene.getScene('City');
+      const world = scene.world;
+      const driving = world.drivingCarIndex;
+      return (
+        driving !== null &&
+        world.carKind(driving) === 'taxi' &&
+        !!world.taxiMission &&
+        scene.hud.text.includes('TAXI:') &&
+        scene.taxiMarker.visible
+      );
+    },
+    undefined,
+    { timeout: 5_000 },
+  );
 
   const start = await page.evaluate(() => {
     const game = (window as unknown as { __game: GameProbe }).__game;
@@ -96,21 +101,28 @@ test('stealing a taxi lets the player pick up and drop off a live fare', async (
     const game = (window as unknown as { __game: GameProbe }).__game;
     const world = game.scene.getScene('City').world;
     const driving = world.drivingCarIndex;
-    if (driving === null || world.taxiTarget === null) throw new Error('Taxi is not ready for pickup');
+    if (driving === null || world.taxiTarget === null)
+      throw new Error('Taxi is not ready for pickup');
     world.cars[driving].pos = { x: world.taxiTarget.x, y: world.taxiTarget.y };
     world.cars[driving].speed = 0;
   });
 
-  await page.waitForFunction((fareId: number) => {
-    const game = (window as unknown as { __game: GameProbe }).__game;
-    const scene = game.scene.getScene('City');
-    const world = scene.world;
-    return world.taxiMission?.id === fareId &&
-      world.taxiMission.stage === 'dropoff' &&
-      !world.pedestrians.some((ped) => ped.taxiPassengerRole === 'playerFare') &&
-      scene.taxiMarker.visible &&
-      scene.hud.text.includes(`Drop off ${world.taxiMission.passengerName}`);
-  }, start.mission!.id, { timeout: 5_000 });
+  await page.waitForFunction(
+    (fareId: number) => {
+      const game = (window as unknown as { __game: GameProbe }).__game;
+      const scene = game.scene.getScene('City');
+      const world = scene.world;
+      return (
+        world.taxiMission?.id === fareId &&
+        world.taxiMission.stage === 'dropoff' &&
+        !world.pedestrians.some((ped) => ped.taxiPassengerRole === 'playerFare') &&
+        scene.taxiMarker.visible &&
+        scene.hud.text.includes(`Drop off ${world.taxiMission.passengerName}`)
+      );
+    },
+    start.mission!.id,
+    { timeout: 5_000 },
+  );
 
   const boarded = await page.evaluate(() => {
     const game = (window as unknown as { __game: GameProbe }).__game;
@@ -132,7 +144,8 @@ test('stealing a taxi lets the player pick up and drop off a live fare', async (
     const game = (window as unknown as { __game: GameProbe }).__game;
     const world = game.scene.getScene('City').world;
     const driving = world.drivingCarIndex;
-    if (driving === null || world.taxiTarget === null) throw new Error('Taxi is not ready for dropoff');
+    if (driving === null || world.taxiTarget === null)
+      throw new Error('Taxi is not ready for dropoff');
     world.cars[driving].pos = { x: world.taxiTarget.x, y: world.taxiTarget.y };
     world.cars[driving].speed = 0;
   });
@@ -142,12 +155,14 @@ test('stealing a taxi lets the player pick up and drop off a live fare', async (
       const game = (window as unknown as { __game: GameProbe }).__game;
       const scene = game.scene.getScene('City');
       const world = scene.world;
-      return !!world.taxiMission &&
+      return (
+        !!world.taxiMission &&
         world.taxiMission.id !== fareId &&
         world.taxiMission.stage === 'pickup' &&
         world.score.current === scoreAfterReward &&
         scene.taxiMarker.visible &&
-        scene.hud.text.includes(`Pick up ${world.taxiMission.passengerName}`);
+        scene.hud.text.includes(`Pick up ${world.taxiMission.passengerName}`)
+      );
     },
     { fareId: start.mission!.id, scoreAfterReward: start.score + start.mission!.reward },
     { timeout: 5_000 },

@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { tileCenter } from '../src/core/city';
 import { CITY_SPEC } from '../src/game/citySpec';
+import { launchSindicate } from './helpers';
 
 interface Vec2 {
   x: number;
@@ -67,9 +68,7 @@ interface GameProbe {
 const GAME = '() => window.__game';
 
 async function boot(page: Page): Promise<void> {
-  await page.goto('/sindicate/');
-  await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
-  await page.locator('#game canvas').click();
+  await launchSindicate(page);
   await page.keyboard.press('Space');
   await page.waitForFunction(GAME);
   await page.waitForTimeout(300);
@@ -101,7 +100,13 @@ async function seedStoppedPlayerCarUnderFootCop(page: Page): Promise<void> {
     }
 
     for (let i = 0; i < w.cars.length; i++) {
-      w.cars[i] = { ...w.cars[i], pos: { x: 4000 + i * 24, y: 4000 }, heading: 0, speed: 0, radius: 12 };
+      w.cars[i] = {
+        ...w.cars[i],
+        pos: { x: 4000 + i * 24, y: 4000 },
+        heading: 0,
+        speed: 0,
+        radius: 12,
+      };
       w.wreckedCars[i] = false;
       w.towedCars[i] = false;
       w.carDrivers[i] = null;
@@ -122,45 +127,56 @@ async function seedStoppedPlayerCarWithDistantFootCop(page: Page): Promise<void>
   const parked = tileCenter(CITY_SPEC, 10, 1);
   const copPos = tileCenter(CITY_SPEC, 14, 1);
 
-  await page.evaluate(({ parkedPos, copStart }) => {
-    const g = (window as unknown as { __game: GameProbe }).__game;
-    const w = g.scene.getScene('City').world;
+  await page.evaluate(
+    ({ parkedPos, copStart }) => {
+      const g = (window as unknown as { __game: GameProbe }).__game;
+      const w = g.scene.getScene('City').world;
 
-    w.status = 'playing';
-    w.health.current = w.health.max;
-    w.wanted.heat = 250;
-    w.pedestrians = [];
-    w.police = [];
-    w.bullets = [];
-    w.policeBullets = [];
-    w.explosions = [];
-    w.corpses = [];
-    w.ambulance = null;
-    w.tows = [];
+      w.status = 'playing';
+      w.health.current = w.health.max;
+      w.wanted.heat = 250;
+      w.pedestrians = [];
+      w.police = [];
+      w.bullets = [];
+      w.policeBullets = [];
+      w.explosions = [];
+      w.corpses = [];
+      w.ambulance = null;
+      w.tows = [];
 
-    while (w.cars.length < 1) {
-      w.cars.push({ pos: { x: 4000, y: 4000 }, heading: 0, speed: 0, radius: 12 });
-      w.carDrivers.push(null);
-      w.wreckedCars.push(false);
-      w.towedCars.push(false);
-      w.towDispatchCooldowns.push(0);
-    }
+      while (w.cars.length < 1) {
+        w.cars.push({ pos: { x: 4000, y: 4000 }, heading: 0, speed: 0, radius: 12 });
+        w.carDrivers.push(null);
+        w.wreckedCars.push(false);
+        w.towedCars.push(false);
+        w.towDispatchCooldowns.push(0);
+      }
 
-    for (let i = 0; i < w.cars.length; i++) {
-      w.cars[i] = { ...w.cars[i], pos: { x: 4000 + i * 24, y: 4000 }, heading: 0, speed: 0, radius: 12 };
-      w.wreckedCars[i] = false;
-      w.towedCars[i] = false;
-      w.carDrivers[i] = null;
-      if (i < w.towDispatchCooldowns.length) w.towDispatchCooldowns[i] = 0;
-    }
+      for (let i = 0; i < w.cars.length; i++) {
+        w.cars[i] = {
+          ...w.cars[i],
+          pos: { x: 4000 + i * 24, y: 4000 },
+          heading: 0,
+          speed: 0,
+          radius: 12,
+        };
+        w.wreckedCars[i] = false;
+        w.towedCars[i] = false;
+        w.carDrivers[i] = null;
+        if (i < w.towDispatchCooldowns.length) w.towDispatchCooldowns[i] = 0;
+      }
 
-    w.cars[0] = { pos: parkedPos, heading: 0, speed: 0, radius: 12 };
-    w.player.pos = { ...parkedPos };
-    w.player.angle = 0;
-    w.drivingCarIndex = 0;
-    w.carStoppedForBusted = 0;
-    w.police = [{ pos: copStart, heading: Math.PI, radius: 12, kind: 'foot', speed: 0, home: copStart }];
-  }, { parkedPos: parked, copStart: copPos });
+      w.cars[0] = { pos: parkedPos, heading: 0, speed: 0, radius: 12 };
+      w.player.pos = { ...parkedPos };
+      w.player.angle = 0;
+      w.drivingCarIndex = 0;
+      w.carStoppedForBusted = 0;
+      w.police = [
+        { pos: copStart, heading: Math.PI, radius: 12, kind: 'foot', speed: 0, home: copStart },
+      ];
+    },
+    { parkedPos: parked, copStart: copPos },
+  );
 }
 
 async function traceInCarBustDelay(page: Page): Promise<void> {
@@ -210,15 +226,21 @@ async function traceInCarBustDelay(page: Page): Promise<void> {
   });
 }
 
-test('a foot officer only busts a stopped player car after one second in the live game', async ({ page }) => {
+test('a foot officer only busts a stopped player car after one second in the live game', async ({
+  page,
+}) => {
   await boot(page);
   await seedStoppedPlayerCarUnderFootCop(page);
   await traceInCarBustDelay(page);
 
-  await page.waitForFunction(() => {
-    const win = window as unknown as { __arrestTrace?: ArrestTrace };
-    return win.__arrestTrace?.bustStoppedFor !== null;
-  }, undefined, { timeout: 5000 });
+  await page.waitForFunction(
+    () => {
+      const win = window as unknown as { __arrestTrace?: ArrestTrace };
+      return win.__arrestTrace?.bustStoppedFor !== null;
+    },
+    undefined,
+    { timeout: 5000 },
+  );
 
   const state = await page.evaluate(() => {
     const win = window as unknown as { __game: GameProbe; __arrestTrace?: ArrestTrace };
@@ -241,15 +263,21 @@ test('a foot officer only busts a stopped player car after one second in the liv
   expect(state.stoppedFor).toBeGreaterThanOrEqual(1);
 });
 
-test('a player parked for over one second is not busted instantly when a foot officer reaches the car in the live game', async ({ page }) => {
+test('a player parked for over one second is not busted instantly when a foot officer reaches the car in the live game', async ({
+  page,
+}) => {
   await boot(page);
   await seedStoppedPlayerCarWithDistantFootCop(page);
   await traceInCarBustDelay(page);
 
-  await page.waitForFunction(() => {
-    const win = window as unknown as { __arrestTrace?: ArrestTrace };
-    return win.__arrestTrace?.bustStoppedFor !== null;
-  }, undefined, { timeout: 7000 });
+  await page.waitForFunction(
+    () => {
+      const win = window as unknown as { __arrestTrace?: ArrestTrace };
+      return win.__arrestTrace?.bustStoppedFor !== null;
+    },
+    undefined,
+    { timeout: 7000 },
+  );
 
   const state = await page.evaluate(() => {
     const win = window as unknown as { __game: GameProbe; __arrestTrace?: ArrestTrace };

@@ -1,13 +1,21 @@
 import { test, expect } from '@playwright/test';
+import { launchSindicate } from './helpers';
 
-// Smoke test: the production build must load and Phaser must render a canvas.
+// Smoke tests: the production build must load the arcade landing page, then
+// launch Sindicate and render a Phaser canvas.
 // This runs against `vite preview` (the real GitHub Pages artifact) and gates
 // deployment in CI.
-test('game boots and renders a canvas', async ({ page }) => {
+test('landing page lists the playable games', async ({ page }) => {
   await page.goto('/sindicate/');
+  await expect(page.getByRole('heading', { name: 'Retro Arcade' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Play Sindicate' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Play Pixel Sprint' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Play Void Sweep' })).toBeVisible();
+});
 
+test('game boots and renders a canvas', async ({ page }) => {
+  await launchSindicate(page);
   const canvas = page.locator('#game canvas');
-  await expect(canvas).toBeVisible({ timeout: 15_000 });
 
   const box = await canvas.boundingBox();
   expect(box?.width ?? 0).toBeGreaterThan(0);
@@ -16,10 +24,9 @@ test('game boots and renders a canvas', async ({ page }) => {
 
 test('canvas fits inside a mobile-sized viewport', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/sindicate/');
+  await launchSindicate(page);
 
   const canvas = page.locator('#game canvas');
-  await expect(canvas).toBeVisible({ timeout: 15_000 });
 
   const box = await canvas.boundingBox();
   expect(box?.x ?? -1).toBeGreaterThanOrEqual(0);

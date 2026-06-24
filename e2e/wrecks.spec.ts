@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { tileCenter } from '../src/core/city';
 import { CITY_SPEC } from '../src/game/citySpec';
+import { launchSindicate } from './helpers';
 
 interface Vec2 {
   x: number;
@@ -47,9 +48,7 @@ interface GameProbe {
 const GAME = '() => window.__game';
 
 async function boot(page: Page): Promise<void> {
-  await page.goto('/sindicate/');
-  await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
-  await page.locator('#game canvas').click();
+  await launchSindicate(page);
   await page.keyboard.press('Space');
   await page.waitForFunction(GAME);
   await page.waitForTimeout(300);
@@ -59,48 +58,57 @@ async function seedDrivenCarFacingWreck(page: Page): Promise<{ start: Vec2; wrec
   const start = tileCenter(CITY_SPEC, 10, 1);
   const wreck = tileCenter(CITY_SPEC, 12, 1);
 
-  await page.evaluate(({ startPos, wreckPos }) => {
-    const g = (window as unknown as { __game: GameProbe }).__game;
-    const w = g.scene.getScene('City').world;
+  await page.evaluate(
+    ({ startPos, wreckPos }) => {
+      const g = (window as unknown as { __game: GameProbe }).__game;
+      const w = g.scene.getScene('City').world;
 
-    w.status = 'playing';
-    w.health.current = w.health.max;
-    w.wanted.heat = 0;
-    w.pedestrians = [];
-    w.police = [];
-    w.bullets = [];
-    w.policeBullets = [];
-    w.explosions = [];
-    w.corpses = [];
-    w.ambulance = null;
-    w.tows = [];
+      w.status = 'playing';
+      w.health.current = w.health.max;
+      w.wanted.heat = 0;
+      w.pedestrians = [];
+      w.police = [];
+      w.bullets = [];
+      w.policeBullets = [];
+      w.explosions = [];
+      w.corpses = [];
+      w.ambulance = null;
+      w.tows = [];
 
-    while (w.cars.length < 2) {
-      w.cars.push({ pos: { x: 4000, y: 4000 }, heading: 0, speed: 0, radius: 12 });
-      w.carDrivers.push(null);
-      w.wreckedCars.push(false);
-      w.towedCars.push(false);
-      w.towDispatchCooldowns.push(0);
-    }
+      while (w.cars.length < 2) {
+        w.cars.push({ pos: { x: 4000, y: 4000 }, heading: 0, speed: 0, radius: 12 });
+        w.carDrivers.push(null);
+        w.wreckedCars.push(false);
+        w.towedCars.push(false);
+        w.towDispatchCooldowns.push(0);
+      }
 
-    for (let i = 0; i < w.cars.length; i++) {
-      w.cars[i] = { ...w.cars[i], pos: { x: 4000 + i * 24, y: 4000 }, heading: 0, speed: 0, radius: 12 };
-      w.wreckedCars[i] = false;
-      w.towedCars[i] = false;
-      w.carDrivers[i] = null;
-      if (i < w.towDispatchCooldowns.length) w.towDispatchCooldowns[i] = 0;
-    }
+      for (let i = 0; i < w.cars.length; i++) {
+        w.cars[i] = {
+          ...w.cars[i],
+          pos: { x: 4000 + i * 24, y: 4000 },
+          heading: 0,
+          speed: 0,
+          radius: 12,
+        };
+        w.wreckedCars[i] = false;
+        w.towedCars[i] = false;
+        w.carDrivers[i] = null;
+        if (i < w.towDispatchCooldowns.length) w.towDispatchCooldowns[i] = 0;
+      }
 
-    w.cars[0] = { pos: startPos, heading: 0, speed: 0, radius: 12 };
-    w.cars[1] = { pos: wreckPos, heading: 0, speed: 0, radius: 12 };
-    w.wreckedCars[1] = true;
-    w.towedCars[1] = false;
-    w.towDispatchCooldowns[1] = 999;
+      w.cars[0] = { pos: startPos, heading: 0, speed: 0, radius: 12 };
+      w.cars[1] = { pos: wreckPos, heading: 0, speed: 0, radius: 12 };
+      w.wreckedCars[1] = true;
+      w.towedCars[1] = false;
+      w.towDispatchCooldowns[1] = 999;
 
-    w.player.pos = { ...startPos };
-    w.player.angle = 0;
-    w.drivingCarIndex = 0;
-  }, { startPos: start, wreckPos: wreck });
+      w.player.pos = { ...startPos };
+      w.player.angle = 0;
+      w.drivingCarIndex = 0;
+    },
+    { startPos: start, wreckPos: wreck },
+  );
 
   return { start, wreck };
 }

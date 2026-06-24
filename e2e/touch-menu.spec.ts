@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { launchSindicate } from './helpers';
 
 interface CitySceneProbe {
   paused: boolean;
@@ -17,15 +18,15 @@ interface GameProbe {
 }
 
 async function boot(page: Page): Promise<void> {
-  await page.goto('/sindicate/');
-  await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
-  await page.locator('#game canvas').click();
+  await launchSindicate(page);
   await page.keyboard.press('Space');
   await page.waitForFunction(() => !!(window as unknown as { __game?: unknown }).__game);
   await page.waitForTimeout(300);
 }
 
-test('pause menu touch toggle disables touch controls and keeps them off until re-enabled from the menu', async ({ page }) => {
+test('pause menu touch toggle disables touch controls and keeps them off until re-enabled from the menu', async ({
+  page,
+}) => {
   await boot(page);
 
   await page.evaluate(() => {
@@ -45,7 +46,11 @@ test('pause menu touch toggle disables touch controls and keeps them off until r
   await page.waitForFunction(() => {
     const g = (window as unknown as { __game: GameProbe }).__game;
     const scene = g.scene.getScene('City');
-    return scene.paused && scene.pauseTouchButton.visible && scene.pauseTouchButton.text.includes('Touch Controls: ON');
+    return (
+      scene.paused &&
+      scene.pauseTouchButton.visible &&
+      scene.pauseTouchButton.text.includes('Touch Controls: ON')
+    );
   });
 
   await page.evaluate(() => {
@@ -56,10 +61,12 @@ test('pause menu touch toggle disables touch controls and keeps them off until r
   await page.waitForFunction(() => {
     const g = (window as unknown as { __game: GameProbe }).__game;
     const scene = g.scene.getScene('City');
-    return scene.touchEnabled === false &&
+    return (
+      scene.touchEnabled === false &&
       scene.touchOptedOut === true &&
       scene.pauseTouchButton.text.includes('Touch Controls: OFF') &&
-      scene.touchControlsGfx.visible === false;
+      scene.touchControlsGfx.visible === false
+    );
   });
 
   await page.evaluate(() => {
@@ -94,8 +101,10 @@ test('pause menu touch toggle disables touch controls and keeps them off until r
   await page.waitForFunction(() => {
     const g = (window as unknown as { __game: GameProbe }).__game;
     const scene = g.scene.getScene('City');
-    return scene.touchEnabled === true &&
+    return (
+      scene.touchEnabled === true &&
       scene.touchOptedOut === false &&
-      scene.pauseTouchButton.text.includes('Touch Controls: ON');
+      scene.pauseTouchButton.text.includes('Touch Controls: ON')
+    );
   });
 });

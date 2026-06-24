@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { launchSindicate } from './helpers';
 
 /**
  * Regression test for the HUD and minimap drifting off-screen on laptops and
@@ -42,23 +43,27 @@ const sizes = [
 ];
 
 async function boot(page: Page): Promise<void> {
-  await page.goto('/sindicate/');
-  await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
-  await page.locator('#game canvas').click(); // give Phaser keyboard focus
+  await launchSindicate(page);
   await page.waitForFunction(() => !!(window as unknown as { __game?: unknown }).__game);
   await page.waitForFunction(() => {
-    const game = (window as unknown as { __game?: { scene?: { getScene: (key: string) => unknown } } }).__game;
-    const scene = game?.scene?.getScene('City') as {
-      hud?: { text?: string; visible?: boolean; width?: number; height?: number };
-      minimapBg?: { visible?: boolean };
-      minimapDots?: { visible?: boolean };
-    } | undefined;
-    return !!scene?.hud?.visible &&
+    const game = (
+      window as unknown as { __game?: { scene?: { getScene: (key: string) => unknown } } }
+    ).__game;
+    const scene = game?.scene?.getScene('City') as
+      | {
+          hud?: { text?: string; visible?: boolean; width?: number; height?: number };
+          minimapBg?: { visible?: boolean };
+          minimapDots?: { visible?: boolean };
+        }
+      | undefined;
+    return (
+      !!scene?.hud?.visible &&
       (scene.hud.text?.length ?? 0) > 0 &&
       (scene.hud.width ?? 0) > 0 &&
       (scene.hud.height ?? 0) > 0 &&
       !!scene.minimapBg?.visible &&
-      !!scene.minimapDots?.visible;
+      !!scene.minimapDots?.visible
+    );
   });
   await page.waitForTimeout(100); // let the first post-ready frame settle
 }
