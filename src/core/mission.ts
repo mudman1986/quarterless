@@ -39,12 +39,13 @@ export interface WantedObjective {
   stars: number;
 }
 
-export type ServiceObjectiveKind = 'police' | 'ambulance' | 'tow';
+export type ServiceObjectiveKind = 'police' | 'ambulance' | 'tow' | 'taxi';
 
 export interface ServiceCompletionCounts {
   police: number;
   ambulance: number;
   tow: number;
+  taxi: number;
 }
 
 /** Complete a number of police / ambulance / tow service runs. */

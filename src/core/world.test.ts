@@ -286,6 +286,27 @@ describe('World police and wanted level', () => {
 });
 
 describe('World police service missions', () => {
+  it('prefers a farther suspect over the nearest pedestrian', () => {
+    const nearSuspect = pedAt(190, 0);
+    const farSuspect = pedAt(520, 0);
+    const w = new World({
+      player: player(),
+      cars: [carAt(20, 0)],
+      carKinds: ['police'],
+      pedestrians: [nearSuspect, farSuspect],
+      bounds: { width: 1000, height: 1000 },
+      rng: () => 0.5,
+    });
+
+    w.tick(controls({ action: true }), 1 / 60);
+    w.tick(controls(), 1 / 60);
+
+    const mission = w.serviceMission;
+    expect(mission?.kind).toBe('police');
+    if (!mission || mission.kind !== 'police') throw new Error('expected an active police mission');
+    expect(w.pedestrians.find((ped) => ped.policeSuspectId === mission.suspectId)?.pos.x).toBeGreaterThan(400);
+  });
+
   it('keeps the active suspect from fleeing the stolen patrol car before the bust radius', () => {
     const suspect: Pedestrian = {
       ...pedAt(220, 0),
@@ -3320,12 +3341,12 @@ describe('World mission', () => {
     expect(w.isDriving).toBe(true);
     expect(w.carKind(w.drivingCarIndex!)).toBe('police');
     expect(w.serviceMission?.kind).toBe('police');
-    expect(w.serviceTarget).toEqual(farSuspect);
+    expect(w.serviceTarget).toEqual(backupSuspect);
 
     const firstBustId = w.serviceMission!.id;
     const reward = w.serviceMission!.reward;
     w.police = [];
-    w.cars[w.drivingCarIndex!] = { ...w.cars[w.drivingCarIndex!], pos: farSuspect, speed: 0 };
+    w.cars[w.drivingCarIndex!] = { ...w.cars[w.drivingCarIndex!], pos: backupSuspect, speed: 0 };
     w.tick(controls(), 1 / 60);
 
     expect(w.score.current).toBe(reward);
@@ -3474,6 +3495,41 @@ describe('World mission', () => {
     w.cars[0] = { ...w.cars[0], pos: bodyPos, speed: 0 };
     advance(w, 3.1);
     w.cars[0] = { ...w.cars[0], pos: hospitalRoad, speed: 0 };
+    w.tick(controls(), 1 / 60);
+
+    expect(w.missionComplete).toBe(true);
+  });
+
+  it('advances a taxi objective after the player completes a fare', () => {
+    const city = buildCity({ cols: 20, rows: 20, tile: 64, block: 5, roadWidth: 4, margin: 20, sidewalkWidth: 20 });
+    const depot = city.facilities.find((facility) => facility.kind === 'taxiDepot');
+    expect(depot).toBeDefined();
+    const w = new World({
+      player: { ...player(), pos: vec2(depot!.roadSpawn.x - 18, depot!.roadSpawn.y) },
+      cars: [{ pos: depot!.roadSpawn, heading: 0, speed: 0, radius: 14 }],
+      carDrivers: [{ dir: vec2(1, 0) }],
+      carKinds: ['taxi'],
+      city,
+      sidewalks: city.sidewalks,
+      walls: city.buildings,
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0,
+      mission: createMission({
+        id: 'cab',
+        title: 'Cab Shift',
+        objectives: [{ kind: 'service', description: 'Steal a taxi and complete 1 fare', service: 'taxi', count: 1 }],
+      }),
+    });
+
+    w.tick(controls({ action: true }), 1 / 60);
+
+    expect(w.missionComplete).toBe(false);
+    const pickup = w.taxiTarget!;
+    w.cars[0] = { ...w.cars[0], pos: pickup, speed: 0 };
+    w.tick(controls(), 1 / 60);
+
+    const dropoff = w.taxiTarget!;
+    w.cars[0] = { ...w.cars[0], pos: dropoff, speed: 0 };
     w.tick(controls(), 1 / 60);
 
     expect(w.missionComplete).toBe(true);
@@ -3795,4 +3851,3 @@ describe('World pedestrian navigation performance', () => {
     expect(elapsed).toBeLessThan(3000);
   });
 });
-

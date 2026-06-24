@@ -539,7 +539,7 @@ export class World {
   private nextTaxiPassengerId = 1;
   private nextServiceMissionId = 1;
   private nextPoliceSuspectId = 1;
-  private completedServiceJobs: ServiceCompletionCounts = { police: 0, ambulance: 0, tow: 0 };
+  private completedServiceJobs: ServiceCompletionCounts = { police: 0, ambulance: 0, tow: 0, taxi: 0 };
 
   constructor(opts: WorldOptions) {
     this.player = opts.player;
@@ -2347,19 +2347,19 @@ export class World {
 
   private findPoliceSuspectIndex(near: Vec2): number | null {
     let bestAny: number | null = null;
-    let bestAnyDist = Infinity;
+    let bestAnyDist = -1;
     let bestFar: number | null = null;
-    let bestFarDist = Infinity;
+    let bestFarDist = -1;
 
     for (let i = 0; i < this.pedestrians.length; i++) {
       const ped = this.pedestrians[i];
       if (!this.isEligiblePoliceSuspect(ped)) continue;
       const d = distance(near, ped.pos);
-      if (d < bestAnyDist) {
+      if (d > bestAnyDist) {
         bestAny = i;
         bestAnyDist = d;
       }
-      if (d >= PLAYER_POLICE_MIN_TARGET_DISTANCE && d < bestFarDist) {
+      if (d >= PLAYER_POLICE_MIN_TARGET_DISTANCE && d > bestFarDist) {
         bestFar = i;
         bestFarDist = d;
       }
@@ -2530,6 +2530,7 @@ export class World {
 
     if (distance(car.pos, fare.dropoff) > TAXI_STOP_RADIUS) return;
     this.score = award(this.score, fare.reward);
+    this.recordCompletedServiceJob('taxi');
     this.spawnCivilianPedestrian(fare.dropoff);
     this.playerTaxiMission = null;
     this.startPlayerTaxiMission(car.pos);

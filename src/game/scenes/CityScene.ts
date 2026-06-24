@@ -550,6 +550,7 @@ export class CityScene extends Phaser.Scene {
     const policeStation = this.city.facilities.find((facility) => facility.kind === 'policeStation');
     const hospital = this.city.facilities.find((facility) => facility.kind === 'hospital');
     const towYard = this.city.facilities.find((facility) => facility.kind === 'towYard');
+    const taxiDepot = this.city.facilities.find((facility) => facility.kind === 'taxiDepot');
 
     const makeName: Mission[] = [
       createMission({
@@ -653,6 +654,15 @@ export class CityScene extends Phaser.Scene {
           },
         ],
         reward: 2400,
+      }),
+      createMission({
+        id: 'cab-shift',
+        title: 'Cab Shift',
+        objectives: [
+          ...(taxiDepot ? [reachPoint(taxiDepot.roadSpawn, 'Reach the marked taxi depot')] : []),
+          { kind: 'service', description: 'Steal a taxi and complete 1 fare', service: 'taxi', count: 1 },
+        ],
+        reward: 2000,
       }),
     ];
 
@@ -1853,9 +1863,10 @@ export class CityScene extends Phaser.Scene {
     return mission.stage === 'pickup' ? 'Recover the wreck' : 'Return to the tow yard';
   }
 
-  private serviceUnavailableText(kind: 'police' | 'ambulance' | 'tow'): string {
+  private serviceUnavailableText(kind: 'police' | 'ambulance' | 'tow' | 'taxi'): string {
     if (kind === 'police') return 'No suspect available';
     if (kind === 'ambulance') return 'No corpses to recover';
+    if (kind === 'taxi') return 'No fares available';
     return 'No wrecks to recover';
   }
 
@@ -1867,6 +1878,11 @@ export class CityScene extends Phaser.Scene {
     const detail =
       objective.kind === 'service'
         ? (() => {
+            if (objective.service === 'taxi' && w.taxiMission) {
+              return w.taxiMission.stage === 'pickup'
+                ? `Pick up ${w.taxiMission.passengerName}`
+                : `Drop off ${w.taxiMission.passengerName}`;
+            }
             if (w.serviceMission?.kind === objective.service) return this.serviceDetail(w.serviceMission);
             if (w.drivingCarIndex !== null && w.carKind(w.drivingCarIndex) === objective.service) {
               return this.serviceUnavailableText(objective.service);
