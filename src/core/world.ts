@@ -2058,10 +2058,24 @@ export class World {
   /** Positions NPC traffic and service vehicles brake for: pedestrians, the
    * player on foot, other live vehicles, and static wrecks. */
   private yieldObstacles(): Vec2[] {
-    const obstacles = this.pedestrians.map((p) => p.pos);
-    if (!this.isDriving) obstacles.push(this.player.pos);
+    const obstacles = this.onFootObstacles().map((actor) => actor.pos);
     obstacles.push(...this.liveVehicleObstacles());
     obstacles.push(...this.wreckObstacles().map((wreck) => wreck.pos));
+    return obstacles;
+  }
+
+  /** On-foot bodies that a slow vehicle should stop against instead of turning
+   * a gentle shove into a later road-kill. */
+  private onFootObstacles(): { pos: Vec2; radius: number }[] {
+    const obstacles = this.pedestrians.map((ped) => ({ pos: ped.pos, radius: ped.radius }));
+    for (const cop of this.police) {
+      if (cop.kind === 'foot') obstacles.push({ pos: cop.pos, radius: cop.radius });
+    }
+    if (this.ambulance?.crew) obstacles.push({ pos: this.ambulance.crew, radius: 7 });
+    for (const tow of this.tows) {
+      if (tow.crew) obstacles.push({ pos: tow.crew, radius: 7 });
+    }
+    if (!this.isDriving) obstacles.push({ pos: this.player.pos, radius: this.player.radius });
     return obstacles;
   }
 
@@ -2072,6 +2086,20 @@ export class World {
     const pushOut = sub(resolved, body.pos);
     if (length(pushOut) <= 1e-6) return body;
     if (body.speed === 0) return { ...body, pos: resolved };
+
+    const normal = normalize(pushOut);
+    const travelDir = scale(fromAngle(body.heading), Math.sign(body.speed) || 1);
+    return { ...body, pos: resolved, speed: body.speed * carWallRetention(travelDir, normal) };
+  }
+
+  private resolveSlowVehicleAgainstOnFootActors(
+    body: Car,
+    obstacles: readonly { pos: Vec2; radius: number }[],
+  ): Car {
+    if (Math.abs(body.speed) <= 1e-6 || Math.abs(body.speed) >= RUN_OVER_SPEED) return body;
+    const resolved = resolveCircleCircles(body.pos, body.radius, obstacles);
+    const pushOut = sub(resolved, body.pos);
+    if (length(pushOut) <= 1e-6) return body;
 
     const normal = normalize(pushOut);
     const travelDir = scale(fromAngle(body.heading), Math.sign(body.speed) || 1);
@@ -2125,10 +2153,12 @@ export class World {
         }
       }
     }
+    const footObstacles = this.onFootObstacles();
     for (const ref of refs) {
       const body = this.vehicleBody(ref);
       if (!body) continue;
-      this.setVehicleBody(ref, this.resolveVehicleAgainstWrecks(body));
+      const offWrecks = this.resolveVehicleAgainstWrecks(body);
+      this.setVehicleBody(ref, this.resolveSlowVehicleAgainstOnFootActors(offWrecks, footObstacles));
     }
   }
 
@@ -3511,7 +3541,7 @@ export class World {
     if (this.status !== 'playing') return; // already busted or wasted this tick
     if (!isWanted(this.wanted) || this.police.length === 0) return;
     if (!this.bustable) return; // in a car, you must have been stopped long enough
-    if (this.police.some((cop) => cop.kind === 'foot' && !cop.returningHome && hasCaught(cop, this.focus))) {
+    if (this.police.some((cop) => this.footOfficerInArrestContact(cop))) {
       this.cancelPlayerTaxiMission(this.focus);
       this.clearPlayerServiceMission();
       this.status = 'busted';
@@ -3520,15 +3550,19 @@ export class World {
     }
   }
 
+  private footOfficerInArrestContact(cop: Police): boolean {
+    if (cop.kind !== 'foot' || cop.returningHome) return false;
+    if (!this.isDriving) return hasCaught(cop, this.player.pos);
+    return distance(cop.pos, this.drivingCar!.pos) <= cop.radius + this.drivingCar!.radius;
+  }
+
   /** Track how long the current player car has been fully stopped for arrest. */
   private updateCarBustTimer(dt: number): void {
     if (!this.isDriving) {
       this.carStoppedForBusted = 0;
       return;
     }
-    const underArrestAttempt = this.police.some(
-      (cop) => cop.kind === 'foot' && !cop.returningHome && hasCaught(cop, this.focus),
-    );
+    const underArrestAttempt = this.police.some((cop) => this.footOfficerInArrestContact(cop));
     if (!underArrestAttempt) {
       this.carStoppedForBusted = 0;
       return;

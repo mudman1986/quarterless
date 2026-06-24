@@ -1532,6 +1532,26 @@ describe('World road deaths', () => {
     w.tick(controls(), 1 / 60);
     expect(w.pedestrians).toHaveLength(1);
   });
+
+  it('does not turn a slow sustained nudge into a pedestrian kill', () => {
+    const waitingPed: Pedestrian = {
+      ...pedAt(42, 0),
+      taxiPassengerId: 1,
+      taxiPassengerRole: 'playerFare',
+    };
+    const w = new World({
+      player: player(),
+      cars: [carAt(20, 0)],
+      pedestrians: [waitingPed],
+      bounds: { width: 4000, height: 4000 },
+    });
+
+    w.tick(controls({ action: true }), 1 / 60);
+    for (let i = 0; i < 60; i++) w.tick(controls({ up: true }), 1 / 60);
+
+    expect(w.pedestrians).toHaveLength(1);
+    expect(w.kills).toBe(0);
+  });
 });
 
 describe('World water', () => {
@@ -1620,14 +1640,14 @@ describe('World combat', () => {
   it('runs over a foot officer into a corpse instead of making them vanish', () => {
     const w = new World({
       player: player(),
-      cars: [carAt(20, 0)],
-      police: [{ pos: vec2(70, 0), heading: 0, radius: 12, kind: 'foot' }],
+      cars: [{ pos: vec2(48, 0), heading: 0, speed: 100, radius: 12 }],
+      police: [{ pos: vec2(60, 0), heading: 0, radius: 12, kind: 'foot' }],
       bounds: { width: 4000, height: 4000 },
     });
+    w.drivingCarIndex = 0;
     w.wanted = addHeat(createWanted(), CRIME_HEAT.hitPolice);
 
-    w.tick(controls({ action: true }), 1 / 60);
-    for (let i = 0; i < 120 && w.police.length > 0; i++) w.tick(controls({ up: true }), 1 / 60);
+    w.tick(controls(), 1 / 60);
 
     expect(w.police).toHaveLength(0);
     expect(w.corpses).toHaveLength(1);
