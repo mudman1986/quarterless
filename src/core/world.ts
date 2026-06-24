@@ -2748,6 +2748,7 @@ export class World {
       const offset = fromAngle(car.heading + Math.PI / 2, car.radius + this.player.radius + EXIT_GAP);
       this.player = { ...this.player, pos: add(car.pos, offset), angle: car.heading };
       if (this.carKind(idx) === 'taxi') this.cancelPlayerTaxiMission(add(car.pos, offset));
+      this.cars[idx] = { ...car, speed: 0 };
       this.drivingCarIndex = null;
       return;
     }

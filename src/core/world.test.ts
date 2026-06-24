@@ -1470,6 +1470,22 @@ describe('World road deaths', () => {
     expect(w.isWasted).toBe(false);
   });
 
+  it('does not waste the player walking into a stolen ambulance after exiting it', () => {
+    const w = new World({
+      player: player(),
+      cars: [{ pos: vec2(0, 0), heading: 0, speed: 100, radius: 14 }],
+      carKinds: ['ambulance'],
+      bounds: { width: 4000, height: 4000 },
+    });
+    w.drivingCarIndex = 0;
+
+    w.tick(controls({ action: true }), 1 / 60);
+    for (let i = 0; i < 60; i++) w.tick(controls({ up: true }), 1 / 60);
+
+    expect(w.isWasted).toBe(false);
+    expect(distance(w.player.pos, w.cars[0].pos)).toBeGreaterThanOrEqual(w.player.radius + w.cars[0].radius - 1);
+  });
+
   it('respawns the player at the start after being run over', () => {
     const w = new World({
       player: { pos: vec2(100, 100), angle: 0, radius: 8 },
