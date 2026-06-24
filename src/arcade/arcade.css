@@ -234,10 +234,49 @@ button {
 }
 
 #game.game-stage {
+  position: relative;
   width: 100vw;
   height: 100vh;
   height: 100dvh;
   touch-action: none;
+}
+
+.mini-game-pause {
+  position: absolute;
+  top: max(10px, env(safe-area-inset-top));
+  right: max(10px, env(safe-area-inset-right));
+  z-index: 15;
+  min-width: 96px;
+  min-height: 44px;
+  border: 1px solid var(--accent, #47d7ff);
+  border-radius: 6px;
+  background: rgba(8, 12, 18, 0.84);
+  color: var(--accent, #47d7ff);
+  cursor: pointer;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.mini-game-pause-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(4, 7, 12, 0.72);
+  color: #eef7ff;
+  font-size: clamp(1.2rem, 4vw, 2.2rem);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-align: center;
+  text-transform: uppercase;
+  white-space: pre-line;
+  pointer-events: none;
+}
+
+.mini-game-pause-overlay[hidden] {
+  display: none;
 }
 
 #game canvas {

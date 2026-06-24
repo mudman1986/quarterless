@@ -17,15 +17,25 @@ interface Shot extends Vec2 {
 
 const logicalWidth = 960;
 const logicalHeight = 540;
+const keyboardSpeed = 320;
 
 export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime {
   parent.innerHTML = '';
+  parent.classList.add('mini-game-stage');
   const canvas = document.createElement('canvas');
   canvas.className = 'mini-game-canvas';
   parent.append(canvas);
   const context = canvas.getContext('2d');
   if (!context) throw new Error('Canvas is unavailable');
   context.imageSmoothingEnabled = false;
+
+  const pauseButton = document.createElement('button');
+  pauseButton.className = 'mini-game-pause';
+  pauseButton.type = 'button';
+  const pauseOverlay = document.createElement('div');
+  pauseOverlay.className = 'mini-game-pause-overlay';
+  pauseOverlay.textContent = 'Paused\nPress P or tap Resume';
+  parent.append(pauseOverlay, pauseButton);
 
   const player: Vec2 = { x: logicalWidth / 2, y: logicalHeight - 72 };
   const target: Vec2 = { ...player };
@@ -39,7 +49,22 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
   let score = 0;
   let shield = 3;
   let invulnerableFor = 0;
+  let paused = false;
   let running = true;
+
+  const syncPauseUi = (): void => {
+    pauseButton.textContent = paused ? 'Resume' : 'Pause';
+    pauseButton.setAttribute('aria-pressed', String(paused));
+    pauseOverlay.hidden = !paused;
+  };
+
+  const togglePause = (): void => {
+    paused = !paused;
+    target.x = player.x;
+    target.y = player.y;
+    lastTime = performance.now();
+    syncPauseUi();
+  };
 
   const resize = (): void => {
     const bounds = parent.getBoundingClientRect();
@@ -65,7 +90,15 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
   };
 
   const keydown = (event: KeyboardEvent): void => {
-    if (event.code === 'Escape') onExit();
+    if (event.code === 'Escape') {
+      onExit();
+      return;
+    }
+    if (event.code === 'KeyP' && !event.repeat) {
+      event.preventDefault();
+      togglePause();
+      return;
+    }
     keys.add(event.code);
   };
 
@@ -74,6 +107,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
   };
 
   const pointermove = (event: PointerEvent): void => {
+    if (paused) return;
     const bounds = canvas.getBoundingClientRect();
     target.x = ((event.clientX - bounds.left) / Math.max(1, bounds.width)) * logicalWidth;
     target.y = ((event.clientY - bounds.top) / Math.max(1, bounds.height)) * logicalHeight;
@@ -87,14 +121,19 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
       (keys.has('ArrowDown') || keys.has('KeyS') ? 1 : 0) -
       (keys.has('ArrowUp') || keys.has('KeyW') ? 1 : 0);
     if (keyboardX !== 0 || keyboardY !== 0) {
-      target.x = player.x + keyboardX * 160;
-      target.y = player.y + keyboardY * 160;
+      const magnitude = Math.hypot(keyboardX, keyboardY) || 1;
+      player.x += (keyboardX / magnitude) * keyboardSpeed * deltaSeconds;
+      player.y += (keyboardY / magnitude) * keyboardSpeed * deltaSeconds;
+      target.x = player.x;
+      target.y = player.y;
+    } else {
+      player.x += (target.x - player.x) * Math.min(1, deltaSeconds * 9);
+      player.y += (target.y - player.y) * Math.min(1, deltaSeconds * 9);
     }
-
-    player.x += (target.x - player.x) * Math.min(1, deltaSeconds * 9);
-    player.y += (target.y - player.y) * Math.min(1, deltaSeconds * 9);
     player.x = Math.max(28, Math.min(logicalWidth - 28, player.x));
     player.y = Math.max(46, Math.min(logicalHeight - 34, player.y));
+    target.x = Math.max(28, Math.min(logicalWidth - 28, target.x));
+    target.y = Math.max(46, Math.min(logicalHeight - 34, target.y));
 
     shotTimer -= deltaSeconds;
     if (shotTimer <= 0) {
@@ -191,6 +230,12 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
 
   const frame = (time: number): void => {
     if (!running) return;
+    if (paused) {
+      lastTime = time;
+      draw(time);
+      frameId = window.requestAnimationFrame(frame);
+      return;
+    }
     const deltaSeconds = Math.min(0.04, (time - lastTime) / 1000);
     lastTime = time;
     update(deltaSeconds);
@@ -201,8 +246,10 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
   window.addEventListener('resize', resize);
   window.addEventListener('keydown', keydown);
   window.addEventListener('keyup', keyup);
+  pauseButton.addEventListener('click', togglePause);
   canvas.addEventListener('pointermove', pointermove);
   canvas.addEventListener('pointerdown', pointermove);
+  syncPauseUi();
   resize();
   frameId = window.requestAnimationFrame(frame);
 
@@ -213,9 +260,13 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
       window.removeEventListener('resize', resize);
       window.removeEventListener('keydown', keydown);
       window.removeEventListener('keyup', keyup);
+      pauseButton.removeEventListener('click', togglePause);
       canvas.removeEventListener('pointermove', pointermove);
       canvas.removeEventListener('pointerdown', pointermove);
+      pauseButton.remove();
+      pauseOverlay.remove();
       canvas.remove();
+      parent.classList.remove('mini-game-stage');
     },
   };
 }

@@ -18,12 +18,21 @@ const groundY = 420;
 
 export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime {
   parent.innerHTML = '';
+  parent.classList.add('mini-game-stage');
   const canvas = document.createElement('canvas');
   canvas.className = 'mini-game-canvas';
   parent.append(canvas);
   const context = canvas.getContext('2d');
   if (!context) throw new Error('Canvas is unavailable');
   context.imageSmoothingEnabled = false;
+
+  const pauseButton = document.createElement('button');
+  pauseButton.className = 'mini-game-pause';
+  pauseButton.type = 'button';
+  const pauseOverlay = document.createElement('div');
+  pauseOverlay.className = 'mini-game-pause-overlay';
+  pauseOverlay.textContent = 'Paused\nPress P or tap Resume';
+  parent.append(pauseOverlay, pauseButton);
 
   let frameId = 0;
   let lastTime = performance.now();
@@ -35,9 +44,22 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
   let obstacleTimer = 0;
   let coinTimer = 0;
   let crashedFor = 0;
+  let paused = false;
   let running = true;
   const obstacles: Obstacle[] = [];
   const coins: Coin[] = [];
+
+  const syncPauseUi = (): void => {
+    pauseButton.textContent = paused ? 'Resume' : 'Pause';
+    pauseButton.setAttribute('aria-pressed', String(paused));
+    pauseOverlay.hidden = !paused;
+  };
+
+  const togglePause = (): void => {
+    paused = !paused;
+    lastTime = performance.now();
+    syncPauseUi();
+  };
 
   const resize = (): void => {
     const bounds = parent.getBoundingClientRect();
@@ -67,14 +89,26 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
   };
 
   const keydown = (event: KeyboardEvent): void => {
-    if (event.code === 'Escape') onExit();
+    if (event.code === 'Escape') {
+      onExit();
+      return;
+    }
+    if (event.code === 'KeyP' && !event.repeat) {
+      event.preventDefault();
+      togglePause();
+      return;
+    }
+    if (paused) return;
     if (event.code === 'Space' || event.code === 'ArrowUp' || event.code === 'KeyW') {
       event.preventDefault();
       jump();
     }
   };
 
-  const pointerdown = (): void => jump();
+  const pointerdown = (): void => {
+    if (paused) return;
+    jump();
+  };
 
   const update = (deltaSeconds: number): void => {
     if (crashedFor > 0) {
@@ -178,6 +212,12 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
 
   const frame = (time: number): void => {
     if (!running) return;
+    if (paused) {
+      lastTime = time;
+      draw();
+      frameId = window.requestAnimationFrame(frame);
+      return;
+    }
     const deltaSeconds = Math.min(0.04, (time - lastTime) / 1000);
     lastTime = time;
     update(deltaSeconds);
@@ -187,7 +227,9 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
 
   window.addEventListener('resize', resize);
   window.addEventListener('keydown', keydown);
+  pauseButton.addEventListener('click', togglePause);
   canvas.addEventListener('pointerdown', pointerdown);
+  syncPauseUi();
   resize();
   frameId = window.requestAnimationFrame(frame);
 
@@ -197,8 +239,12 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
       window.cancelAnimationFrame(frameId);
       window.removeEventListener('resize', resize);
       window.removeEventListener('keydown', keydown);
+      pauseButton.removeEventListener('click', togglePause);
       canvas.removeEventListener('pointerdown', pointerdown);
+      pauseButton.remove();
+      pauseOverlay.remove();
       canvas.remove();
+      parent.classList.remove('mini-game-stage');
     },
   };
 }
