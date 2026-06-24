@@ -130,7 +130,7 @@ const VIEW_SPAN = 760;
 const MIN_ZOOM = 0.6;
 const MAX_ZOOM = 2.5;
 /** Extra camera room beyond the wrapped map so edge actors are fully visible. */
-const CAMERA_EDGE_GUTTER = 48;
+const CAMERA_EDGE_GUTTER = 24;
 /** On-screen size of the square minimap. */
 const MINIMAP_SIZE = 168;
 /** Seconds a mission announcement banner stays on screen. */
