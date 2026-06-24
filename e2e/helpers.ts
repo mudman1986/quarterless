@@ -1,7 +1,7 @@
 import { expect, type Page } from '@playwright/test';
 
 export async function launchSindicate(page: Page): Promise<void> {
-  await page.goto('/sindicate/');
+  await page.goto('/quarterless/');
   await expect(page.getByRole('heading', { name: 'Retro Arcade' })).toBeVisible({
     timeout: 10_000,
   });

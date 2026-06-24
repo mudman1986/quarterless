@@ -26,7 +26,7 @@ export default defineConfig({
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
     command: 'node scripts/playwright-web-server.mjs',
-    url: 'http://127.0.0.1:4173/sindicate/',
+    url: 'http://127.0.0.1:4173/quarterless/',
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
   },

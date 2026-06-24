@@ -1,7 +1,7 @@
 {
-  "name": "sindicate",
+  "name": "quarterless",
   "version": "0.1.0",
-  "description": "A top-down GTA 2-style game that runs on GitHub Pages.",
+  "description": "A retro browser arcade that runs on GitHub Pages.",
   "type": "module",
   "license": "MIT",
   "scripts": {

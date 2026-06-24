@@ -2,7 +2,7 @@ import { defineConfig } from 'vitest/config';
 
 // GitHub Pages serves a project site under /<repo>/, so the base path must match
 // the repository name. Change this if you rename the repository.
-const BASE_PATH = '/sindicate/';
+const BASE_PATH = '/quarterless/';
 
 export default defineConfig({
   base: BASE_PATH,

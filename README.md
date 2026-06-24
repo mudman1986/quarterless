@@ -24,7 +24,7 @@ npm run dev
 The dev server serves the arcade at:
 
 ```text
-http://localhost:5173/sindicate/
+http://localhost:5173/quarterless/
 ```
 
 To build and preview the same static artifact that gets deployed to GitHub
@@ -38,7 +38,7 @@ npm run preview
 Preview serves the production build at:
 
 ```text
-http://127.0.0.1:4173/sindicate/
+http://127.0.0.1:4173/quarterless/
 ```
 
 ## Current Status
@@ -124,14 +124,14 @@ The deployment pipeline gates GitHub Pages behind the normal verification path:
 4. Production build
 5. Playwright browser tests
 
-GitHub Pages serves this repository as a project site under `/sindicate/`, so the
+GitHub Pages serves this repository as a project site under `/quarterless/`, so the
 Vite base path is configured in [vite.config.ts](vite.config.ts).
 
 If the repository name changes, update:
 
 - `BASE_PATH` in [vite.config.ts](vite.config.ts)
 - Playwright URLs in [playwright.config.ts](playwright.config.ts)
-- Any hard-coded `/sindicate/` test navigation in [e2e](e2e)
+- Any hard-coded `/quarterless/` test navigation in [e2e](e2e)
 
 ## Tech Stack
 

@@ -6,7 +6,7 @@ import { launchSindicate } from './helpers';
 // This runs against `vite preview` (the real GitHub Pages artifact) and gates
 // deployment in CI.
 test('landing page lists the playable games', async ({ page }) => {
-  await page.goto('/sindicate/');
+  await page.goto('/quarterless/');
   await expect(page.getByRole('heading', { name: 'Retro Arcade' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Play Sindicate' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Play Pixel Sprint' })).toBeVisible();
