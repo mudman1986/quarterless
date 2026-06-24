@@ -108,6 +108,8 @@ const PARK_SLOT = 60;
 /** Distance from the kerb (sidewalk road-edge) to a parked car's centre, so the
  * car sits right against the pavement with no gap. */
 const PARK_INSET = 11;
+/** Radius kept clear around facility vehicle bays so garages are not blocked. */
+const GARAGE_PARKING_CLEARANCE = 60;
 
 interface TileRect {
   tx: number;
@@ -345,7 +347,7 @@ export function buildCity(spec: CitySpec = DEFAULT_CITY): City {
     fences,
     sidewalks: buildSidewalks(buildings, sidewalkWidthFor(spec), water),
     crosswalks: buildCrosswalks(spec, isRoad, isWater),
-    parkingSpots: buildParkingSpots(spec, buildings, isWater),
+    parkingSpots: buildParkingSpots(spec, buildings, facilities, isWater),
     isRoad,
     isWater,
     isBridge,
@@ -461,6 +463,7 @@ export function crosswalkStripeRects(crosswalk: Rect, bars = 8): Rect[] {
 function buildParkingSpots(
   spec: CitySpec,
   buildings: readonly Rect[],
+  facilities: readonly Facility[],
   isWater: (tx: number, ty: number) => boolean,
 ): ParkingSpot[] {
   const { cols, rows, tile } = spec;
@@ -471,17 +474,22 @@ function buildParkingSpots(
     const ty = Math.floor(y / tile);
     return tx >= 0 && ty >= 0 && tx < cols && ty < rows && !isWater(tx, ty);
   };
+  const clearOfGarage = (x: number, y: number): boolean =>
+    facilities.every(
+      (facility) => Math.hypot(x - facility.roadSpawn.x, y - facility.roadSpawn.y) >= GARAGE_PARKING_CLEARANCE,
+    );
+  const canPark = (x: number, y: number): boolean => dryAt(x, y) && clearOfGarage(x, y);
 
   for (const b of buildings) {
     // Left kerb: cars run down the vertical road, parked against the pavement.
     const leftX = b.x - s - PARK_INSET;
     for (let y = b.y + PARK_SLOT / 2; y <= b.y + b.h - PARK_SLOT / 2 + 1; y += PARK_SLOT) {
-      if (dryAt(leftX, y)) spots.push({ pos: vec2(leftX, y), heading: Math.PI / 2 });
+      if (canPark(leftX, y)) spots.push({ pos: vec2(leftX, y), heading: Math.PI / 2 });
     }
     // Top kerb: cars run along the horizontal road, parked against the pavement.
     const topY = b.y - s - PARK_INSET;
     for (let x = b.x + PARK_SLOT / 2; x <= b.x + b.w - PARK_SLOT / 2 + 1; x += PARK_SLOT) {
-      if (dryAt(x, topY)) spots.push({ pos: vec2(x, topY), heading: 0 });
+      if (canPark(x, topY)) spots.push({ pos: vec2(x, topY), heading: 0 });
     }
   }
   return spots;

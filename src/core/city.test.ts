@@ -414,6 +414,18 @@ describe('sidewalks, crosswalks and parking', () => {
       expect(withRiver.isWater(tx, ty)).toBe(false);
     }
   });
+
+  it('keeps parking bays away from facility vehicle garages', () => {
+    for (const candidate of [city, buildCity(CITY_SPEC)]) {
+      for (const facility of candidate.facilities) {
+        for (const spot of candidate.parkingSpots) {
+          expect(
+            Math.hypot(spot.pos.x - facility.roadSpawn.x, spot.pos.y - facility.roadSpawn.y),
+          ).toBeGreaterThanOrEqual(60);
+        }
+      }
+    }
+  });
 });
 
 describe('randomPointInRect', () => {

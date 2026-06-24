@@ -768,13 +768,6 @@ export class CityScene extends Phaser.Scene {
       this.drawFacilityGarage(g, facility);
     }
 
-    // Forecourt markers where service vehicles / police emerge from the facility.
-    g.fillStyle(0xffffff, 0.9);
-    for (const facility of this.city.facilities) {
-      g.fillCircle(facility.spawn.x, facility.spawn.y, 6);
-      g.lineStyle(2, COLORS.buildingEdge, 1);
-      g.strokeCircle(facility.spawn.x, facility.spawn.y, 6);
-    }
   }
 
   private drawFacilityGarage(g: Phaser.GameObjects.Graphics, facility: Facility): void {
