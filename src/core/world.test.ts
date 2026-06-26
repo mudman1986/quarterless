@@ -3335,6 +3335,7 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
       carDrivers: [null],
       viewRadius: 4000,
       bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
     });
     w.wreckedCars[0] = true;
 
@@ -3369,6 +3370,7 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
       carDrivers: [null],
       viewRadius: 4000,
       bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
     });
     w.wreckedCars[0] = true;
 
