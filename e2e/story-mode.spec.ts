@@ -40,6 +40,59 @@ test('story mode opens a dedicated story menu with chapter select', async ({ pag
   await expect(page.getByRole('heading', { name: 'Story Mode' })).toBeVisible();
   await expect(page.getByRole('button', { name: /Dead Drop District/i })).toBeVisible();
   await expect(page.getByLabel('Recap archive')).toBeVisible();
+  await expect(page.getByLabel('Find The Missing Dispatcher')).toBeVisible();
+  await expect(page.getByLabel("Court The City's Middle Powers")).toBeVisible();
+});
+
+test('story menu can launch a later unlocked chapter from a different act', async ({ page }) => {
+  await page.goto('/quarterless/');
+  await page.evaluate(() => {
+    localStorage.setItem(
+      'sindicate.storyProgress',
+      JSON.stringify({
+        version: 1,
+        storyId: 'sindicate-story-mode',
+        current: {
+          actId: 'court-the-citys-middle-powers',
+          chapterId: 'freight-union-morning',
+          missionId: 'union-test-run',
+          objectiveIndex: 0,
+        },
+        unlockedChapterIds: [
+          'dead-drop-district',
+          'spare-parts-gospel',
+          'static-on-the-hospital-band',
+          'meter-running',
+          'precinct-ashes',
+          'the-switchboard-name',
+          'freight-union-morning',
+        ],
+        completedChapterIds: [
+          'dead-drop-district',
+          'spare-parts-gospel',
+          'static-on-the-hospital-band',
+          'meter-running',
+          'precinct-ashes',
+          'the-switchboard-name',
+        ],
+        completedMissionIds: [],
+        branchOutcomes: {},
+      }),
+    );
+  });
+  await page.getByRole('button', { name: 'Story Mode' }).click();
+  await page.getByRole('button', { name: /Freight Union Morning/i }).click();
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      storyProgress?: { current: { chapterId: string; missionId: string } | null };
+    };
+    return (
+      scene?.storyProgress?.current?.chapterId === 'freight-union-morning' &&
+      scene?.storyProgress?.current?.missionId === 'union-test-run'
+    );
+  });
 });
 
 test('story mode boots and restores saved story progress after refresh', async ({ page }) => {
@@ -151,11 +204,11 @@ test('story mode shows a prototype-complete panel when the current story slice f
     }
 
     scene.storyProgress.current = {
-      chapterId: 'precinct-ashes',
-      missionId: 'hard-copy',
+      chapterId: 'freight-union-morning',
+      missionId: 'the-long-manifest',
       objectiveIndex: 0,
     };
-    scene.prevMissionId = 'hard-copy';
+    scene.prevMissionId = 'the-long-manifest';
     scene.prevMissionComplete = false;
     scene.world.campaign.currentIndex = scene.world.campaign.missions.length;
     scene.handleEvents();

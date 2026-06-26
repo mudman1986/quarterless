@@ -66,23 +66,34 @@ let activeGame: GameRuntime | null = null;
 let stopPreviews: (() => void) | null = null;
 
 function chapterCards(progress = createStoryProgress(STORY_MODE_PROTOTYPE)): string {
-  const chapters = STORY_MODE_PROTOTYPE.acts.flatMap((act) => act.chapters);
-  return chapters
-    .map((chapter) => {
-      const unlocked = progress.unlockedChapterIds.includes(chapter.id);
-      const completed = progress.completedChapterIds.includes(chapter.id);
+  return STORY_MODE_PROTOTYPE.acts
+    .map((act) => {
+      const cards = act.chapters
+        .map((chapter) => {
+          const unlocked = progress.unlockedChapterIds.includes(chapter.id);
+          const completed = progress.completedChapterIds.includes(chapter.id);
+          return `
+            <button
+              class="story-chapter-card${unlocked ? '' : ' story-chapter-card--locked'}"
+              type="button"
+              data-story-chapter="${chapter.id}"
+              ${unlocked ? '' : 'disabled'}
+              aria-label="${chapter.title}${unlocked ? '' : ' locked'}"
+            >
+              <span class="story-chapter-kicker">Chapter ${chapter.order}</span>
+              <span class="story-chapter-title">${chapter.title}</span>
+              <span class="story-chapter-meta">${completed ? 'Completed' : unlocked ? 'Unlocked' : 'Locked'}</span>
+            </button>`;
+        })
+        .join('');
       return `
-        <button
-          class="story-chapter-card${unlocked ? '' : ' story-chapter-card--locked'}"
-          type="button"
-          data-story-chapter="${chapter.id}"
-          ${unlocked ? '' : 'disabled'}
-          aria-label="${chapter.title}${unlocked ? '' : ' locked'}"
-        >
-          <span class="story-chapter-kicker">Chapter ${chapter.order}</span>
-          <span class="story-chapter-title">${chapter.title}</span>
-          <span class="story-chapter-meta">${completed ? 'Completed' : unlocked ? 'Unlocked' : 'Locked'}</span>
-        </button>`;
+        <section class="story-act-section" aria-label="${act.title}">
+          <h3 class="story-act-title">${act.title}</h3>
+          <p class="story-act-summary">${act.summary}</p>
+          <div class="story-chapter-grid">
+            ${cards}
+          </div>
+        </section>`;
     })
     .join('');
 }
@@ -281,12 +292,11 @@ function renderStoryMenu(game: ArcadeGame): void {
               </button>
             </div>
             <p class="story-menu-status">Current chapter: ${currentChapter?.title ?? 'Dead Drop District'}</p>
+            <p class="story-menu-status">Unlocked chapters: ${progress.unlockedChapterIds.length}/${STORY_MODE_PROTOTYPE.acts.flatMap((act) => act.chapters).length}</p>
           </article>
           <section class="story-menu-panel" aria-label="Unlocked chapters">
             <h2>Chapter Select</h2>
-            <div class="story-chapter-grid">
-              ${chapterCards(progress)}
-            </div>
+            ${chapterCards(progress)}
           </section>
           <section class="story-menu-panel" aria-label="Recap archive">
             <h2>Recap Archive</h2>

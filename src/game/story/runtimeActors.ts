@@ -4,6 +4,7 @@ import type {
   LoseActorFailRule,
   PedestrianRouteActorScript,
   StoryFailRule,
+  StoryStageTransition,
   VehicleRouteActorScript,
 } from './storyMode';
 
@@ -31,6 +32,26 @@ export interface StoryScriptTickContext {
 export interface StoryScriptTickResult {
   progress: StoryProgressState;
   failureText: string | null;
+}
+
+export function isStageTransitionMet(
+  transition: StoryStageTransition | undefined,
+  progress: StoryProgressState,
+  routeIndices: Record<string, number>,
+): boolean {
+  if (!transition) return false;
+  switch (transition.kind) {
+    case 'routeComplete':
+      return routeIndices[transition.actorId] === Number.MAX_SAFE_INTEGER;
+    case 'tailSeconds':
+      return progress.tailSeconds >= transition.seconds;
+    case 'captureSeconds':
+      return progress.captureSeconds >= transition.seconds;
+  }
+}
+
+export function normalizeRouteCompletion(routeIndex: number, routeLength: number): number {
+  return routeIndex >= routeLength - 1 ? Number.MAX_SAFE_INTEGER : routeIndex;
 }
 
 function moveAlongRoute(

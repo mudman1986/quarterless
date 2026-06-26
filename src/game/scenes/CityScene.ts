@@ -65,11 +65,19 @@ import {
   type StoryProgressSnapshot,
 } from '../story/storyProgress';
 import { compileStoryChapterRuntimeCampaign } from '../story/storyMode';
-import type { PedestrianRouteActorScript, PedestrianSquadActorScript, StoryRuntimeScript, VehicleRouteActorScript } from '../story/storyMode';
+import type {
+  PedestrianRouteActorScript,
+  PedestrianSquadActorScript,
+  StoryRuntimeScript,
+  StoryRuntimeStage,
+  VehicleRouteActorScript,
+} from '../story/storyMode';
 import {
   advancePedestrianRouteActor,
   advanceVehicleRouteActor,
   applyStoryFailRules,
+  isStageTransitionMet,
+  normalizeRouteCompletion,
   updateTailCaptureProgress,
 } from '../story/runtimeActors';
 
@@ -241,6 +249,8 @@ interface CitySceneStartData {
 interface StoryScriptState {
   chapterId: string;
   missionId: string;
+  stageIndex: number;
+  stageLabel: string;
   tailSeconds: number;
   captureSeconds: number;
   tailLostSeconds: number;
@@ -303,6 +313,7 @@ export class CityScene extends Phaser.Scene {
   private bustedText!: Phaser.GameObjects.Text;
   private banner!: Phaser.GameObjects.Text;
   private storyPanel!: Phaser.GameObjects.Text;
+  private storyStateText!: Phaser.GameObjects.Text;
   private touchControlsGfx!: Phaser.GameObjects.Graphics;
   private prevTouchConfirm = false;
 
@@ -587,6 +598,8 @@ export class CityScene extends Phaser.Scene {
       this.storyScript = {
         chapterId: chapter.id,
         missionId: mission.id,
+        stageIndex: 0,
+        stageLabel: '',
         tailSeconds: 0,
         captureSeconds: 0,
         tailLostSeconds: 0,
@@ -606,6 +619,19 @@ export class CityScene extends Phaser.Scene {
       tailSeconds: this.storyScript.tailSeconds,
       captureSeconds: this.storyScript.captureSeconds,
     });
+    this.syncStoryStateText();
+  }
+
+  private runtimeStages(runtime: StoryRuntimeScript): readonly StoryRuntimeStage[] {
+    if (runtime.stages && runtime.stages.length > 0) return runtime.stages;
+    return [
+      {
+        id: `${runtime.primaryActorId}-stage`,
+        title: 'Encounter',
+        actors: runtime.actors,
+        failRules: runtime.failRules,
+      },
+    ];
   }
 
   private ensureStoryTargetCar(actorId: string, pos: Vec2, kind: VehicleKind = 'ambulance'): number {
@@ -721,25 +747,40 @@ export class CityScene extends Phaser.Scene {
     this.pendingStoryRestart = restart;
   }
 
+  private activeStoryStage(runtime: StoryRuntimeScript): StoryRuntimeStage | null {
+    const stages = this.runtimeStages(runtime);
+    if (stages.length === 0) return null;
+    const safeIndex = Math.max(0, Math.min(stages.length - 1, this.storyScript?.stageIndex ?? 0));
+    return stages[safeIndex] ?? null;
+  }
+
   private runStoryScript(runtime: StoryRuntimeScript | undefined, dt: number): void {
     const script = this.storyScript!;
     if (!runtime) {
       script.tailSeconds = 0;
       script.captureSeconds = 0;
+      script.stageLabel = '';
       return;
     }
 
+    const stage = this.activeStoryStage(runtime);
+    if (!stage) return;
+    script.stageLabel = stage.districtState?.label ?? stage.title;
+
+    const stagePrimaryActorId = stage.primaryActorId ?? runtime.primaryActorId;
     const actorPositions: Record<string, Vec2 | null> = {};
+    const routeIndices: Record<string, number> = {};
     let primaryVehicleActor: VehicleRouteActorScript | null = null;
     let primaryVehiclePos: Vec2 | null = null;
     let primaryRouteIndex = 0;
 
-    for (const actor of runtime.actors) {
+    for (const actor of stage.actors) {
       if (actor.kind === 'vehicleRoute') {
         const state = this.runVehicleRouteActor(actor, dt);
         const pos = this.world.cars[state.carIndex]!.pos;
         actorPositions[actor.actorId] = pos;
-        if (actor.actorId === runtime.primaryActorId) {
+        routeIndices[actor.actorId] = normalizeRouteCompletion(state.routeIndex, actor.route.length);
+        if (actor.actorId === stagePrimaryActorId) {
           primaryVehicleActor = actor;
           primaryVehiclePos = pos;
           primaryRouteIndex = state.routeIndex;
@@ -749,10 +790,12 @@ export class CityScene extends Phaser.Scene {
       if (actor.kind === 'pedestrianRoute') {
         const state = this.runPedestrianRouteActor(actor, dt);
         actorPositions[actor.actorId] = this.world.pedestrians[state.pedIndex]?.pos ?? null;
+        routeIndices[actor.actorId] = normalizeRouteCompletion(state.routeIndex, actor.route.length);
         continue;
       }
       const indices = this.runPedestrianSquadActor(actor);
       actorPositions[actor.actorId] = indices.length > 0 ? this.world.pedestrians[indices[0]]?.pos ?? null : null;
+      routeIndices[actor.actorId] = 0;
     }
 
     let progress = {
@@ -779,7 +822,7 @@ export class CityScene extends Phaser.Scene {
       progress = { ...progress, tailSeconds: 0, captureSeconds: 0, tailLostSeconds: 0 };
     }
 
-    const fail = applyStoryFailRules(runtime.failRules, progress, {
+    const fail = applyStoryFailRules(stage.failRules ?? runtime.failRules, progress, {
       playerPos: this.world.focus,
       playerSpeed: this.world.drivingCar?.speed ?? 0,
       dt,
@@ -790,6 +833,16 @@ export class CityScene extends Phaser.Scene {
     script.tailLostSeconds = fail.progress.tailLostSeconds;
     script.failCounters = fail.progress.failCounters;
     if (fail.failureText) this.restartCurrentStoryMission(fail.failureText);
+
+    if (isStageTransitionMet(stage.nextWhen, fail.progress, routeIndices)) {
+      const stages = this.runtimeStages(runtime);
+      if (script.stageIndex < stages.length - 1) {
+        script.stageIndex += 1;
+        script.failCounters = {};
+        const nextStage = stages[script.stageIndex]!;
+        this.showStoryPanel(`STAGE SHIFT\n${nextStage.title}\n\n${nextStage.districtState?.summary ?? 'The city is changing around the mission.'}`, 3.2);
+      }
+    }
   }
 
   private persistGameState(key = GAME_STATE_KEY): void {
@@ -1642,6 +1695,7 @@ export class CityScene extends Phaser.Scene {
 
     place(this.hud, 10, 10); // top-left status readout
     place(this.banner, width / 2, 84); // mission announcement
+    place(this.storyStateText, width / 2, 140);
     place(this.storyPanel, width / 2, height / 2 - 12);
     place(this.bustedText, width / 2, height / 2);
     place(this.pauseMenu, width / 2, height / 2 - 156);
@@ -1745,6 +1799,20 @@ export class CityScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setScrollFactor(0)
       .setDepth(2502)
+      .setVisible(false);
+
+    this.storyStateText = this.add
+      .text(this.scale.width / 2, 140, '', {
+        fontFamily: 'monospace',
+        fontSize: '16px',
+        color: '#facc15',
+        align: 'center',
+        backgroundColor: '#000000c8',
+        padding: { x: 14, y: 8 },
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(2501)
       .setVisible(false);
 
     this.pauseResumeButton = this.createPauseActionButton('Resume  [P]', () => this.togglePause());
@@ -2284,6 +2352,15 @@ export class CityScene extends Phaser.Scene {
     this.storyPanelRemaining = seconds;
   }
 
+  private syncStoryStateText(): void {
+    const label = this.storyScript?.stageLabel?.trim() ?? '';
+    if (!label) {
+      this.storyStateText.setVisible(false);
+      return;
+    }
+    this.storyStateText.setText(`DISTRICT STATE\n${label}`).setVisible(true);
+  }
+
   private showMissionBriefingPanel(): void {
     if (this.mode !== 'story' || !this.storyProgress) return;
     const chapter = currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress);
@@ -2323,6 +2400,7 @@ export class CityScene extends Phaser.Scene {
       `CHAPTER ${chapter.order}\n${chapter.title}\n\n${chapter.storyRole}\n\nGoal: ${chapter.combinedGoal}`,
       4.8,
     );
+    this.syncStoryStateText();
   }
 
   private carTexture(index: number): string {

@@ -908,13 +908,415 @@ export const PRECINCT_ASHES: StoryChapter = {
   ],
 };
 
+export const THE_SWITCHBOARD_NAME: StoryChapter = {
+  id: 'the-switchboard-name',
+  actId: 'find-the-missing-dispatcher',
+  order: 6,
+  title: 'The Switchboard Name',
+  storyRole: 'The paper ledger finally reveals the hidden network\'s name and shows that multiple power blocs are feeding it.',
+  combinedGoal:
+    'Follow the first hard evidence trail into Switchboard infrastructure, survive the blackout response, and decrypt the first complete proof that the conspiracy is city-wide.',
+  missions: [
+    {
+      id: 'dead-letter-branch',
+      title: 'Dead Letter Branch',
+      hook: 'A shuttered post office still hides the lockers that once carried rerouted dispatch slips.',
+      primaryGoal: 'Reach the old branch and unlock the hidden locker sequence before the building is burned shut.',
+      secondaryPressure: 'The route should feel like a navigation puzzle under a live clock, not just another pickup chain.',
+      failureState: 'Fail if the locker route times out before the final branch is opened.',
+      payoff: 'Rook finds the hardware route that links the post routes to the Switchboard courier lane.',
+      prototypeRuntime: {
+        id: 'dead-letter-branch',
+        title: 'Dead Letter Branch',
+        objectives: [
+          {
+            kind: 'route',
+            description: 'Open the hidden locker route before the branch is torched',
+            targets: [
+              { x: 1024, y: 3328 },
+              { x: 1536, y: 3264 },
+              { x: 2048, y: 3200 },
+            ],
+            radius: 84,
+            timeLimitSeconds: 80,
+          },
+        ],
+        reward: 3600,
+      },
+    },
+    {
+      id: 'relay-theft',
+      title: 'Relay Theft',
+      hook: 'A courier van is moving switch hardware toward a handoff that no one outside the network is meant to see.',
+      primaryGoal: 'Stay on the courier route through the handoff and track the hardware long enough to identify the safehouse line.',
+      secondaryPressure: 'The route should escalate from one vehicle tail to a second-stage handoff instead of a single continuous chase.',
+      failureState: 'Fail if the hardware route is lost before the second carrier is identified.',
+      payoff: 'Rook learns which blackout safehouse is decrypting the first complete Switchboard file.',
+      prototypeRuntime: {
+        id: 'relay-theft',
+        title: 'Relay Theft',
+        objectives: [
+          {
+            kind: 'tail',
+            description: 'Stay on the switch hardware handoff route',
+            seconds: 14,
+          },
+        ],
+        reward: 4100,
+      },
+      prototypeScript: {
+        primaryActorId: 'switch-van',
+        stages: [
+          {
+            id: 'switch-van-tail',
+            title: 'Tail The Courier Van',
+            primaryActorId: 'switch-van',
+            districtState: { label: 'Courier Window', summary: 'The courier van is still inside the quiet route network.' },
+            actors: [
+              {
+                kind: 'vehicleRoute',
+                actorId: 'switch-van',
+                vehicleKind: 'van',
+                route: [
+                  { x: 2240, y: 3264 },
+                  { x: 2752, y: 3200 },
+                  { x: 3264, y: 3136 },
+                ],
+                speed: 105,
+                followRadius: 320,
+                tailDrainPerSecond: 2,
+                loseGraceSeconds: 2.5,
+              },
+            ],
+            nextWhen: { kind: 'routeComplete', actorId: 'switch-van' },
+          },
+          {
+            id: 'safehouse-handoff',
+            title: 'Track The Handoff Car',
+            primaryActorId: 'handoff-sedan',
+            districtState: { label: 'Safehouse Handoff', summary: 'The hardware has changed cars and the route is burning down.' },
+            actors: [
+              {
+                kind: 'vehicleRoute',
+                actorId: 'handoff-sedan',
+                vehicleKind: 'sedan',
+                route: [
+                  { x: 3264, y: 3136 },
+                  { x: 3584, y: 2816 },
+                  { x: 3712, y: 2432 },
+                ],
+                speed: 125,
+                followRadius: 320,
+                tailDrainPerSecond: 2,
+                loseGraceSeconds: 2.5,
+              },
+            ],
+          },
+        ],
+        actors: [],
+      },
+    },
+    {
+      id: 'blue-map-room',
+      title: 'Blue Map Room',
+      hook: 'A city planner is moving street-closure blueprints that can expose how the blackouts are staged.',
+      primaryGoal: 'Reach the blue-map archive route and force the planner to abandon the escape corridor.',
+      secondaryPressure: 'Rook should feel like the route is closing piece by piece instead of just fighting a static room.',
+      failureState: 'Fail if the planner\'s archive route is lost before the corridor is forced shut.',
+      payoff: 'The blueprints show how one district can be cut off from emergency routes on command.',
+      prototypeRuntime: {
+        id: 'blue-map-room',
+        title: 'Blue Map Room',
+        objectives: [
+          {
+            kind: 'reach',
+            description: 'Reach the blue-map archive room before the planner escapes',
+            target: { x: 3584, y: 2240 },
+            radius: 88,
+          },
+          {
+            kind: 'capture',
+            description: 'Hold the planner route at the archive long enough to force a stop',
+            seconds: 3,
+          },
+        ],
+        reward: 4300,
+      },
+    },
+    {
+      id: 'four-minute-silence',
+      title: 'Four Minute Silence',
+      hook: 'The district goes black at once, and the city keeps moving only where the Switchboard allows it.',
+      primaryGoal: 'Survive the blackout window and keep the route alive long enough to reach the rooftop decrypt lane.',
+      secondaryPressure: 'The city itself should feel unstable instead of simply more crowded.',
+      failureState: 'Fail if the blackout response overwhelms the route before the window closes.',
+      payoff: 'Rook sees what a district looks like when every response lane is sold off at once.',
+      prototypeRuntime: {
+        id: 'four-minute-silence',
+        title: 'Four Minute Silence',
+        objectives: [{ kind: 'survive', description: 'Survive the blackout district for 18 seconds', seconds: 18 }],
+        reward: 4600,
+      },
+    },
+    {
+      id: 'name-in-the-static',
+      title: 'Name In The Static',
+      hook: 'The first full Switchboard file is almost readable if Rook can hold the rooftop link against the counterpush.',
+      primaryGoal: 'Reach the decrypt rooftop, hold it long enough to finish the upload, and survive the response teams.',
+      secondaryPressure: 'The ending should feel like a named reveal, not just another defense wave.',
+      failureState: 'Fail if the rooftop link is broken before the file resolves.',
+      payoff: 'Act I ends with proof that the Switchboard is the machine behind the city\'s engineered emergencies.',
+      prototypeRuntime: {
+        id: 'name-in-the-static',
+        title: 'Name In The Static',
+        objectives: [
+          {
+            kind: 'reach',
+            description: 'Reach the rooftop transmitter before the decrypt window closes',
+            target: { x: 3904, y: 2048 },
+            radius: 88,
+          },
+          {
+            kind: 'survive',
+            description: 'Hold the rooftop for 20 seconds while the file decrypts',
+            seconds: 20,
+          },
+        ],
+        reward: 5200,
+      },
+    },
+  ],
+};
+
+export const FREIGHT_UNION_MORNING: StoryChapter = {
+  id: 'freight-union-morning',
+  actId: 'court-the-citys-middle-powers',
+  order: 1,
+  title: 'Freight Union Morning',
+  storyRole: 'Rook approaches the dock freight union, which hates the Switchboard because rerouted inspections are crushing independent shipping.',
+  combinedGoal:
+    'Win the freight union\'s trust, protect their routes long enough to expose the manipulated shipping manifests, and convert them into the first major ally bloc of Act II.',
+  missions: [
+    {
+      id: 'union-test-run',
+      title: 'Union Test Run',
+      hook: 'The dock crews do not trust anyone who cannot move a load without wrecking the line.',
+      primaryGoal: 'Reach the cargo route in order and prove Rook can keep a union haul moving across the harbor lanes.',
+      secondaryPressure: 'The route should feel heavy and deliberate, not just fast.',
+      failureState: 'Fail if the load route collapses before the convoy clears the harbor strip.',
+      payoff: 'The union agrees to share the first falsified manifest route.',
+      prototypeRuntime: {
+        id: 'union-test-run',
+        title: 'Union Test Run',
+        objectives: [
+          {
+            kind: 'route',
+            description: 'Follow the harbor haul route through all 3 cargo lanes',
+            targets: [
+              { x: 896, y: 3520 },
+              { x: 1600, y: 3520 },
+              { x: 2304, y: 3456 },
+            ],
+            radius: 88,
+            timeLimitSeconds: 90,
+          },
+        ],
+        reward: 3800,
+      },
+    },
+    {
+      id: 'picket-line-breaker',
+      title: 'Picket Line Breaker',
+      hook: 'The strike route is being peeled apart by hired blockers before the morning convoy can leave the harbor.',
+      primaryGoal: 'Reach the strike corridor and clear the blocker line without losing the workers\' route.',
+      secondaryPressure: 'The route should feel like selective pressure, not just a body count.',
+      failureState: 'Fail if the strike corridor is broken before the workers clear it.',
+      payoff: 'The dock crews open the gate to the moving ferry convoy carrying the forged customs tags.',
+      prototypeRuntime: {
+        id: 'picket-line-breaker',
+        title: 'Picket Line Breaker',
+        objectives: [
+          {
+            kind: 'reach',
+            description: 'Reach the strike corridor before the blockers scatter the line',
+            target: { x: 2432, y: 3392 },
+            radius: 88,
+          },
+          {
+            kind: 'eliminate',
+            description: 'Take down 4 marked blockers',
+            count: 4,
+            targetsOnly: true,
+          },
+        ],
+        reward: 4100,
+      },
+      prototypeScript: {
+        primaryActorId: 'picket-blockers',
+        actors: [
+          {
+            kind: 'pedestrianSquad',
+            actorId: 'picket-blockers',
+            center: { x: 2432, y: 3392 },
+            count: 4,
+            spread: 22,
+            missionTargets: true,
+          },
+        ],
+      },
+    },
+    {
+      id: 'harbor-echo',
+      title: 'Harbor Echo',
+      hook: 'The forged customs tags are moving across a ferry convoy where every deck hand answers to someone else.',
+      primaryGoal: 'Stay on the ferry convoy through the harbor handoff long enough to identify the crate carrying the false manifest.',
+      secondaryPressure: 'The convoy should feel like a layered moving route instead of one more city tail.',
+      failureState: 'Fail if the convoy handoff is lost before the forged-crate route is identified.',
+      payoff: 'Rook learns which crane lane will be used to trap the enemy convoy in the next strike.',
+      prototypeRuntime: {
+        id: 'harbor-echo',
+        title: 'Harbor Echo',
+        objectives: [{ kind: 'tail', description: 'Stay on the ferry convoy through the harbor handoff', seconds: 12 }],
+        reward: 4500,
+      },
+      prototypeScript: {
+        primaryActorId: 'ferry-lead-truck',
+        stages: [
+          {
+            id: 'dock-approach',
+            title: 'Track The Lead Truck',
+            primaryActorId: 'ferry-lead-truck',
+            districtState: { label: 'Harbor Approach', summary: 'The convoy is still rolling under the dock cranes.' },
+            actors: [
+              {
+                kind: 'vehicleRoute',
+                actorId: 'ferry-lead-truck',
+                vehicleKind: 'pickup',
+                route: [
+                  { x: 2752, y: 3520 },
+                  { x: 3200, y: 3520 },
+                  { x: 3584, y: 3392 },
+                ],
+                speed: 110,
+                followRadius: 320,
+                tailDrainPerSecond: 2,
+                loseGraceSeconds: 2.5,
+              },
+            ],
+            nextWhen: { kind: 'routeComplete', actorId: 'ferry-lead-truck' },
+          },
+          {
+            id: 'ferry-handoff',
+            title: 'Stay On The Crate Car',
+            primaryActorId: 'crate-sedan',
+            districtState: { label: 'Ferry Handoff', summary: 'The forged tags have moved to a smaller car inside the yard lanes.' },
+            actors: [
+              {
+                kind: 'vehicleRoute',
+                actorId: 'crate-sedan',
+                vehicleKind: 'sedan',
+                route: [
+                  { x: 3584, y: 3392 },
+                  { x: 3840, y: 3136 },
+                  { x: 3968, y: 2880 },
+                ],
+                speed: 120,
+                followRadius: 320,
+                tailDrainPerSecond: 2,
+                loseGraceSeconds: 2.5,
+              },
+            ],
+          },
+        ],
+        actors: [],
+      },
+    },
+    {
+      id: 'crane-jam',
+      title: 'Crane Jam',
+      hook: 'The union finally has one shot to pin the enemy convoy in the loading lane.',
+      primaryGoal: 'Reach the crane lane and hold the trap long enough for the convoy to lock in place.',
+      secondaryPressure: 'The player should feel like the trap is closing around a moving target instead of just defending a point.',
+      failureState: 'Fail if the trap lane is lost before the convoy locks in.',
+      payoff: 'The trapped convoy confirms the forged manifest route and gives the union something worth broadcasting.',
+      prototypeRuntime: {
+        id: 'crane-jam',
+        title: 'Crane Jam',
+        objectives: [
+          {
+            kind: 'reach',
+            description: 'Reach the crane lane before the convoy slips the trap',
+            target: { x: 3840, y: 2624 },
+            radius: 88,
+          },
+          {
+            kind: 'survive',
+            description: 'Hold the trap lane for 14 seconds',
+            seconds: 14,
+          },
+        ],
+        reward: 4700,
+      },
+    },
+    {
+      id: 'the-long-manifest',
+      title: 'The Long Manifest',
+      hook: 'The union leader will finally go public if Rook can keep the rolling ambush from killing the broadcast.',
+      primaryGoal: 'Escort the union leader across the harbor route and keep them inside the lane until the manifesto hits the air.',
+      secondaryPressure: 'This should feel like protecting a live route under pressure, not just surviving near an NPC.',
+      failureState: 'Fail if the union leader is left behind or the broadcast lane breaks before the readout finishes.',
+      payoff: 'Act II opens with the freight union committed as the first major ally bloc against the Switchboard.',
+      prototypeRuntime: {
+        id: 'the-long-manifest',
+        title: 'The Long Manifest',
+        objectives: [{ kind: 'survive', description: 'Keep the broadcast lane alive for 18 seconds', seconds: 18 }],
+        reward: 5400,
+      },
+      prototypeScript: {
+        primaryActorId: 'union-leader',
+        actors: [
+          {
+            kind: 'pedestrianRoute',
+            actorId: 'union-leader',
+            route: [
+              { x: 3968, y: 2496 },
+              { x: 3776, y: 2240 },
+              { x: 3456, y: 2112 },
+            ],
+            speed: 42,
+            escortRadius: 180,
+          },
+        ],
+        failRules: [
+          {
+            kind: 'escortRadius',
+            actorId: 'union-leader',
+            radius: 220,
+            maxSeconds: 3,
+            failureText: 'The union leader was cut off before the broadcast lane held.',
+          },
+        ],
+      },
+    },
+  ],
+};
+
 export const FIND_THE_MISSING_DISPATCHER: StoryAct = {
   id: 'find-the-missing-dispatcher',
   order: 1,
   title: 'Find The Missing Dispatcher',
   summary:
     'Rook follows Nia\'s physical evidence trail through the waterfront and learns the city is being manipulated by a hidden logistics network.',
-  chapters: [DEAD_DROP_DISTRICT, SPARE_PARTS_GOSPEL, STATIC_ON_THE_HOSPITAL_BAND, METER_RUNNING, PRECINCT_ASHES],
+  chapters: [DEAD_DROP_DISTRICT, SPARE_PARTS_GOSPEL, STATIC_ON_THE_HOSPITAL_BAND, METER_RUNNING, PRECINCT_ASHES, THE_SWITCHBOARD_NAME],
+};
+
+export const COURT_THE_CITYS_MIDDLE_POWERS: StoryAct = {
+  id: 'court-the-citys-middle-powers',
+  order: 2,
+  title: 'Court The City\'s Middle Powers',
+  summary:
+    'Rook turns proof into alliances by winning over the city\'s dock crews, couriers, and neighborhood networks before the Switchboard can isolate them.',
+  chapters: [FREIGHT_UNION_MORNING],
 };
 
 export const STORY_MODE_PROTOTYPE: StoryMode = {
@@ -922,5 +1324,5 @@ export const STORY_MODE_PROTOTYPE: StoryMode = {
   title: 'Sindicate Story Mode',
   premise:
     'Rook Vance returns to the city to find their missing sister Nia and uncovers the Switchboard, a shadow system that sells control of emergency movement.',
-  acts: [FIND_THE_MISSING_DISPATCHER],
+  acts: [FIND_THE_MISSING_DISPATCHER, COURT_THE_CITYS_MIDDLE_POWERS],
 };

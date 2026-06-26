@@ -4,6 +4,8 @@ import {
   advancePedestrianRouteActor,
   advanceVehicleRouteActor,
   applyStoryFailRules,
+  isStageTransitionMet,
+  normalizeRouteCompletion,
   updateTailCaptureProgress,
   type StoryProgressState,
 } from './runtimeActors';
@@ -80,5 +82,34 @@ describe('applyStoryFailRules', () => {
       },
     );
     expect(result.failureText).toBe('Escort lost');
+  });
+});
+
+describe('stage transitions', () => {
+  it('treats a completed route actor as a routeComplete transition', () => {
+    const progress: StoryProgressState = {
+      tailSeconds: 0,
+      captureSeconds: 0,
+      tailLostSeconds: 0,
+      failCounters: {},
+    };
+    expect(
+      isStageTransitionMet(
+        { kind: 'routeComplete', actorId: 'van' },
+        progress,
+        { van: normalizeRouteCompletion(2, 3) },
+      ),
+    ).toBe(true);
+  });
+
+  it('supports tail and capture second thresholds', () => {
+    const progress: StoryProgressState = {
+      tailSeconds: 12,
+      captureSeconds: 3,
+      tailLostSeconds: 0,
+      failCounters: {},
+    };
+    expect(isStageTransitionMet({ kind: 'tailSeconds', seconds: 10 }, progress, {})).toBe(true);
+    expect(isStageTransitionMet({ kind: 'captureSeconds', seconds: 4 }, progress, {})).toBe(false);
   });
 });

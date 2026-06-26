@@ -74,6 +74,11 @@ export type StoryActorScript =
   | PedestrianRouteActorScript
   | PedestrianSquadActorScript;
 
+export interface StoryDistrictStateScript {
+  label: string;
+  summary?: string;
+}
+
 export interface LoseActorFailRule {
   kind: 'loseActor';
   actorId: string;
@@ -91,10 +96,41 @@ export interface EscortRadiusFailRule {
 
 export type StoryFailRule = LoseActorFailRule | EscortRadiusFailRule;
 
+export interface RouteCompleteStageTransition {
+  kind: 'routeComplete';
+  actorId: string;
+}
+
+export interface TailSecondsStageTransition {
+  kind: 'tailSeconds';
+  seconds: number;
+}
+
+export interface CaptureSecondsStageTransition {
+  kind: 'captureSeconds';
+  seconds: number;
+}
+
+export type StoryStageTransition =
+  | RouteCompleteStageTransition
+  | TailSecondsStageTransition
+  | CaptureSecondsStageTransition;
+
+export interface StoryRuntimeStage {
+  id: string;
+  title: string;
+  primaryActorId?: string;
+  actors: readonly StoryActorScript[];
+  failRules?: readonly StoryFailRule[];
+  districtState?: StoryDistrictStateScript;
+  nextWhen?: StoryStageTransition;
+}
+
 export interface StoryRuntimeScript {
   primaryActorId: string;
   actors: readonly StoryActorScript[];
   failRules?: readonly StoryFailRule[];
+  stages?: readonly StoryRuntimeStage[];
 }
 
 export interface StoryChapter {

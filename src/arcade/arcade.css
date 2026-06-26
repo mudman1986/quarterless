@@ -257,6 +257,33 @@ button {
   gap: 10px;
 }
 
+.story-act-section {
+  display: grid;
+  gap: 10px;
+}
+
+.story-act-section + .story-act-section {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #293342;
+}
+
+.story-act-title,
+.story-act-summary {
+  margin: 0;
+}
+
+.story-act-title {
+  color: #eef7ff;
+  font-size: 0.95rem;
+  text-transform: uppercase;
+}
+
+.story-act-summary {
+  color: #9fb0c4;
+  line-height: 1.4;
+}
+
 .story-archive-list {
   display: grid;
   gap: 10px;
