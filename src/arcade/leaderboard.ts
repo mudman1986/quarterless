@@ -37,6 +37,7 @@ export function createMemoryStore(): KeyValueStore {
   return {
     getItem: (key) => mem.get(key) ?? null,
     setItem: (key, value) => void mem.set(key, value),
+    removeItem: (key) => void mem.delete(key),
   };
 }
 

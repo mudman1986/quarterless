@@ -414,6 +414,71 @@ type BulletSpatialIndex = {
   towCrews: SpatialHash<TowTruck>;
 };
 
+type AmmoRespawnState = {
+  pickup: AmmoPickup;
+  cooldown: number;
+};
+
+export interface WorldSnapshot {
+  version: 1;
+  player: OnFootActor;
+  cars: Car[];
+  pedestrians: Pedestrian[];
+  police: Police[];
+  wanted: WantedState;
+  health: Health;
+  weapon: Weapon;
+  bullets: Bullet[];
+  policeBullets: Bullet[];
+  explosions: Explosion[];
+  explosionsTriggered: number;
+  gunfireThreats: Vec2[];
+  wreckedCars: boolean[];
+  towedCars: boolean[];
+  lights: TrafficLights;
+  corpses: Corpse[];
+  ambulance: Ambulance | null;
+  tows: TowTruck[];
+  score: Score;
+  kills: number;
+  targetKills: number;
+  collected: number;
+  ammoPickups: AmmoPickup[];
+  drivingCarIndex: number | null;
+  status: 'playing' | 'busted' | 'wasted';
+  ammoRespawns: AmmoRespawnState[];
+  carDrivers: (TrafficAI | null)[];
+  carKinds: VehicleKind[];
+  taxiStates: (TaxiCabState | null)[];
+  carRespawnsAtTow: boolean[];
+  carHealth: number[];
+  carBurnTimers: number[];
+  carBurnByPlayer: boolean[];
+  stolenServiceVehicles: boolean[];
+  towDispatchCooldowns: number[];
+  carStoppedForBusted: number;
+  bustedTimer: number;
+  prevAction: boolean;
+  prevConfirm: boolean;
+  campaign: Campaign | null;
+  campaignIndex: number;
+  vehicleImpactCooldowns: [string, number][];
+  objectiveBaseline: MissionBaseline;
+  elapsed: number;
+  playerTaxiMission: TaxiMission | null;
+  playerServiceMission: PlayerServiceMission | null;
+  playerServiceActionLock: number;
+  nextTaxiMissionId: number;
+  nextTaxiPassengerId: number;
+  nextServiceMissionId: number;
+  nextPoliceSuspectId: number;
+  completedServiceJobs: ServiceCompletionCounts;
+}
+
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
 /**
  * Authoritative game simulation. Holds all entities and advances them with a
  * fixed timestep. Has no rendering or input-device knowledge, so it is fully
@@ -592,6 +657,132 @@ export class World {
     }
     this.ammoPickups = opts.ammoPickups ?? [];
     this.syncMissionTargets();
+  }
+
+  snapshot(): WorldSnapshot {
+    return cloneJson({
+      version: 1 as const,
+      player: this.player,
+      cars: this.cars,
+      pedestrians: this.pedestrians,
+      police: this.police,
+      wanted: this.wanted,
+      health: this.health,
+      weapon: this.weapon,
+      bullets: this.bullets,
+      policeBullets: this.policeBullets,
+      explosions: this.explosions,
+      explosionsTriggered: this.explosionsTriggered,
+      gunfireThreats: this.gunfireThreats,
+      wreckedCars: this.wreckedCars,
+      towedCars: this.towedCars,
+      lights: this.lights,
+      corpses: this.corpses,
+      ambulance: this.ambulance,
+      tows: this.tows,
+      score: this.score,
+      kills: this.kills,
+      targetKills: this.targetKills,
+      collected: this.collected,
+      ammoPickups: this.ammoPickups,
+      drivingCarIndex: this.drivingCarIndex,
+      status: this.status,
+      ammoRespawns: this.ammoRespawns,
+      carDrivers: this.carDrivers,
+      carKinds: this.carKinds,
+      taxiStates: this.taxiStates,
+      carRespawnsAtTow: this.carRespawnsAtTow,
+      carHealth: this.carHealth,
+      carBurnTimers: this.carBurnTimers,
+      carBurnByPlayer: this.carBurnByPlayer,
+      stolenServiceVehicles: this.stolenServiceVehicles,
+      towDispatchCooldowns: this.towDispatchCooldowns,
+      carStoppedForBusted: this.carStoppedForBusted,
+      bustedTimer: this.bustedTimer,
+      prevAction: this.prevAction,
+      prevConfirm: this.prevConfirm,
+      campaign: this.campaign,
+      campaignIndex: this.campaignIndex,
+      vehicleImpactCooldowns: [...this.vehicleImpactCooldowns.entries()],
+      objectiveBaseline: this.objectiveBaseline,
+      elapsed: this.elapsed,
+      playerTaxiMission: this.playerTaxiMission,
+      playerServiceMission: this.playerServiceMission,
+      playerServiceActionLock: this.playerServiceActionLock,
+      nextTaxiMissionId: this.nextTaxiMissionId,
+      nextTaxiPassengerId: this.nextTaxiPassengerId,
+      nextServiceMissionId: this.nextServiceMissionId,
+      nextPoliceSuspectId: this.nextPoliceSuspectId,
+      completedServiceJobs: this.completedServiceJobs,
+    });
+  }
+
+  static fromSnapshot(opts: WorldOptions, snapshot: WorldSnapshot): World {
+    const world = new World({
+      ...opts,
+      player: cloneJson(snapshot.player),
+      cars: cloneJson(snapshot.cars),
+      pedestrians: cloneJson(snapshot.pedestrians),
+      police: cloneJson(snapshot.police),
+      ammoPickups: cloneJson(snapshot.ammoPickups),
+      weapon: cloneJson(snapshot.weapon),
+      maxHealth: snapshot.health.max,
+      bestScore: snapshot.score.best,
+    });
+
+    world.player = cloneJson(snapshot.player);
+    world.pedestrians = cloneJson(snapshot.pedestrians);
+    world.police = cloneJson(snapshot.police);
+    world.wanted = cloneJson(snapshot.wanted);
+    world.health = cloneJson(snapshot.health);
+    world.weapon = cloneJson(snapshot.weapon);
+    world.bullets = cloneJson(snapshot.bullets);
+    world.policeBullets = cloneJson(snapshot.policeBullets);
+    world.explosions = cloneJson(snapshot.explosions);
+    world.explosionsTriggered = snapshot.explosionsTriggered;
+    world.gunfireThreats = cloneJson(snapshot.gunfireThreats);
+    world.wreckedCars = cloneJson(snapshot.wreckedCars);
+    world.towedCars = cloneJson(snapshot.towedCars);
+    world.lights = cloneJson(snapshot.lights);
+    world.corpses = cloneJson(snapshot.corpses);
+    world.ambulance = cloneJson(snapshot.ambulance);
+    world.tows = cloneJson(snapshot.tows);
+    world.score = cloneJson(snapshot.score);
+    world.kills = snapshot.kills;
+    world.targetKills = snapshot.targetKills;
+    world.collected = snapshot.collected;
+    world.ammoPickups = cloneJson(snapshot.ammoPickups);
+    world.drivingCarIndex = snapshot.drivingCarIndex;
+    world.status = snapshot.status;
+    world.ammoRespawns = cloneJson(snapshot.ammoRespawns);
+    world.carDrivers = cloneJson(snapshot.carDrivers);
+    world.carKinds = cloneJson(snapshot.carKinds);
+    world.taxiStates = cloneJson(snapshot.taxiStates);
+    world.carRespawnsAtTow = cloneJson(snapshot.carRespawnsAtTow);
+    world.carHealth = cloneJson(snapshot.carHealth);
+    world.carBurnTimers = cloneJson(snapshot.carBurnTimers);
+    world.carBurnByPlayer = cloneJson(snapshot.carBurnByPlayer);
+    world.stolenServiceVehicles = cloneJson(snapshot.stolenServiceVehicles);
+    world.towDispatchCooldowns = cloneJson(snapshot.towDispatchCooldowns);
+    world.carStoppedForBusted = snapshot.carStoppedForBusted;
+    world.bustedTimer = snapshot.bustedTimer;
+    world.prevAction = snapshot.prevAction;
+    world.prevConfirm = snapshot.prevConfirm;
+    world.campaign = cloneJson(snapshot.campaign);
+    world.campaignIndex = snapshot.campaignIndex;
+    world.vehicleImpactCooldowns = new Map(cloneJson(snapshot.vehicleImpactCooldowns));
+    world.objectiveBaseline = cloneJson(snapshot.objectiveBaseline);
+    world.elapsed = snapshot.elapsed;
+    world.playerTaxiMission = cloneJson(snapshot.playerTaxiMission);
+    world.playerServiceMission = cloneJson(snapshot.playerServiceMission);
+    world.playerServiceActionLock = snapshot.playerServiceActionLock;
+    world.nextTaxiMissionId = snapshot.nextTaxiMissionId;
+    world.nextTaxiPassengerId = snapshot.nextTaxiPassengerId;
+    world.nextServiceMissionId = snapshot.nextServiceMissionId;
+    world.nextPoliceSuspectId = snapshot.nextPoliceSuspectId;
+    world.completedServiceJobs = cloneJson(snapshot.completedServiceJobs);
+    world.syncMissionTargets();
+    return world;
   }
 
   get isDriving(): boolean {

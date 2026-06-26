@@ -8,8 +8,10 @@ import {
 } from '../../core/city';
 import Phaser from 'phaser';
 import { SERVICE_SPAWN_SPACING, World, type VehicleKind } from '../../core/world';
+import type { WorldOptions } from '../../core/world';
 import { CITY_SPEC } from '../citySpec';
 import { createMission, type Mission } from '../../core/mission';
+import { clearGameState, loadGameState, saveGameState } from '../../core/gameState';
 import {
   loadHighScore,
   saveHighScore,
@@ -109,6 +111,7 @@ function safeStorage(): KeyValueStore {
   return {
     getItem: (k) => mem.get(k) ?? null,
     setItem: (k, v) => void mem.set(k, v),
+    removeItem: (k) => void mem.delete(k),
   };
 }
 
@@ -140,6 +143,7 @@ const MINIMAP_SIZE = 168;
 const ANNOUNCE_SECONDS = 3.2;
 /** Length in seconds of a full day/night cycle (30 minutes). */
 const DAY_LENGTH = 1800;
+const SAVE_INTERVAL = 0.5;
 /** Tow-truck amber beacon: blink interval (ms) and how far forward (px) of the
  * truck's centre the cab-roof light sits. */
 const TOW_BEACON_BLINK_MS = 280;
@@ -213,6 +217,7 @@ export class CityScene extends Phaser.Scene {
 
   private accumulator = 0;
   private minimapAccumulator = MINIMAP_REFRESH_INTERVAL;
+  private saveAccumulator = 0;
 
   /** Pause / menu state. */
   private paused = false;
@@ -224,6 +229,10 @@ export class CityScene extends Phaser.Scene {
   /** High-score persistence. */
   private store: KeyValueStore = safeStorage();
   private savedBest = 0;
+  private skipPersistOnShutdown = false;
+  private readonly beforeUnloadHandler = (): void => {
+    this.persistGameState();
+  };
 
   /** Procedural sound effects. */
   private readonly sfx = new Sound();
@@ -273,8 +282,10 @@ export class CityScene extends Phaser.Scene {
     this.parkedSpots = [];
     this.accumulator = 0;
     this.minimapAccumulator = MINIMAP_REFRESH_INTERVAL;
+    this.saveAccumulator = 0;
     this.sirenTimer = 0;
     this.timeOfDay = 0;
+    this.skipPersistOnShutdown = false;
     this.prevBullets = 0;
     this.prevKills = 0;
     this.prevExplosions = 0;
@@ -299,26 +310,21 @@ export class CityScene extends Phaser.Scene {
     this.intersectionCenters = this.computeIntersectionCenters();
     const spawn = tileCenter(this.city.spec, this.city.spec.block, this.city.spec.block);
 
-    const traffic = this.spawnTraffic();
-    this.savedBest = loadHighScore(this.store);
-
-    this.world = new World({
-      player: { pos: spawn, angle: 0, radius: PLAYER_SIZE / 2 },
-      cars: traffic.cars,
-      carDrivers: traffic.drivers,
-      carKinds: traffic.kinds,
-      carRespawnsAtTow: traffic.respawnsAtTow,
-      city: this.city,
-      pedestrians: this.spawnPedestrians(),
-      policeSpawns: this.policeSpawnPoints(),
-      ammoPickups: this.spawnAmmoPickups(),
-      bounds: { width: this.city.width, height: this.city.height },
-      walls: [...this.city.buildings, ...this.city.fences],
-      water: this.city.water,
-      sidewalks: this.city.sidewalks,
-      bestScore: this.savedBest,
-      campaigns: this.buildCampaigns(),
-    });
+    const savedState = loadGameState(this.store);
+    this.savedBest = Math.max(loadHighScore(this.store), savedState?.world.score.best ?? 0);
+    if (this.savedBest > 0) this.savedBest = saveHighScore(this.store, this.savedBest);
+    const worldOptions = this.buildWorldOptions(spawn, this.savedBest);
+    if (savedState) {
+      try {
+        this.world = World.fromSnapshot(worldOptions, savedState.world);
+        this.timeOfDay = savedState.timeOfDay;
+      } catch {
+        clearGameState(this.store);
+        this.world = new World(worldOptions);
+      }
+    } else {
+      this.world = new World(worldOptions);
+    }
 
     this.drawCity();
     this.createEntitySprites();
@@ -340,6 +346,9 @@ export class CityScene extends Phaser.Scene {
     this.pauseKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.P);
     this.newGameKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.N);
     this.paused = false;
+    if (typeof window !== 'undefined') {
+      window.addEventListener('beforeunload', this.beforeUnloadHandler);
+    }
     // Browsers block audio until a user gesture: unlock on the first key press.
     this.input.keyboard?.once('keydown', () => this.sfx.resume());
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
@@ -352,8 +361,43 @@ export class CityScene extends Phaser.Scene {
       }
     });
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('beforeunload', this.beforeUnloadHandler);
+      }
+      if (!this.skipPersistOnShutdown) this.persistGameState();
       this.touchInput_?.destroy();
     });
+    this.persistGameState();
+  }
+
+  private buildWorldOptions(spawn: Vec2, bestScore: number): WorldOptions {
+    const traffic = this.spawnTraffic();
+    return {
+      player: { pos: spawn, angle: 0, radius: PLAYER_SIZE / 2 },
+      cars: traffic.cars,
+      carDrivers: traffic.drivers,
+      carKinds: traffic.kinds,
+      carRespawnsAtTow: traffic.respawnsAtTow,
+      city: this.city,
+      pedestrians: this.spawnPedestrians(),
+      policeSpawns: this.policeSpawnPoints(),
+      ammoPickups: this.spawnAmmoPickups(),
+      bounds: { width: this.city.width, height: this.city.height },
+      walls: [...this.city.buildings, ...this.city.fences],
+      water: this.city.water,
+      sidewalks: this.city.sidewalks,
+      bestScore,
+      campaigns: this.buildCampaigns(),
+    };
+  }
+
+  private persistGameState(): void {
+    if (!this.world) return;
+    saveGameState(this.store, {
+      world: this.world.snapshot(),
+      timeOfDay: this.timeOfDay,
+    });
+    this.saveAccumulator = 0;
   }
 
   /** A lively mix of cars parked in the marked bays and cars driven by NPC traffic. */
@@ -1553,6 +1597,8 @@ export class CityScene extends Phaser.Scene {
     this.handleEvents();
     this.updateSiren(dt);
     this.updateDayNight(dt);
+    this.saveAccumulator += dt;
+    if (this.saveAccumulator >= SAVE_INTERVAL) this.persistGameState();
 
     // Count down the announcement banner.
     if (this.announceRemaining > 0) {
@@ -1596,6 +1642,7 @@ export class CityScene extends Phaser.Scene {
   private togglePause(): void {
     this.paused = !this.paused;
     this.pauseMenu.setVisible(this.paused);
+    if (this.paused) this.persistGameState();
     this.touchControlsDirty = true;
     this.refreshPauseTouchButton();
     this.syncTouchControls();
@@ -1627,6 +1674,8 @@ export class CityScene extends Phaser.Scene {
   /** Restart the scene, beginning a brand-new game (the high score persists). */
   private startNewGame(): void {
     this.paused = false;
+    this.skipPersistOnShutdown = true;
+    clearGameState(this.store);
     this.scene.restart();
   }
 
