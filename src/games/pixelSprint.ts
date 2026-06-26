@@ -1,4 +1,5 @@
 import type { GameRuntime } from '../arcade/types';
+import { createGameOverOverlay } from '../arcade/gameOverOverlay';
 
 interface Obstacle {
   x: number;
@@ -43,11 +44,21 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
   let speed = 250;
   let obstacleTimer = 0;
   let coinTimer = 0;
-  let crashedFor = 0;
+  let gameOver = false;
   let paused = false;
   let running = true;
   const obstacles: Obstacle[] = [];
   const coins: Coin[] = [];
+  const gameOverOverlay = createGameOverOverlay(parent, {
+    title: 'Pixel Sprint',
+    storageKey: 'quarterless.arcade.pixelSprint.leaderboard',
+    onRestart: () => {
+      paused = false;
+      syncPauseUi();
+      reset();
+      lastTime = performance.now();
+    },
+  });
 
   const syncPauseUi = (): void => {
     pauseButton.textContent = paused ? 'Resume' : 'Pause';
@@ -71,7 +82,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
   };
 
   const jump = (): void => {
-    if (crashedFor > 0) return;
+    if (gameOver) return;
     if (playerY >= groundY - 56) velocityY = -620;
   };
 
@@ -83,16 +94,22 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
     speed = 250;
     obstacleTimer = 0;
     coinTimer = 0;
-    crashedFor = 0;
+    gameOver = false;
     obstacles.length = 0;
     coins.length = 0;
   };
 
   const keydown = (event: KeyboardEvent): void => {
+    if (event.code === 'Enter' && gameOverOverlay.isVisible()) {
+      event.preventDefault();
+      gameOverOverlay.restart();
+      return;
+    }
     if (event.code === 'Escape') {
       onExit();
       return;
     }
+    if (gameOverOverlay.isVisible()) return;
     if (event.code === 'KeyP' && !event.repeat) {
       event.preventDefault();
       togglePause();
@@ -106,16 +123,12 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
   };
 
   const pointerdown = (): void => {
-    if (paused) return;
+    if (paused || gameOverOverlay.isVisible()) return;
     jump();
   };
 
   const update = (deltaSeconds: number): void => {
-    if (crashedFor > 0) {
-      crashedFor -= deltaSeconds;
-      if (crashedFor <= 0) reset();
-      return;
-    }
+    if (gameOver) return;
 
     distance += speed * deltaSeconds;
     score = Math.max(score, Math.floor(distance / 12));
@@ -154,7 +167,11 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
         player.x + player.width > obstacle.x &&
         player.y < groundY &&
         player.y + player.height > groundY - obstacle.height;
-      if (hit) crashedFor = 1.1;
+      if (hit) {
+        gameOver = true;
+        gameOverOverlay.show(score);
+        break;
+      }
     }
 
     for (const coin of coins) {
@@ -198,7 +215,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
       if (!coin.collected) context.fillRect(coin.x - 7, coin.y - 7, 14, 14);
     }
 
-    context.fillStyle = crashedFor > 0 ? '#ff5d5d' : '#7dfc8a';
+    context.fillStyle = gameOver ? '#ff5d5d' : '#7dfc8a';
     context.fillRect(126, playerY, 36, 54);
     context.fillStyle = '#061018';
     context.fillRect(150, playerY + 12, 8, 8);
@@ -241,6 +258,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
       window.removeEventListener('keydown', keydown);
       pauseButton.removeEventListener('click', togglePause);
       canvas.removeEventListener('pointerdown', pointerdown);
+      gameOverOverlay.destroy();
       pauseButton.remove();
       pauseOverlay.remove();
       canvas.remove();

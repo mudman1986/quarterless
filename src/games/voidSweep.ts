@@ -1,4 +1,5 @@
 import type { GameRuntime } from '../arcade/types';
+import { createGameOverOverlay } from '../arcade/gameOverOverlay';
 
 interface Vec2 {
   x: number;
@@ -49,8 +50,19 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
   let score = 0;
   let shield = 3;
   let invulnerableFor = 0;
+  let gameOver = false;
   let paused = false;
   let running = true;
+  const gameOverOverlay = createGameOverOverlay(parent, {
+    title: 'Void Sweep',
+    storageKey: 'quarterless.arcade.voidSweep.leaderboard',
+    onRestart: () => {
+      paused = false;
+      syncPauseUi();
+      restart();
+      lastTime = performance.now();
+    },
+  });
 
   const syncPauseUi = (): void => {
     pauseButton.textContent = paused ? 'Resume' : 'Pause';
@@ -87,13 +99,20 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
     score = 0;
     shield = 3;
     invulnerableFor = 0;
+    gameOver = false;
   };
 
   const keydown = (event: KeyboardEvent): void => {
+    if (event.code === 'Enter' && gameOverOverlay.isVisible()) {
+      event.preventDefault();
+      gameOverOverlay.restart();
+      return;
+    }
     if (event.code === 'Escape') {
       onExit();
       return;
     }
+    if (gameOverOverlay.isVisible()) return;
     if (event.code === 'KeyP' && !event.repeat) {
       event.preventDefault();
       togglePause();
@@ -107,13 +126,14 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
   };
 
   const pointermove = (event: PointerEvent): void => {
-    if (paused) return;
+    if (paused || gameOverOverlay.isVisible()) return;
     const bounds = canvas.getBoundingClientRect();
     target.x = ((event.clientX - bounds.left) / Math.max(1, bounds.width)) * logicalWidth;
     target.y = ((event.clientY - bounds.top) / Math.max(1, bounds.height)) * logicalHeight;
   };
 
   const update = (deltaSeconds: number): void => {
+    if (gameOver) return;
     const keyboardX =
       (keys.has('ArrowRight') || keys.has('KeyD') ? 1 : 0) -
       (keys.has('ArrowLeft') || keys.has('KeyA') ? 1 : 0);
@@ -183,7 +203,12 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
         rock.radius = 0;
         shield -= 1;
         invulnerableFor = 1.2;
-        if (shield <= 0) restart();
+        if (shield <= 0) {
+          shield = 0;
+          gameOver = true;
+          gameOverOverlay.show(score);
+          return;
+        }
       }
     }
 
@@ -213,7 +238,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
       context.stroke();
     }
 
-    context.fillStyle = invulnerableFor > 0 ? '#ffd166' : '#7dfc8a';
+    context.fillStyle = gameOver ? '#ff5d5d' : invulnerableFor > 0 ? '#ffd166' : '#7dfc8a';
     context.beginPath();
     context.moveTo(player.x, player.y - 30);
     context.lineTo(player.x + 28, player.y + 28);
@@ -263,6 +288,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
       pauseButton.removeEventListener('click', togglePause);
       canvas.removeEventListener('pointermove', pointermove);
       canvas.removeEventListener('pointerdown', pointermove);
+      gameOverOverlay.destroy();
       pauseButton.remove();
       pauseOverlay.remove();
       canvas.remove();
