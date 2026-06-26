@@ -148,6 +148,36 @@ describe('updateMission — route objective', () => {
   });
 });
 
+describe('updateMission — tail objective', () => {
+  const tailMission = () =>
+    createMission({
+      id: 'tail',
+      title: 'Follow',
+      objectives: [{ kind: 'tail', description: 'Tail the target for 12s', seconds: 12 }],
+    });
+
+  it('completes once enough tail progress accumulates after the objective began', () => {
+    const started = base({ tailSeconds: 4 });
+    expect(isComplete(updateMission(tailMission(), ctx({ tailSeconds: 15 }), started))).toBe(false);
+    expect(isComplete(updateMission(tailMission(), ctx({ tailSeconds: 16 }), started))).toBe(true);
+  });
+});
+
+describe('updateMission — capture objective', () => {
+  const captureMission = () =>
+    createMission({
+      id: 'capture',
+      title: 'Box In',
+      objectives: [{ kind: 'capture', description: 'Hold the target for 3s', seconds: 3 }],
+    });
+
+  it('completes once enough capture progress accumulates after the objective began', () => {
+    const started = base({ captureSeconds: 1 });
+    expect(isComplete(updateMission(captureMission(), ctx({ captureSeconds: 3 }), started))).toBe(false);
+    expect(isComplete(updateMission(captureMission(), ctx({ captureSeconds: 4 }), started))).toBe(true);
+  });
+});
+
 describe('updateMission — survive objective', () => {
   const surviveMission = () =>
     createMission({
@@ -259,6 +289,13 @@ describe('objectiveProgress', () => {
         base({ serviceCompleted: { police: 0, ambulance: 0, tow: 2, taxi: 0 } }),
       ),
     ).toEqual({ current: 2, goal: 3 });
+  });
+
+  it('reports tail and capture progress in whole seconds', () => {
+    const tail: Objective = { kind: 'tail', description: 'Tail for 10s', seconds: 10 };
+    const capture: Objective = { kind: 'capture', description: 'Hold for 4s', seconds: 4 };
+    expect(objectiveProgress(tail, ctx({ tailSeconds: 8.7 }), base({ tailSeconds: 2 }))).toEqual({ current: 6, goal: 10 });
+    expect(objectiveProgress(capture, ctx({ captureSeconds: 5.2 }), base({ captureSeconds: 3 }))).toEqual({ current: 2, goal: 4 });
   });
 });
 

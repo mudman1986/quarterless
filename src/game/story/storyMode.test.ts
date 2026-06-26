@@ -47,8 +47,8 @@ describe('compileCampaignTemplate', () => {
 describe('validateStoryMode', () => {
   it('accepts the first implemented story slice', () => {
     expect(validateStoryMode(STORY_MODE_PROTOTYPE)).toEqual([]);
-    expect(countStoryChapters(STORY_MODE_PROTOTYPE)).toBe(1);
-    expect(countStoryMissions(STORY_MODE_PROTOTYPE)).toBe(5);
+    expect(countStoryChapters(STORY_MODE_PROTOTYPE)).toBe(2);
+    expect(countStoryMissions(STORY_MODE_PROTOTYPE)).toBe(10);
   });
 });
 

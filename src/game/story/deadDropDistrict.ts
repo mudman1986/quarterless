@@ -119,21 +119,14 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
         title: 'False Ambulance',
         objectives: [
           {
-            kind: 'route',
-            description: 'Keep up with the fake ambulance through its diversion route',
-            targets: [
-              { x: 2560, y: 1472 },
-              { x: 3008, y: 1472 },
-              { x: 3456, y: 1216 },
-            ],
-            radius: 80,
-            timeLimitSeconds: 80,
+            kind: 'tail',
+            description: 'Tail the fake ambulance without losing the route',
+            seconds: 12,
           },
           {
-            kind: 'reach',
-            description: 'Intercept the ambulance at the chop garage',
-            target: { x: 3648, y: 1024 },
-            radius: 80,
+            kind: 'capture',
+            description: 'Hold the ambulance at the chop garage long enough to force a stop',
+            seconds: 3,
           },
         ],
         reward: 4200,
@@ -175,13 +168,167 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
   ],
 };
 
+export const SPARE_PARTS_GOSPEL: StoryChapter = {
+  id: 'spare-parts-gospel',
+  actId: 'find-the-missing-dispatcher',
+  order: 2,
+  title: 'Spare Parts Gospel',
+  storyRole:
+    'The trail points toward independent tow operators who know where the city hides inconvenient wrecks and bodies.',
+  combinedGoal:
+    'Infiltrate the tow-yard network, trace where sensitive wrecks are being hidden, and earn a route to the dispatcher behind the cleanup crews.',
+  missions: [
+    {
+      id: 'yard-talk',
+      title: 'Yard Talk',
+      hook: 'Rook needs a way into the tow-yard chatter without looking like an outsider.',
+      primaryGoal: 'Steal a tow truck, run one convincing pickup, and bring it back before the yard locks the gate.',
+      secondaryPressure: 'The job should feel legitimate enough that the player learns the yard loop instead of simply stealing and fleeing.',
+      failureState: 'Fail if the truck is destroyed or if Rook abandons the yard run before returning to the lot.',
+      payoff: 'Rook earns an introduction to the tow-yard crew and overhears the first hints about hidden wreck storage.',
+      prototypeRuntime: {
+        id: 'yard-talk',
+        title: 'Yard Talk',
+        objectives: [
+          {
+            kind: 'reach',
+            description: 'Reach the tow yard and steal a truck cleanly',
+            target: { x: 1216, y: 2304 },
+            radius: 80,
+          },
+          {
+            kind: 'service',
+            description: 'Complete 1 tow recovery to earn the crew\'s trust',
+            service: 'tow',
+            count: 1,
+          },
+        ],
+        reward: 2400,
+      },
+    },
+    {
+      id: 'hook-chain',
+      title: 'Hook Chain',
+      hook: 'Two sensitive wrecks are about to vanish into a rival yard.',
+      primaryGoal: 'Reach the wreck sites before the rivals do and secure both recovery points for the yard crew.',
+      secondaryPressure: 'Each pickup should force a different route across the district instead of replaying the same drive twice.',
+      failureState: 'Fail if Rook loses the second recovery point for too long or is taken out while the wreck chain is live.',
+      payoff: 'The recovered shells point toward a stripped sedan carrying hidden route documents.',
+      prototypeRuntime: {
+        id: 'hook-chain',
+        title: 'Hook Chain',
+        objectives: [
+          {
+            kind: 'route',
+            description: 'Reach both wreck sites before the rival yard clears them',
+            targets: [
+              { x: 1792, y: 2176 },
+              { x: 2496, y: 1984 },
+            ],
+            radius: 84,
+            timeLimitSeconds: 70,
+          },
+        ],
+        reward: 2600,
+      },
+    },
+    {
+      id: 'the-empty-shell',
+      title: 'The Empty Shell',
+      hook: 'The stripped sedan is moving under light guard, which usually means the cargo matters more than the car.',
+      primaryGoal: 'Intercept the sedan convoy and stay on it long enough to learn which yard is receiving the documents.',
+      secondaryPressure: 'Rook needs to stay close without starting the fight too early or letting the convoy shake loose.',
+      failureState: 'Fail if the convoy route is lost before the receiving yard is identified.',
+      payoff: 'The sedan leads Rook straight to the scrap plant that is laundering the evidence trail.',
+      prototypeRuntime: {
+        id: 'the-empty-shell',
+        title: 'The Empty Shell',
+        objectives: [
+          {
+            kind: 'tail',
+            description: 'Stay on the stripped sedan convoy long enough to find the receiving yard',
+            seconds: 10,
+          },
+        ],
+        reward: 3000,
+      },
+    },
+    {
+      id: 'crusher-feed',
+      title: 'Crusher Feed',
+      hook: 'Inside the scrap plant, the evidence is about to be flattened into anonymous metal.',
+      primaryGoal: 'Crash the plant, take down the cleaners guarding the crusher lane, and get out before the yard seals.',
+      secondaryPressure: 'The player should feel pressure from both the plant interior and the exit lane instead of a static arena.',
+      failureState: 'Fail if the plant guards hold the crusher lane long enough for the papers to vanish or if Rook is dropped inside the yard.',
+      payoff: 'The plant records expose the dispatcher contact organizing the raids on the independent tow crews.',
+      prototypeRuntime: {
+        id: 'crusher-feed',
+        title: 'Crusher Feed',
+        objectives: [
+          {
+            kind: 'reach',
+            description: 'Reach the scrap plant crusher lane',
+            target: { x: 3136, y: 2112 },
+            radius: 88,
+          },
+          {
+            kind: 'eliminate',
+            description: 'Take down 5 marked plant guards',
+            count: 5,
+            targetsOnly: true,
+          },
+          {
+            kind: 'survive',
+            description: 'Hold the lane for 12 seconds and get clear',
+            seconds: 12,
+          },
+        ],
+        reward: 3600,
+      },
+    },
+    {
+      id: 'towline-oath',
+      title: 'Towline Oath',
+      hook: 'The yard backs Rook for one night, but only if Rook helps them survive the retaliation.',
+      primaryGoal: 'Defend the tow yard through the raid and keep the dispatcher trail alive long enough to pull a name out of the attackers.',
+      secondaryPressure: 'The defense should turn into a counterpush so the chapter ends by forcing the enemy to retreat, not by waiting them out.',
+      failureState: 'Fail if the raid overruns the yard or if Rook cannot hold the line long enough for the crew to trace the dispatcher.',
+      payoff: 'The tow crew gives Rook the hospital-route lead that opens the next chapter.',
+      prototypeRuntime: {
+        id: 'towline-oath',
+        title: 'Towline Oath',
+        objectives: [
+          {
+            kind: 'reach',
+            description: 'Return to the tow yard before the raid breaks through',
+            target: { x: 1216, y: 2304 },
+            radius: 88,
+          },
+          {
+            kind: 'eliminate',
+            description: 'Take down 6 marked raiders',
+            count: 6,
+            targetsOnly: true,
+          },
+          {
+            kind: 'survive',
+            description: 'Hold the yard for 18 seconds while the crew traces the dispatcher',
+            seconds: 18,
+          },
+        ],
+        reward: 4200,
+      },
+    },
+  ],
+};
+
 export const FIND_THE_MISSING_DISPATCHER: StoryAct = {
   id: 'find-the-missing-dispatcher',
   order: 1,
   title: 'Find The Missing Dispatcher',
   summary:
     'Rook follows Nia\'s physical evidence trail through the waterfront and learns the city is being manipulated by a hidden logistics network.',
-  chapters: [DEAD_DROP_DISTRICT],
+  chapters: [DEAD_DROP_DISTRICT, SPARE_PARTS_GOSPEL],
 };
 
 export const STORY_MODE_PROTOTYPE: StoryMode = {

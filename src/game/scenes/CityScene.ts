@@ -33,7 +33,7 @@ import type { Car } from '../../core/vehicle';
 import type { Pedestrian } from '../../core/pedestrianAI';
 import { type TrafficAI, openDirections, tileCoord } from '../../core/trafficAI';
 import type { AmmoPickup } from '../../core/weapon';
-import { vec2, type Vec2 } from '../../core/vector';
+import { distance, vec2, type Vec2 } from '../../core/vector';
 import { uiScreenToWorld, uiCounterScale, uiAnchorOnScreen } from '../../core/hudLayout';
 import { greenAxis } from '../../core/trafficLight';
 import { KeyboardInput } from '../input/KeyboardInput';
@@ -58,6 +58,7 @@ import {
   currentStoryMission,
   loadStoryProgress,
   saveStoryProgress,
+  selectStoryChapter,
   setStoryObjectiveIndex,
   storyProgressSaveKey,
   type StoryProgressSnapshot,
@@ -229,6 +230,19 @@ interface CitySceneStartData {
   storyProgress?: StoryProgressSnapshot | null;
 }
 
+interface StoryScriptState {
+  chapterId: string;
+  missionId: string;
+  tailSeconds: number;
+  captureSeconds: number;
+  tailLostSeconds: number;
+  targetCarIndex: number | null;
+  targetPedIndex: number | null;
+  targetSpawned: boolean;
+  introShown: boolean;
+  recapShown: boolean;
+}
+
 /**
  * Renders the core `World` simulation with Phaser. The scene owns no game
  * rules: it builds the city, feeds keyboard input into `world.tick`, and draws
@@ -295,12 +309,14 @@ export class CityScene extends Phaser.Scene {
   private newGameKey!: Phaser.Input.Keyboard.Key;
   private saveGameKey!: Phaser.Input.Keyboard.Key;
   private loadGameKey!: Phaser.Input.Keyboard.Key;
+  private chapterSelectKey!: Phaser.Input.Keyboard.Key;
   private manualSlotKeys: Phaser.Input.Keyboard.Key[] = [];
   private pauseMenu!: Phaser.GameObjects.Text;
   private pauseResumeButton!: Phaser.GameObjects.Text;
   private pauseSlotButton!: Phaser.GameObjects.Text;
   private pauseSaveButton!: Phaser.GameObjects.Text;
   private pauseLoadButton!: Phaser.GameObjects.Text;
+  private pauseChapterButton!: Phaser.GameObjects.Text;
   private pauseNewGameButton!: Phaser.GameObjects.Text;
   private pauseTouchButton!: Phaser.GameObjects.Text;
 
@@ -353,6 +369,8 @@ export class CityScene extends Phaser.Scene {
   private mode: 'sandbox' | 'story' = 'sandbox';
   private requestedStoryProgress: StoryProgressSnapshot | null = null;
   private storyProgress: StoryProgressSnapshot | null = null;
+  private selectedStoryChapterId: string | null = null;
+  private storyScript: StoryScriptState | null = null;
 
   constructor() {
     super('City');
@@ -408,6 +426,7 @@ export class CityScene extends Phaser.Scene {
     this.prevTouchConfirm = false;
     this.storyPanelRemaining = 0;
     this.pendingStoryRestart = null;
+    this.storyScript = null;
 
     this.city = buildCity(CITY_SPEC);
     createGameTextures(this);
@@ -450,6 +469,7 @@ export class CityScene extends Phaser.Scene {
     this.createMinimap();
     this.layoutHud();
     this.syncMinimap();
+    this.syncStoryScript(0);
     this.showStoryBriefingIfNeeded();
 
     this.input_ = new KeyboardInput(this.input.keyboard!);
@@ -463,6 +483,7 @@ export class CityScene extends Phaser.Scene {
     this.newGameKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.N);
     this.saveGameKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.S);
     this.loadGameKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.L);
+    this.chapterSelectKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.C);
     this.manualSlotKeys = [
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.ONE),
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.TWO),
@@ -525,6 +546,138 @@ export class CityScene extends Phaser.Scene {
       this.storyProgress.current.missionId,
       this.storyProgress.current.objectiveIndex,
     );
+  }
+
+  private syncStoryScript(dt = 0): void {
+    if (this.mode !== 'story' || !this.storyProgress?.current) {
+      this.storyScript = null;
+      this.world.setStoryObjectiveProgress(null);
+      return;
+    }
+
+    const chapter = currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress);
+    const mission = currentStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress);
+    if (!chapter || !mission) {
+      this.storyScript = null;
+      this.world.setStoryObjectiveProgress(null);
+      return;
+    }
+
+    if (!this.storyScript || this.storyScript.chapterId !== chapter.id || this.storyScript.missionId !== mission.id) {
+      this.storyScript = {
+        chapterId: chapter.id,
+        missionId: mission.id,
+        tailSeconds: 0,
+        captureSeconds: 0,
+        tailLostSeconds: 0,
+        targetCarIndex: null,
+        targetPedIndex: null,
+        targetSpawned: false,
+        introShown: false,
+        recapShown: false,
+      };
+    }
+
+    this.runStoryScript(chapter.id, mission.id, dt);
+    this.world.setStoryObjectiveProgress({
+      tailSeconds: this.storyScript.tailSeconds,
+      captureSeconds: this.storyScript.captureSeconds,
+    });
+  }
+
+  private ensureStoryTargetCar(pos: Vec2, kind: VehicleKind = 'ambulance'): number {
+    const script = this.storyScript!;
+    if (script.targetCarIndex !== null && this.world.cars[script.targetCarIndex]) {
+      const car = this.world.cars[script.targetCarIndex]!;
+      this.world.cars[script.targetCarIndex] = { ...car, pos };
+      return script.targetCarIndex;
+    }
+    const index = this.world.cars.length;
+    this.world.cars.push({ pos, heading: 0, speed: 0, radius: vehicleBodySpecForKind(kind).radius });
+    (this.world as unknown as { carDrivers: (TrafficAI | null)[] }).carDrivers.push({ dir: vec2(1, 0) });
+    (this.world as unknown as { carKinds: VehicleKind[] }).carKinds.push(kind);
+    (this.world as unknown as { taxiStates: (null)[] }).taxiStates.push(null);
+    (this.world as unknown as { carRespawnsAtTow: boolean[] }).carRespawnsAtTow.push(false);
+    (this.world as unknown as { carHealth: number[] }).carHealth.push(100);
+    (this.world as unknown as { carBurnTimers: number[] }).carBurnTimers.push(0);
+    (this.world as unknown as { carBurnByPlayer: boolean[] }).carBurnByPlayer.push(false);
+    (this.world as unknown as { stolenServiceVehicles: boolean[] }).stolenServiceVehicles.push(false);
+    (this.world as unknown as { towDispatchCooldowns: number[] }).towDispatchCooldowns.push(0);
+    (this.world as unknown as { wreckedCars: boolean[] }).wreckedCars.push(false);
+    (this.world as unknown as { towedCars: boolean[] }).towedCars.push(false);
+    script.targetCarIndex = index;
+    return index;
+  }
+
+  private runStoryScript(chapterId: string, missionId: string, dt: number): void {
+    const script = this.storyScript!;
+    if (chapterId === 'dead-drop-district' && missionId === 'false-ambulance') {
+      const route = [vec2(2560, 1472), vec2(3008, 1472), vec2(3456, 1216), vec2(3648, 1024)];
+      const carIndex = this.ensureStoryTargetCar(route[Math.min(route.length - 1, Math.floor(script.tailSeconds / 3))] ?? route[0], 'ambulance');
+      const phase = Math.min(route.length - 1, Math.floor(script.tailSeconds / 3));
+      const target = route[phase] ?? route[route.length - 1]!;
+      const car = this.world.cars[carIndex]!;
+      const dx = target.x - car.pos.x;
+      const dy = target.y - car.pos.y;
+      const dist = Math.hypot(dx, dy);
+      const heading = dist > 0 ? Math.atan2(dy, dx) : car.heading;
+      const step = Math.min(dist, dt * 120);
+      this.world.cars[carIndex] = {
+        ...car,
+        heading,
+        speed: step > 0 ? 120 : 0,
+        pos: dist > 0 ? vec2(car.pos.x + (dx / dist) * step, car.pos.y + (dy / dist) * step) : car.pos,
+      };
+
+      const playerDist = distance(this.world.focus, this.world.cars[carIndex]!.pos);
+      if (playerDist <= 320) {
+        script.tailSeconds += dt;
+        script.tailLostSeconds = 0;
+      } else {
+        script.tailLostSeconds += dt;
+      }
+
+      if (script.tailLostSeconds > 2.5) script.tailSeconds = Math.max(0, script.tailSeconds - dt * 2);
+      if (script.tailSeconds >= 12) {
+        const captureDist = distance(this.world.focus, route[route.length - 1]!);
+        if (captureDist <= 120 && Math.abs(this.world.drivingCar?.speed ?? 0) < 25) script.captureSeconds += dt;
+      } else {
+        script.captureSeconds = 0;
+      }
+      return;
+    }
+
+    if (chapterId === 'spare-parts-gospel' && missionId === 'the-empty-shell') {
+      const route = [vec2(1984, 2176), vec2(2496, 2112), vec2(3008, 2112)];
+      const carIndex = this.ensureStoryTargetCar(route[Math.min(route.length - 1, Math.floor(script.tailSeconds / 3.4))] ?? route[0], 'sedan');
+      const phase = Math.min(route.length - 1, Math.floor(script.tailSeconds / 3.4));
+      const target = route[phase] ?? route[route.length - 1]!;
+      const car = this.world.cars[carIndex]!;
+      const dx = target.x - car.pos.x;
+      const dy = target.y - car.pos.y;
+      const dist = Math.hypot(dx, dy);
+      const heading = dist > 0 ? Math.atan2(dy, dx) : car.heading;
+      const step = Math.min(dist, dt * 110);
+      this.world.cars[carIndex] = {
+        ...car,
+        heading,
+        speed: step > 0 ? 110 : 0,
+        pos: dist > 0 ? vec2(car.pos.x + (dx / dist) * step, car.pos.y + (dy / dist) * step) : car.pos,
+      };
+      const playerDist = distance(this.world.focus, this.world.cars[carIndex]!.pos);
+      if (playerDist <= 320) {
+        script.tailSeconds += dt;
+        script.tailLostSeconds = 0;
+      } else {
+        script.tailLostSeconds += dt;
+      }
+      if (script.tailLostSeconds > 2.5) script.tailSeconds = Math.max(0, script.tailSeconds - dt * 2);
+      script.captureSeconds = 0;
+      return;
+    }
+
+    script.tailSeconds = 0;
+    script.captureSeconds = 0;
   }
 
   private persistGameState(key = GAME_STATE_KEY): void {
@@ -1384,8 +1537,9 @@ export class CityScene extends Phaser.Scene {
     place(this.pauseSlotButton, width / 2, height / 2 + 4);
     place(this.pauseSaveButton, width / 2, height / 2 + 50);
     place(this.pauseLoadButton, width / 2, height / 2 + 96);
-    place(this.pauseNewGameButton, width / 2, height / 2 + 142);
-    place(this.pauseTouchButton, width / 2, height / 2 + 214);
+    place(this.pauseChapterButton, width / 2, height / 2 + 142);
+    place(this.pauseNewGameButton, width / 2, height / 2 + 188);
+    place(this.pauseTouchButton, width / 2, height / 2 + 260);
 
     if (this.minimapBg) {
       // Clamp the top-right anchor so the whole map stays on screen even on a
@@ -1485,6 +1639,7 @@ export class CityScene extends Phaser.Scene {
     this.pauseSlotButton = this.createPauseActionButton('', () => this.cycleManualSlot());
     this.pauseSaveButton = this.createPauseActionButton('Save Game  [S]', () => this.saveManualGame());
     this.pauseLoadButton = this.createPauseActionButton('Load Saved Game  [L]', () => this.loadManualGame());
+    this.pauseChapterButton = this.createPauseActionButton('', () => this.loadSelectedStoryChapter());
     this.pauseNewGameButton = this.createPauseActionButton('New Game  [N]', () => this.startNewGame());
 
     this.pauseTouchButton = this.add
@@ -1650,6 +1805,7 @@ export class CityScene extends Phaser.Scene {
       });
       if (Phaser.Input.Keyboard.JustDown(this.saveGameKey)) this.saveManualGame();
       if (Phaser.Input.Keyboard.JustDown(this.loadGameKey)) this.loadManualGame();
+      if (Phaser.Input.Keyboard.JustDown(this.chapterSelectKey)) this.cycleStoryChapterSelection();
       this.prevTouchConfirm = !!touchSnapshot?.confirmPressed;
       return;
     }
@@ -1674,6 +1830,8 @@ export class CityScene extends Phaser.Scene {
     const touch = this.touchEnabled && touchSnapshot ? touchSnapshot.controls : NO_CONTROLS;
     const controls = mergeControls(keyboard, touch);
     const dt = deltaMs / 1000;
+
+    this.syncStoryScript(dt);
 
     this.accumulator += dt;
     let steps = 0;
@@ -1777,6 +1935,7 @@ export class CityScene extends Phaser.Scene {
     this.pauseSlotButton.setVisible(visible);
     this.pauseSaveButton.setVisible(visible);
     this.pauseLoadButton.setVisible(visible);
+    this.pauseChapterButton.setVisible(visible && this.mode === 'story');
     this.pauseNewGameButton.setVisible(visible);
   }
 
@@ -1800,6 +1959,35 @@ export class CityScene extends Phaser.Scene {
     this.refreshPauseMenu();
   }
 
+  private unlockedStoryChapters() {
+    if (!this.storyProgress) return [];
+    return STORY_MODE_PROTOTYPE.acts
+      .flatMap((act) => act.chapters)
+      .filter((chapter) => this.storyProgress?.unlockedChapterIds.includes(chapter.id));
+  }
+
+  private cycleStoryChapterSelection(): void {
+    if (this.mode !== 'story') return;
+    const chapters = this.unlockedStoryChapters();
+    if (chapters.length === 0) return;
+    const currentId = this.selectedStoryChapterId ?? this.storyProgress?.current?.chapterId ?? chapters[0]?.id ?? null;
+    const index = chapters.findIndex((chapter) => chapter.id === currentId);
+    const next = chapters[(index + 1 + chapters.length) % chapters.length] ?? chapters[0];
+    this.selectedStoryChapterId = next?.id ?? null;
+    this.refreshPauseMenu();
+  }
+
+  private loadSelectedStoryChapter(): void {
+    if (this.mode !== 'story' || !this.storyProgress) return;
+    const chapterId = this.selectedStoryChapterId ?? this.storyProgress.current?.chapterId;
+    if (!chapterId) return;
+    const progress = selectStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress, chapterId);
+    this.paused = false;
+    this.skipPersistOnShutdown = true;
+    clearGameState(this.store);
+    this.scene.restart({ skipResume: true, mode: 'story', storyProgress: progress });
+  }
+
   private refreshPauseMenu(): void {
     if (!this.pauseMenu) return;
     const hasManualSave = this.hasManualSave();
@@ -1810,6 +1998,7 @@ export class CityScene extends Phaser.Scene {
         '',
         'Resume, save this run, load a chosen slot, or start over.',
         `Press ${slotHelp} or tap Slot to choose a save slot.`,
+        ...(this.mode === 'story' ? ['Press C to cycle unlocked story chapters.'] : []),
       ].join('\n'),
     );
     this.pauseSlotButton.setText(
@@ -1823,6 +2012,19 @@ export class CityScene extends Phaser.Scene {
           : `Load Slot ${this.selectedManualSlot}  [L]\nEmpty slot`,
       )
       .setAlpha(hasManualSave ? 1 : 0.6);
+    if (this.mode === 'story') {
+      const chapters = this.unlockedStoryChapters();
+      const chapterId = this.selectedStoryChapterId ?? this.storyProgress?.current?.chapterId ?? chapters[0]?.id ?? null;
+      this.selectedStoryChapterId = chapterId;
+      const selected = chapters.find((chapter) => chapter.id === chapterId) ?? chapters[0] ?? null;
+      this.pauseChapterButton
+        .setText(
+          selected
+            ? `Replay Chapter  [Tap]\n${selected.title}\nPress C to cycle`
+            : 'Replay Chapter  [Tap]\nNo unlocked chapters',
+        )
+        .setAlpha(selected ? 1 : 0.6);
+    }
   }
 
   private saveManualGame(): void {
@@ -1887,20 +2089,31 @@ export class CityScene extends Phaser.Scene {
         this.persistGameState();
         if (nextMission?.prototypeRuntime && nextChapter) {
           this.showStoryPanel(
-            `CHAPTER COMPLETE\n${previousStoryChapter?.title ?? 'Story Chapter'}\n\nNext: ${nextChapter.title}`,
+            `CHAPTER COMPLETE\n${previousStoryChapter?.title ?? 'Story Chapter'}\n\n${previousStoryChapter?.combinedGoal ?? ''}\n\nNext: ${nextChapter.title}`,
             2.4,
           );
           this.pendingStoryRestart = this.storyProgress;
           return;
         }
-        this.showStoryPanel(this.storyProgress?.current ? 'STORY PROTOTYPE COMPLETE' : 'STORY COMPLETE', 2.8);
+        this.showStoryPanel(
+          this.storyProgress?.current
+            ? 'STORY PROTOTYPE COMPLETE\n\nThe next authored chapter has not been wired into runtime play yet.'
+            : 'STORY COMPLETE\n\nRook and Nia have broken the current live slice of the Switchboard.',
+          3.2,
+        );
       } else {
         this.showBanner('ALL MISSIONS COMPLETE!');
       }
     } else if (missionId !== this.prevMissionId) {
       // A new mission begins — the first one, or after finishing the previous.
       if (this.prevMissionId !== null) this.sfx.fanfare();
-      if (w.mission) this.showBanner(`NEW MISSION\n${w.mission.title}\n${objective}`);
+      if (w.mission) {
+        if (this.mode === 'story') {
+          if (this.prevMissionId !== null) this.showMissionTransitionPanel(this.prevMissionId);
+          else this.showMissionBriefingPanel();
+        }
+        this.showBanner(`NEW MISSION\n${w.mission.title}\n${objective}`);
+      }
     } else if (objective !== '' && objective !== this.prevObjective) {
       this.showBanner(objective); // next objective within the same mission
     }
@@ -1959,6 +2172,33 @@ export class CityScene extends Phaser.Scene {
     this.storyPanelRemaining = seconds;
   }
 
+  private showMissionBriefingPanel(): void {
+    if (this.mode !== 'story' || !this.storyProgress) return;
+    const chapter = currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress);
+    const mission = currentStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress);
+    if (!chapter || !mission) return;
+    this.showStoryPanel(
+      `MISSION BRIEF\n${mission.title}\n\n${mission.hook}\n\nGoal: ${mission.primaryGoal}`,
+      4.2,
+    );
+  }
+
+  private showMissionTransitionPanel(previousMissionId: string): void {
+    if (this.mode !== 'story' || !this.storyProgress) return;
+    const chapter = currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress);
+    const mission = currentStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress);
+    if (!chapter || !mission) return;
+    const previousMission = chapter.missions.find((entry) => entry.id === previousMissionId);
+    if (!previousMission) {
+      this.showMissionBriefingPanel();
+      return;
+    }
+    this.showStoryPanel(
+      `MISSION COMPLETE\n${previousMission.title}\n\n${previousMission.payoff}\n\nNext: ${mission.title}\n${mission.primaryGoal}`,
+      4.8,
+    );
+  }
+
   private showStoryBriefingIfNeeded(): void {
     if (this.mode !== 'story' || !this.storyProgress?.current) return;
     const chapter = currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress);
@@ -1967,7 +2207,7 @@ export class CityScene extends Phaser.Scene {
     if (this.storyProgress.current.objectiveIndex !== 0) return;
     if (mission.id !== chapter.missions[0]?.id) return;
     this.showStoryPanel(
-      `CHAPTER 1\n${chapter.title}\n\n${chapter.storyRole}\n\n${mission.hook}`,
+      `CHAPTER ${chapter.order}\n${chapter.title}\n\n${chapter.storyRole}\n\nGoal: ${chapter.combinedGoal}`,
       4.8,
     );
   }

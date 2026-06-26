@@ -395,21 +395,21 @@ Implemented now:
 
 - Typed story authoring exists in `src/game/story/storyMode.ts`.
 - Ordered story progression and persistence exist in `src/game/story/storyProgress.ts`.
-- Chapter 1, Dead Drop District, is authored in code in `src/game/story/deadDropDistrict.ts`.
+- Chapter 1, Dead Drop District, and Chapter 2, Spare Parts Gospel, are authored in code in `src/game/story/deadDropDistrict.ts`.
 - The scene can boot into story mode and persist story progress alongside the normal world save.
 - Story mode can be entered from the arcade landing page and still supports `?story=1` or `?mode=story` in the browser URL.
-- A new `route` objective exists in `src/core/mission.ts` to support sequential checkpoint or timed multi-stop style missions.
-- Dead Drop District currently compiles into a playable prototype runtime campaign.
-- Focused Playwright coverage exists for story-mode entry and story save/resume after refresh.
-- Story mode now shows a basic chapter briefing panel on launch and a chapter-complete panel before advancing.
-- Focused Playwright coverage now also covers story manual save-slot persistence and the current prototype-complete panel.
+- New `route`, `tail`, and `capture` objectives exist in `src/core/mission.ts`.
+- Dead Drop District and Spare Parts Gospel now compile into a playable two-chapter prototype runtime campaign.
+- Story mode now shows authored chapter briefing panels, mission transition recap/briefing panels, and chapter-complete or story-complete panels.
+- Story mode now supports replaying unlocked chapters from the pause menu.
+- Focused Playwright coverage now covers story-mode entry, refresh-resume, manual save-slot persistence, authored mission transition panels, chapter restart into the next chapter, pause-menu chapter replay, and the current story-complete panel.
 
 Prototype limitations right now:
 
-- Chapter 1 missions are playable approximations, not fully scripted bespoke set pieces.
+- Chapter 1 and Chapter 2 missions are playable approximations, not fully scripted bespoke set pieces.
 - Tail, capture, escort, stealth, and district-state behavior are still represented by simpler linear objective chains where needed.
-- There is not yet a story-mode entry menu, chapter-select screen, or chapter briefing flow.
-- There is not yet browser coverage for story-mode start, chapter completion, save, and resume.
+- There is not yet a dedicated front-end story menu or chapter-select screen; replay currently lives in the pause menu.
+- There is not yet a real mission-actor scripting layer for named convoys, fake-service vehicles, or custom failure logic.
 
 ## Grounded Implementation Plan
 
@@ -443,18 +443,18 @@ Output:
 
 Goal: support the mission types required by the story above.
 
-Status: Started. The `route` objective now exists as the first story-specific expansion.
+Status: Started. `route`, `tail`, and `capture` now exist as the first story-specific mission expansions.
 
 New objective families likely needed:
 
 1. Escort objective: keep an NPC or vehicle alive until destination.
-2. Tail objective: stay within a distance band without being too close for too long.
+2. Tail objective: stay within a distance band without being too close for too long. Implemented in prototype form through scene-fed scripted progress.
 3. Deliver objective: move a specific vehicle, item, or passenger to a target with optional damage limits.
 4. Vehicle-condition objective: finish with health above a threshold.
 5. Timed multi-stop objective: complete several targets before deadlines or before route closures. Prototype support now exists through `route`, but it still behaves as a simple sequential checkpoint chain rather than a full reactive mission script.
 6. Defend objective: keep a location, route, or object secure for a duration.
 7. Sabotage objective: destroy or interact with marked world entities in a required order.
-8. Capture objective: reach and stop a moving target without killing them.
+8. Capture objective: reach and stop a moving target without killing them. Implemented in prototype form through scene-fed scripted progress.
 9. Stealth or suspicion objective: keep alert below a threshold while disguised.
 10. Choice objective: branch to one of two sub-objectives and record the result.
 
@@ -492,7 +492,7 @@ Tasks:
 
 1. Store story progress separately from a one-run sandbox snapshot. Implemented.
 2. Save current act, chapter, mission, objective, unlocks, and branching outcomes. Implemented in prototype form.
-3. Support replaying completed chapters without erasing canonical progress.
+3. Support replaying completed chapters without erasing canonical progress. Implemented in prototype form through the pause-menu chapter replay flow.
 4. Add migration-friendly save versioning because story data will evolve during development.
 5. Add a chapter-select or campaign-select screen after the player has unlocked progress.
 
@@ -505,13 +505,13 @@ Likely files:
 
 Goal: make the story readable and rewarding.
 
-Status: Mostly not implemented. The runtime still relies on the existing mission banner and HUD text.
+Status: Started. The runtime now has chapter briefing, mission transition, and chapter-complete or story-complete panels, but it still lacks a dedicated story menu and polished post-mission summary screens.
 
 Tasks:
 
-1. Add chapter briefing screens.
+1. Add chapter briefing screens. Prototype implemented.
 2. Add mid-mission call text or subtitle popups.
-3. Add mission complete, chapter complete, and act complete overlays.
+3. Add mission complete, chapter complete, and act complete overlays. Prototype mission and chapter overlays implemented.
 4. Add a story menu showing chapter map, unlocked chapters, and recap text.
 5. Add post-mission summary cards showing score, collateral, time, and unlocks.
 
@@ -548,7 +548,7 @@ Tasks:
 1. Unit test every new objective kind in the same style as current mission tests. Started.
 2. Add campaign progression tests for chapter unlock, replay, branching, and save restore. Started.
 3. Add world tests for mission actor spawning, escort failure, convoy routing, and district state changes.
-4. Add Playwright smoke coverage for briefing flow, mission start, mission completion, chapter completion, and save-load resume.
+4. Add Playwright smoke coverage for briefing flow, mission start, mission completion, chapter completion, and save-load resume. Started and expanded through the focused story-mode browser suite.
 5. Add fixture-based validation tests that load every authored campaign and verify all references resolve.
 
 ### Suggested Delivery Order
@@ -577,18 +577,19 @@ What is already true in code:
 - All 5 Dead Drop District missions now have prototype runtime specs.
 - The chapter can compile into a playable sequential campaign.
 - The chapter can save and resume story progress.
+- The prototype can roll forward into Chapter 2 and replay unlocked chapters from the pause menu.
 
 What is still missing before it counts as a full slice:
 
 - Real scripted encounter control for cleanup crews and the fake ambulance.
-- Rich chapter-specific presentation such as authored briefings, callouts, recap screens, and post-mission summaries.
-- Broader browser-level story-mode regression coverage beyond the current smoke path and save/panel checks.
+- Rich chapter-specific presentation such as callouts, recap screens, and post-mission summary cards beyond the current prototype panels.
+- Broader world-level and multi-chapter regression coverage beyond the current focused story browser suite.
 
 ## What To Do Next
 
 Recommended next production step:
 
-1. Replace the Dead Drop District prototype approximations with true scripted encounter, tail, and capture behavior.
-2. Expand Playwright coverage from smoke-level boot, refresh-resume, save-slot persistence, and prototype-complete panels into full chapter progression and chapter-completion restart coverage.
-3. Expand the new story panels into authored briefings, chapter-complete recaps, and post-mission summary presentation.
-4. Add a chapter-select or story menu flow for replaying unlocked content without relying on internal scene restarts.
+1. Add a real mission-actor scripting layer so fake ambulances, convoys, escorts, and raid encounters are world-driven rather than scene approximations.
+2. Add a dedicated story menu and chapter-select screen so replay is not hidden inside the pause menu.
+3. Expand the current prototype panels into richer post-mission summaries, chapter recaps, and in-mission callout presentation.
+4. Continue authoring Chapter 3 and beyond on top of the new mission-actor layer, while broadening browser and world-level regression coverage for full multi-chapter progression.
