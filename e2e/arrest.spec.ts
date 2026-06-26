@@ -194,9 +194,14 @@ async function traceInCarBustDelay(page: Page): Promise<void> {
     const sample = () => {
       const w = win.__game.scene.getScene('City').world;
       const footCop = w.police.find((cop) => cop.kind === 'foot' && !cop.returningHome);
+      const contactRadius = !footCop
+        ? 0
+        : w.isDriving && w.drivingCarIndex !== null
+          ? footCop.radius + w.cars[w.drivingCarIndex].radius
+          : footCop.radius;
       const inContact =
         !!footCop &&
-        Math.hypot(footCop.pos.x - w.focus.x, footCop.pos.y - w.focus.y) <= footCop.radius;
+        Math.hypot(footCop.pos.x - w.focus.x, footCop.pos.y - w.focus.y) <= contactRadius;
       if (w.status === 'playing') {
         win.__arrestTrace!.maxStoppedWhilePlaying = Math.max(
           win.__arrestTrace!.maxStoppedWhilePlaying,
