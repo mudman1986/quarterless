@@ -12,6 +12,7 @@ import {
   selectStoryChapter,
   setStoryObjectiveIndex,
   STORY_PROGRESS_KEY,
+  storyProgressSaveKey,
   storyChapterById,
   type StoryProgressSnapshot,
 } from './storyProgress';
@@ -142,6 +143,11 @@ describe('story progress helpers', () => {
 });
 
 describe('story progress persistence', () => {
+  it('derives a parallel story-progress key for manual save slots', () => {
+    expect(storyProgressSaveKey()).toBe(STORY_PROGRESS_KEY);
+    expect(storyProgressSaveKey('sindicate.manualSave.2')).toBe('sindicate.manualSave.2.storyProgress');
+  });
+
   it('round-trips a saved snapshot', () => {
     const store = fakeStore();
     const progress = recordBranchOutcome(

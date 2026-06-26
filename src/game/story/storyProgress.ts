@@ -1,8 +1,13 @@
+import { GAME_STATE_KEY } from '../../core/gameState';
 import type { KeyValueStore } from '../../core/highScore';
 import type { StoryChapter, StoryMissionPlan, StoryMode } from './storyMode';
 
 export const STORY_PROGRESS_KEY = 'sindicate.storyProgress';
 export const STORY_PROGRESS_VERSION = 1;
+
+export function storyProgressSaveKey(gameSaveKey = GAME_STATE_KEY): string {
+  return gameSaveKey === GAME_STATE_KEY ? STORY_PROGRESS_KEY : `${gameSaveKey}.storyProgress`;
+}
 
 export interface StoryCursor {
   actId: string;

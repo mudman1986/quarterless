@@ -5,6 +5,7 @@ import { CITY_SPEC } from '../citySpec';
 import { DEAD_DROP_DISTRICT, STORY_MODE_PROTOTYPE } from './deadDropDistrict';
 import { buildSandboxCampaigns } from './sandboxCampaigns';
 import {
+  compileStoryChapterRuntimeCampaign,
   chapterMissingSystems,
   compileCampaignTemplate,
   countStoryChapters,
@@ -53,10 +54,21 @@ describe('validateStoryMode', () => {
 
 describe('chapter runtime readiness', () => {
   it('tracks which new systems still block the chapter from full runtime play', () => {
-    expect(isChapterRuntimeReady(DEAD_DROP_DISTRICT)).toBe(false);
+    expect(isChapterRuntimeReady(DEAD_DROP_DISTRICT)).toBe(true);
     expect(chapterMissingSystems(DEAD_DROP_DISTRICT)).toEqual(
       expect.arrayContaining(['scriptedEncounter', 'timedMultiStop', 'districtState', 'sabotage', 'tail', 'capture']),
     );
+  });
+});
+
+describe('compileStoryChapterRuntimeCampaign', () => {
+  it('builds a playable runtime campaign from the current chapter and can resume mid-chapter', () => {
+    const missions = compileStoryChapterRuntimeCampaign(DEAD_DROP_DISTRICT, 'burned-locker', 1);
+
+    expect(missions).toHaveLength(4);
+    expect(missions?.[0]?.id).toBe('burned-locker');
+    expect(missions?.[0]?.currentIndex).toBe(1);
+    expect(missions?.[1]?.id).toBe('wreck-before-dawn');
   });
 });
 

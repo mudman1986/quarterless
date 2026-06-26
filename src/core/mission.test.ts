@@ -112,6 +112,42 @@ describe('updateMission — collect objective', () => {
   });
 });
 
+describe('updateMission — route objective', () => {
+  const routeMission = () =>
+    createMission({
+      id: 'route',
+      title: 'Locker Run',
+      objectives: [
+        {
+          kind: 'route',
+          description: 'Hit 3 lockers in sequence',
+          targets: [vec2(10, 0), vec2(20, 0), vec2(30, 0)],
+          radius: 5,
+          timeLimitSeconds: 60,
+        },
+      ],
+    });
+
+  it('tracks sequential checkpoint progress before completing', () => {
+    let m = updateMission(routeMission(), ctx({ playerPos: vec2(10, 0) }), base());
+    expect(isComplete(m)).toBe(false);
+    expect(m.objectiveState).toEqual({ kind: 'route', completed: 1 });
+
+    m = updateMission(m, ctx({ playerPos: vec2(30, 0) }), base());
+    expect(m.objectiveState).toEqual({ kind: 'route', completed: 1 });
+
+    m = updateMission(m, ctx({ playerPos: vec2(20, 0) }), base());
+    expect(m.objectiveState).toEqual({ kind: 'route', completed: 2 });
+    m = updateMission(m, ctx({ playerPos: vec2(30, 0) }), base());
+    expect(isComplete(m)).toBe(true);
+  });
+
+  it('stops advancing after the time limit expires', () => {
+    const m = updateMission(routeMission(), ctx({ playerPos: vec2(10, 0), elapsed: 61 }), base());
+    expect(m).toEqual(routeMission());
+  });
+});
+
 describe('updateMission — survive objective', () => {
   const surviveMission = () =>
     createMission({
@@ -195,6 +231,16 @@ describe('objectiveProgress', () => {
   it('clamps progress to the goal and never goes negative', () => {
     const obj: Objective = { kind: 'collect', description: 'Grab 3', count: 3 };
     expect(objectiveProgress(obj, ctx({ collected: 99 }), base())).toEqual({ current: 3, goal: 3 });
+  });
+
+  it('reports sequential route progress from mission state', () => {
+    const route = createMission({
+      id: 'route',
+      title: 'Route',
+      objectives: [{ kind: 'route', description: 'Visit 2 stops', targets: [vec2(1, 0), vec2(2, 0)], radius: 5 }],
+    });
+    const started = updateMission(route, ctx({ playerPos: vec2(1, 0) }), base());
+    expect(objectiveProgress(started.objectives[0]!, ctx(), base(), started)).toEqual({ current: 1, goal: 2 });
   });
 
   it('reports survive progress in whole seconds and wanted progress in stars', () => {

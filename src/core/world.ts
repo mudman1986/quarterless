@@ -960,7 +960,7 @@ export class World {
   get missionProgress(): ObjectiveProgress | null {
     const obj = this.missionObjective;
     if (!obj) return null;
-    return objectiveProgress(obj, this.missionCtx(), this.objectiveBaseline);
+    return objectiveProgress(obj, this.missionCtx(), this.objectiveBaseline, this.mission);
   }
 
   /** The player's active taxi fare, if they are currently driving a cab. */

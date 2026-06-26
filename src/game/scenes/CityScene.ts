@@ -28,6 +28,7 @@ import {
   saveHighScore,
   type KeyValueStore,
 } from '../../core/highScore';
+import { createMission, type Mission } from '../../core/mission';
 import type { Car } from '../../core/vehicle';
 import type { Pedestrian } from '../../core/pedestrianAI';
 import { type TrafficAI, openDirections, tileCoord } from '../../core/trafficAI';
@@ -48,6 +49,20 @@ import { Sound } from '../audio/Sound';
 import { createGameTextures, TEX } from '../art/textures';
 import { NO_CONTROLS } from '../../core/types';
 import { buildSandboxCampaigns } from '../story/sandboxCampaigns';
+import { STORY_MODE_PROTOTYPE } from '../story/deadDropDistrict';
+import {
+  clearStoryProgress,
+  completeStoryMission,
+  createStoryProgress,
+  currentStoryChapter,
+  currentStoryMission,
+  loadStoryProgress,
+  saveStoryProgress,
+  setStoryObjectiveIndex,
+  storyProgressSaveKey,
+  type StoryProgressSnapshot,
+} from '../story/storyProgress';
+import { compileStoryChapterRuntimeCampaign } from '../story/storyMode';
 
 const COLORS = {
   road: 0x2b2b30,
@@ -210,6 +225,8 @@ const MOVING_TRAFFIC_MIX: readonly VehicleKind[] = [
 interface CitySceneStartData {
   loadSaveKey?: string | null;
   skipResume?: boolean;
+  mode?: 'sandbox' | 'story';
+  storyProgress?: StoryProgressSnapshot | null;
 }
 
 /**
@@ -329,6 +346,10 @@ export class CityScene extends Phaser.Scene {
   /** Night-time city lighting: intersection glows + a player aura. */
   private nightLights!: Phaser.GameObjects.Container;
   private nightAura!: Phaser.GameObjects.Image;
+  private requestedMode: 'sandbox' | 'story' = 'sandbox';
+  private mode: 'sandbox' | 'story' = 'sandbox';
+  private requestedStoryProgress: StoryProgressSnapshot | null = null;
+  private storyProgress: StoryProgressSnapshot | null = null;
 
   constructor() {
     super('City');
@@ -337,6 +358,14 @@ export class CityScene extends Phaser.Scene {
   init(data: CitySceneStartData = {}): void {
     this.requestedLoadKey = data.loadSaveKey ?? GAME_STATE_KEY;
     this.skipResumeOnCreate = !!data.skipResume;
+    this.requestedMode = data.mode ?? this.queryRequestsStoryMode();
+    this.requestedStoryProgress = data.storyProgress ?? null;
+  }
+
+  private queryRequestsStoryMode(): 'sandbox' | 'story' {
+    if (typeof window === 'undefined') return 'sandbox';
+    const params = new URLSearchParams(window.location.search);
+    return params.get('story') === '1' || params.get('mode') === 'story' ? 'story' : 'sandbox';
   }
 
   create(): void {
@@ -382,6 +411,12 @@ export class CityScene extends Phaser.Scene {
 
     const loadKey = this.skipResumeOnCreate ? null : this.requestedLoadKey;
     const savedState = loadKey ? loadGameState(this.store, loadKey) : null;
+    const savedStoryProgress = loadKey ? loadStoryProgress(this.store, storyProgressSaveKey(loadKey)) : null;
+    this.mode = this.requestedMode === 'story' || savedStoryProgress || this.requestedStoryProgress ? 'story' : 'sandbox';
+    this.storyProgress =
+      this.mode === 'story'
+        ? this.requestedStoryProgress ?? savedStoryProgress ?? createStoryProgress(STORY_MODE_PROTOTYPE)
+        : null;
     this.savedBest = Math.max(loadHighScore(this.store), savedState?.world.score.best ?? 0);
     if (this.savedBest > 0) this.savedBest = saveHighScore(this.store, this.savedBest);
     const worldOptions = this.buildWorldOptions(spawn, this.savedBest);
@@ -399,6 +434,7 @@ export class CityScene extends Phaser.Scene {
     this.prevDrivingCarIndex = this.world.drivingCarIndex;
     this.requestedLoadKey = GAME_STATE_KEY;
     this.skipResumeOnCreate = false;
+    this.requestedStoryProgress = null;
 
     this.drawCity();
     this.createEntitySprites();
@@ -454,6 +490,7 @@ export class CityScene extends Phaser.Scene {
 
   private buildWorldOptions(spawn: Vec2, bestScore: number): WorldOptions {
     const traffic = this.spawnTraffic();
+    const storyMissions = this.buildStoryCampaign();
     return {
       player: { pos: spawn, angle: 0, radius: PLAYER_SIZE / 2 },
       cars: traffic.cars,
@@ -469,8 +506,19 @@ export class CityScene extends Phaser.Scene {
       water: this.city.water,
       sidewalks: this.city.sidewalks,
       bestScore,
-      campaigns: this.buildCampaigns(),
+      ...(storyMissions ? { missions: storyMissions } : { campaigns: this.buildCampaigns() }),
     };
+  }
+
+  private buildStoryCampaign(): Mission[] | null {
+    if (this.mode !== 'story' || !this.storyProgress?.current) return null;
+    const chapter = currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress);
+    if (!chapter) return null;
+    return compileStoryChapterRuntimeCampaign(
+      chapter,
+      this.storyProgress.current.missionId,
+      this.storyProgress.current.objectiveIndex,
+    );
   }
 
   private persistGameState(key = GAME_STATE_KEY): void {
@@ -479,6 +527,20 @@ export class CityScene extends Phaser.Scene {
       world: this.world.snapshot(),
       timeOfDay: this.timeOfDay,
     }, key);
+    if (this.mode === 'story' && this.storyProgress) {
+      saveStoryProgress(
+        this.store,
+        {
+          storyId: this.storyProgress.storyId,
+          current: this.storyProgress.current,
+          unlockedChapterIds: this.storyProgress.unlockedChapterIds,
+          completedChapterIds: this.storyProgress.completedChapterIds,
+          completedMissionIds: this.storyProgress.completedMissionIds,
+          branchOutcomes: this.storyProgress.branchOutcomes,
+        },
+        storyProgressSaveKey(key),
+      );
+    }
     if (key === GAME_STATE_KEY) this.saveAccumulator = 0;
   }
 
@@ -1743,7 +1805,8 @@ export class CityScene extends Phaser.Scene {
     this.paused = false;
     this.skipPersistOnShutdown = true;
     clearGameState(this.store);
-    this.scene.restart({ skipResume: true });
+    clearStoryProgress(this.store);
+    this.scene.restart({ skipResume: true, mode: this.mode === 'story' ? 'story' : 'sandbox' });
   }
 
   /** Persist the high score, play sounds, and announce mission changes. */
@@ -1762,12 +1825,35 @@ export class CityScene extends Phaser.Scene {
 
     const missionId = w.mission?.id ?? null;
     const objective = w.missionObjective?.description ?? '';
+    if (this.mode === 'story' && this.storyProgress) {
+      if (missionId !== this.prevMissionId && this.prevMissionId !== null) {
+        this.storyProgress = completeStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress, this.prevMissionId);
+      }
+      if (w.mission && this.storyProgress.current) {
+        this.storyProgress = setStoryObjectiveIndex(this.storyProgress, w.mission.currentIndex);
+      }
+    }
     if (this.prevDrivingCarIndex === null && w.drivingCarIndex !== null) {
       this.showBanner(`ENTERED ${enteredCarLabel(w.carKind(w.drivingCarIndex))}`);
     }
     if (w.missionComplete && !this.prevMissionComplete) {
       this.sfx.fanfare();
-      this.showBanner('ALL MISSIONS COMPLETE!');
+      if (this.mode === 'story') {
+        const nextMission = this.storyProgress ? currentStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress) : null;
+        const nextChapter = this.storyProgress ? currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress) : null;
+        this.persistGameState();
+        if (nextMission?.prototypeRuntime && nextChapter) {
+          this.showBanner(`CHAPTER COMPLETE\n${nextChapter.title}`);
+          this.paused = false;
+          this.skipPersistOnShutdown = true;
+          clearGameState(this.store);
+          this.scene.restart({ skipResume: true, mode: 'story', storyProgress: this.storyProgress });
+          return;
+        }
+        this.showBanner(this.storyProgress?.current ? 'STORY PROTOTYPE COMPLETE' : 'STORY COMPLETE');
+      } else {
+        this.showBanner('ALL MISSIONS COMPLETE!');
+      }
     } else if (missionId !== this.prevMissionId) {
       // A new mission begins — the first one, or after finishing the previous.
       if (this.prevMissionId !== null) this.sfx.fanfare();
@@ -1960,6 +2046,11 @@ export class CityScene extends Phaser.Scene {
     const objective = this.world.missionObjective;
     if (objective && objective.kind === 'reach') {
       this.missionMarker.setVisible(true).setPosition(objective.target.x, objective.target.y);
+    } else if (objective && objective.kind === 'route') {
+      const completed = this.world.mission?.objectiveState?.kind === 'route' ? this.world.mission.objectiveState.completed : 0;
+      const target = objective.targets[completed];
+      if (target) this.missionMarker.setVisible(true).setPosition(target.x, target.y);
+      else this.missionMarker.setVisible(false);
     } else {
       this.missionMarker.setVisible(false);
     }

@@ -19,6 +19,24 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
       failureState: 'Fail if Rook is wasted, busted, or the motel contact vanishes before the handoff point is reached.',
       payoff: 'Rook finds the first dead-drop direction and learns the waterfront trail is active tonight, not cold history.',
       requiredSystems: ['scriptedEncounter'],
+      prototypeRuntime: {
+        id: 'night-ferry-run',
+        title: 'Night Ferry Run',
+        objectives: [
+          {
+            kind: 'reach',
+            description: 'Reach the old dock motel before the watchers close in',
+            target: { x: 640, y: 1088 },
+            radius: 72,
+          },
+          {
+            kind: 'survive',
+            description: 'Stay moving for 12 seconds while the district wakes up',
+            seconds: 12,
+          },
+        ],
+        reward: 1500,
+      },
     },
     {
       id: 'burned-locker',
@@ -29,6 +47,29 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
       failureState: 'Fail if any locker is permanently burned before the fragment is recovered or if Rook is stopped during extraction.',
       payoff: 'The fragments reveal that evidence was being moved toward Pier 9 under ambulance cover.',
       requiredSystems: ['timedMultiStop', 'districtState', 'scriptedEncounter'],
+      prototypeRuntime: {
+        id: 'burned-locker',
+        title: 'Burned Locker',
+        objectives: [
+          {
+            kind: 'route',
+            description: 'Reach the 3 storage lockers in sequence before the trail goes cold',
+            targets: [
+              { x: 1024, y: 1472 },
+              { x: 1472, y: 1472 },
+              { x: 1920, y: 1472 },
+            ],
+            radius: 72,
+            timeLimitSeconds: 75,
+          },
+          {
+            kind: 'survive',
+            description: 'Break contact for 15 seconds after the last grab',
+            seconds: 15,
+          },
+        ],
+        reward: 2200,
+      },
     },
     {
       id: 'wreck-before-dawn',
@@ -39,6 +80,30 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
       failureState: 'Fail if the manifest burns with the van, the roadblock never sticks, or Rook is neutralized during the grab.',
       payoff: 'The manifest identifies the false ambulance team and their chop-garage destination.',
       requiredSystems: ['sabotage', 'scriptedEncounter'],
+      prototypeRuntime: {
+        id: 'wreck-before-dawn',
+        title: 'Wreck Before Dawn',
+        objectives: [
+          {
+            kind: 'reach',
+            description: 'Reach the interception point before the cleanup van escapes the district',
+            target: { x: 2368, y: 1088 },
+            radius: 72,
+          },
+          {
+            kind: 'eliminate',
+            description: 'Take down 4 marked cleaners guarding the manifest',
+            count: 4,
+            targetsOnly: true,
+          },
+          {
+            kind: 'survive',
+            description: 'Hold the roadblock for 10 seconds and get clear',
+            seconds: 10,
+          },
+        ],
+        reward: 3200,
+      },
     },
     {
       id: 'false-ambulance',
@@ -49,6 +114,30 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
       failureState: 'Fail if the ambulance escapes sight for too long, is destroyed before the witness is found, or the witness is killed in the stop.',
       payoff: 'The rescued contact confirms the cleaners are storing Nia\'s badge and paper trail in the Pier 9 office.',
       requiredSystems: ['tail', 'capture', 'scriptedEncounter'],
+      prototypeRuntime: {
+        id: 'false-ambulance',
+        title: 'False Ambulance',
+        objectives: [
+          {
+            kind: 'route',
+            description: 'Keep up with the fake ambulance through its diversion route',
+            targets: [
+              { x: 2560, y: 1472 },
+              { x: 3008, y: 1472 },
+              { x: 3456, y: 1216 },
+            ],
+            radius: 80,
+            timeLimitSeconds: 80,
+          },
+          {
+            kind: 'reach',
+            description: 'Intercept the ambulance at the chop garage',
+            target: { x: 3648, y: 1024 },
+            radius: 80,
+          },
+        ],
+        reward: 4200,
+      },
     },
     {
       id: 'last-call-at-pier-9',

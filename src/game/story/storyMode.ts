@@ -67,6 +67,28 @@ export function compileCampaignTemplate(template: RuntimeCampaignTemplate): Miss
   return template.missions.map(createMission);
 }
 
+export function compileStoryChapterRuntimeCampaign(
+  chapter: StoryChapter,
+  startMissionId = chapter.missions[0]?.id,
+  startObjectiveIndex = 0,
+): Mission[] | null {
+  const startIndex = chapter.missions.findIndex((mission) => mission.id === startMissionId);
+  if (startIndex === -1) return null;
+  const plans = chapter.missions.slice(startIndex);
+  if (plans.some((mission) => !mission.prototypeRuntime)) return null;
+
+  return plans.map((plan, index) => {
+    const mission = createMission(plan.prototypeRuntime!);
+    if (index > 0) return mission;
+    return {
+      ...mission,
+      currentIndex: Math.max(0, Math.min(mission.objectives.length - 1, Math.floor(startObjectiveIndex) || 0)),
+      status: mission.objectives.length === 0 ? 'completed' : 'active',
+      objectiveState: null,
+    };
+  });
+}
+
 export function countStoryChapters(story: StoryMode): number {
   return story.acts.reduce((sum, act) => sum + act.chapters.length, 0);
 }
@@ -85,7 +107,6 @@ export function isChapterRuntimeReady(chapter: StoryChapter): boolean {
 export function chapterMissingSystems(chapter: StoryChapter): StorySystem[] {
   const missing = new Set<StorySystem>();
   for (const mission of chapter.missions) {
-    if (mission.prototypeRuntime) continue;
     for (const system of mission.requiredSystems ?? []) missing.add(system);
   }
   return [...missing];
