@@ -7,6 +7,13 @@ function storyManualSaveKey(slot: number): string {
 }
 
 async function launchStoryMode(page: import('@playwright/test').Page): Promise<void> {
+  await launchStoryModeWithOptions(page, { acknowledgeBrief: true });
+}
+
+async function launchStoryModeWithOptions(
+  page: import('@playwright/test').Page,
+  options: { acknowledgeBrief: boolean },
+): Promise<void> {
   await page.goto('/quarterless/');
   await expect(page.getByRole('heading', { name: 'Retro Arcade' })).toBeVisible({ timeout: 10_000 });
   await page.getByRole('button', { name: 'Story Mode' }).click();
@@ -14,6 +21,17 @@ async function launchStoryMode(page: import('@playwright/test').Page): Promise<v
   await page.getByRole('button', { name: /Start Story|Continue Story/ }).click();
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
   await page.locator('#game canvas').click();
+  if (options.acknowledgeBrief) {
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => {
+      const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+      const scene = game?.scene.getScene('City') as {
+        paused: boolean;
+        storyPanel?: { visible: boolean };
+      };
+      return scene?.paused === false && !scene?.storyPanel?.visible;
+    });
+  }
 }
 
 test.afterEach(async ({ page }) => {
@@ -143,6 +161,39 @@ test('story mode boots and restores saved story progress after refresh', async (
   expect(afterRefresh.save?.current?.chapterId).toBe('dead-drop-district');
   expect(afterRefresh.missionId).toBe(beforeRefresh.missionId);
   expect(afterRefresh.objectiveIndex).toBe(beforeRefresh.objectiveIndex);
+});
+
+test('story mission briefing stays visible until Enter acknowledges it', async ({ page }) => {
+  await launchStoryModeWithOptions(page, { acknowledgeBrief: false });
+
+  const before = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      paused: boolean;
+      storyPanel?: { visible: boolean; text: string };
+    };
+    return {
+      paused: !!scene?.paused,
+      visible: !!scene?.storyPanel?.visible,
+      text: scene?.storyPanel?.text ?? '',
+    };
+  });
+
+  expect(before.paused).toBe(true);
+  expect(before.visible).toBe(true);
+  expect(before.text).toContain('MISSION BRIEF');
+  expect(before.text).toContain('Press Enter or Resume to continue');
+
+  await page.keyboard.press('Enter');
+
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      paused: boolean;
+      storyPanel?: { visible: boolean };
+    };
+    return scene?.paused === false && !scene?.storyPanel?.visible;
+  });
 });
 
 test('story mode persists manual save slots alongside story progress', async ({ page }) => {

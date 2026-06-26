@@ -328,6 +328,7 @@ export class CityScene extends Phaser.Scene {
   /** Pause / menu state. */
   private paused = false;
   private pauseKey!: Phaser.Input.Keyboard.Key;
+  private storyAcknowledgeKey!: Phaser.Input.Keyboard.Key;
   private newGameKey!: Phaser.Input.Keyboard.Key;
   private saveGameKey!: Phaser.Input.Keyboard.Key;
   private loadGameKey!: Phaser.Input.Keyboard.Key;
@@ -380,6 +381,8 @@ export class CityScene extends Phaser.Scene {
   /** Seconds left to show the announcement banner. */
   private announceRemaining = 0;
   private storyPanelRemaining = 0;
+  private storyPanelRequiresAcknowledge = false;
+  private storyPanelPauseGame = false;
   private pendingStoryRestart: StoryProgressSnapshot | null = null;
   /** Elapsed time driving the day/night cycle, and its dimming overlay. */
   private timeOfDay = 0;
@@ -456,6 +459,8 @@ export class CityScene extends Phaser.Scene {
     this.touchControlsDirty = true;
     this.prevTouchConfirm = false;
     this.storyPanelRemaining = 0;
+    this.storyPanelRequiresAcknowledge = false;
+    this.storyPanelPauseGame = false;
     this.pendingStoryRestart = null;
     this.storyScript = null;
 
@@ -511,6 +516,7 @@ export class CityScene extends Phaser.Scene {
     // Menu keys: P pauses/resumes, N starts a fresh game.
     const kb = this.input.keyboard!;
     this.pauseKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.P);
+    this.storyAcknowledgeKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER);
     this.newGameKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.N);
     this.saveGameKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.S);
     this.loadGameKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.L);
@@ -1965,7 +1971,15 @@ export class CityScene extends Phaser.Scene {
     const touchSnapshot = this.touchInput_?.snapshot();
     const touchConfirmPressed =
       !!touchSnapshot && this.touchEnabled && touchSnapshot.confirmPressed && !this.prevTouchConfirm;
+    const acknowledgePressed = Phaser.Input.Keyboard.JustDown(this.storyAcknowledgeKey);
     this.syncTouchControls(touchSnapshot);
+
+    if (this.storyPanelRequiresAcknowledge && (acknowledgePressed || touchConfirmPressed)) {
+      this.acknowledgeStoryPanel();
+      this.prevTouchConfirm = !!touchSnapshot?.confirmPressed;
+      return;
+    }
+
     // New game from scratch, available at any time.
     if (Phaser.Input.Keyboard.JustDown(this.newGameKey)) {
       this.prevTouchConfirm = !!touchSnapshot?.confirmPressed;
@@ -2038,7 +2052,7 @@ export class CityScene extends Phaser.Scene {
       this.announceRemaining -= dt;
       if (this.announceRemaining <= 0) this.banner.setVisible(false);
     }
-    if (this.storyPanelRemaining > 0) {
+    if (!this.storyPanelRequiresAcknowledge && this.storyPanelRemaining > 0) {
       this.storyPanelRemaining -= dt;
       if (this.storyPanelRemaining <= 0) this.storyPanel.setVisible(false);
     }
@@ -2077,6 +2091,10 @@ export class CityScene extends Phaser.Scene {
 
   /** Freeze or resume the simulation and show/hide the pause menu. */
   private togglePause(): void {
+    if (this.paused && this.storyPanelRequiresAcknowledge) {
+      this.acknowledgeStoryPanel();
+      return;
+    }
     this.paused = !this.paused;
     this.setPauseUiVisible(this.paused);
     if (this.paused) this.persistGameState();
@@ -2350,6 +2368,39 @@ export class CityScene extends Phaser.Scene {
   private showStoryPanel(text: string, seconds: number): void {
     this.storyPanel.setText(text).setVisible(true);
     this.storyPanelRemaining = seconds;
+    this.storyPanelRequiresAcknowledge = false;
+    this.storyPanelPauseGame = false;
+  }
+
+  private showPersistentStoryPanel(text: string, pauseGame = true): void {
+    this.storyPanel.setText(`${text}\n\nPress Enter or Resume to continue`).setVisible(true);
+    this.storyPanelRemaining = 0;
+    this.storyPanelRequiresAcknowledge = true;
+    this.storyPanelPauseGame = pauseGame;
+    if (pauseGame && !this.paused) {
+      this.paused = true;
+      this.setPauseUiVisible(true);
+      this.refreshPauseMenu();
+      this.touchControlsDirty = true;
+      this.refreshPauseTouchButton();
+      this.syncTouchControls();
+    }
+  }
+
+  private acknowledgeStoryPanel(): void {
+    const shouldResume = this.storyPanelPauseGame && this.paused;
+    this.storyPanel.setVisible(false);
+    this.storyPanelRemaining = 0;
+    this.storyPanelRequiresAcknowledge = false;
+    this.storyPanelPauseGame = false;
+    if (shouldResume) {
+      this.paused = false;
+      this.setPauseUiVisible(false);
+      this.refreshPauseMenu();
+      this.touchControlsDirty = true;
+      this.refreshPauseTouchButton();
+      this.syncTouchControls();
+    }
   }
 
   private syncStoryStateText(): void {
@@ -2366,9 +2417,8 @@ export class CityScene extends Phaser.Scene {
     const chapter = currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress);
     const mission = currentStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress);
     if (!chapter || !mission) return;
-    this.showStoryPanel(
+    this.showPersistentStoryPanel(
       `MISSION BRIEF\n${mission.title}\n\n${mission.hook}\n\nGoal: ${mission.primaryGoal}`,
-      4.2,
     );
   }
 

@@ -402,6 +402,7 @@ Implemented now:
 - A reusable prototype mission-actor layer now drives fake ambulances, staged convoy handoffs, escort-style route actors, named mission-target squads, district-state labels, and data-driven fail rules from authored story data instead of hardcoded mission branches in the scene.
 - Dead Drop District through Glass Towers, Empty Floors now compile into a playable nine-chapter prototype runtime campaign spanning two acts.
 - Story mode now shows authored chapter briefing panels, mission transition recap/briefing panels with reward summaries, and chapter-complete or story-complete panels with richer authored text.
+- Story mission briefs now pause play and remain on screen until the player acknowledges them with Enter, touch confirm, or Resume.
 - The dedicated story menu now includes an act-grouped chapter map, chapter selection, progress totals, and a recap archive for completed chapters.
 - Story mode now supports replaying unlocked chapters from both the dedicated story menu and the in-game pause menu.
 - Focused Playwright coverage now covers story-mode entry, story-menu chapter selection across acts, recap archive presence, refresh-resume, manual save-slot persistence, authored mission transition panels, chapter restart into the next chapter, pause-menu chapter replay, and the current story-complete panel.
@@ -411,7 +412,7 @@ Prototype limitations right now:
 - Chapter 1 through Chapter 9 missions are playable approximations, not fully scripted bespoke set pieces.
 - Tail, capture, escort, stealth, and district-state behavior are still represented by simpler linear objective chains where needed.
 - The mission-actor layer now covers route-driven vehicles, staged convoy handoffs, escorts, named mission-target squads, district-state labels, and simple fail rules, but it still lacks richer custom encounter scripting and persistent systemic choreography.
-- There is not yet a full chapter-map front end or a complete post-mission scorecard; the current act-grouped menu, recap archive, and reward callouts are functional rather than final.
+- There is not yet a full chapter-map front end or a complete post-mission scorecard; the current act-grouped menu, recap archive, persistent mission brief, and reward callouts are functional rather than final.
 
 ## Grounded Implementation Plan
 
