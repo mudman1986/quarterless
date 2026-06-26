@@ -4,6 +4,7 @@ import type { StoryChapter, StoryMissionPlan, StoryMode } from './storyMode';
 
 export const STORY_PROGRESS_KEY = 'sindicate.storyProgress';
 export const STORY_PROGRESS_VERSION = 1;
+export const STORY_LAUNCH_PROGRESS_KEY = 'sindicate.launchStoryProgress';
 
 export function storyProgressSaveKey(gameSaveKey = GAME_STATE_KEY): string {
   return gameSaveKey === GAME_STATE_KEY ? STORY_PROGRESS_KEY : `${gameSaveKey}.storyProgress`;

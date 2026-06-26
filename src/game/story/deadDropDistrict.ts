@@ -131,6 +131,28 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
         ],
         reward: 4200,
       },
+      prototypeScript: {
+        primaryActorId: 'false-ambulance-van',
+        actors: [
+          {
+            kind: 'vehicleRoute',
+            actorId: 'false-ambulance-van',
+            vehicleKind: 'ambulance',
+            route: [
+              { x: 2560, y: 1472 },
+              { x: 3008, y: 1472 },
+              { x: 3456, y: 1216 },
+              { x: 3648, y: 1024 },
+            ],
+            speed: 120,
+            followRadius: 320,
+            captureRadius: 120,
+            captureMaxSpeed: 25,
+            tailDrainPerSecond: 2,
+            loseGraceSeconds: 2.5,
+          },
+        ],
+      },
     },
     {
       id: 'last-call-at-pier-9',
@@ -252,6 +274,25 @@ export const SPARE_PARTS_GOSPEL: StoryChapter = {
         ],
         reward: 3000,
       },
+      prototypeScript: {
+        primaryActorId: 'empty-shell-sedan',
+        actors: [
+          {
+            kind: 'vehicleRoute',
+            actorId: 'empty-shell-sedan',
+            vehicleKind: 'sedan',
+            route: [
+              { x: 1984, y: 2176 },
+              { x: 2496, y: 2112 },
+              { x: 3008, y: 2112 },
+            ],
+            speed: 110,
+            followRadius: 320,
+            tailDrainPerSecond: 2,
+            loseGraceSeconds: 2.5,
+          },
+        ],
+      },
     },
     {
       id: 'crusher-feed',
@@ -322,13 +363,173 @@ export const SPARE_PARTS_GOSPEL: StoryChapter = {
   ],
 };
 
+export const STATIC_ON_THE_HOSPITAL_BAND: StoryChapter = {
+  id: 'static-on-the-hospital-band',
+  actId: 'find-the-missing-dispatcher',
+  order: 3,
+  title: 'Static On The Hospital Band',
+  storyRole:
+    'Nia\'s final calls mention missing ambulance routes and patients who never reached intake.',
+  combinedGoal:
+    'Trace the falsified ambulance routes, recover the surviving witness trail, and extract the hospital insider who can map the next dispatcher handoff.',
+  missions: [
+    {
+      id: 'cold-intake',
+      title: 'Cold Intake',
+      hook: 'A witness is bleeding out at the edge of a blackout zone before the rival squad can pick them up.',
+      primaryGoal: 'Reach the ambulance route, secure the witness first, and hold the handoff lane until the safe clinic is ready.',
+      secondaryPressure: 'The player should feel the difference between getting there first and simply surviving the aftermath.',
+      failureState: 'Fail if the witness convoy lane is lost or if Rook is dropped before the safe handoff is secured.',
+      payoff: 'The witness confirms that hospital-route records are being falsified in relay dead zones across the district.',
+      prototypeRuntime: {
+        id: 'cold-intake',
+        title: 'Cold Intake',
+        objectives: [
+          {
+            kind: 'reach',
+            description: 'Reach the witness pickup lane before the rival squad closes it',
+            target: { x: 896, y: 2816 },
+            radius: 88,
+          },
+          {
+            kind: 'survive',
+            description: 'Hold the lane for 12 seconds until the clinic runner arrives',
+            seconds: 12,
+          },
+        ],
+        reward: 2800,
+      },
+    },
+    {
+      id: 'flatline-gap',
+      title: 'Flatline Gap',
+      hook: 'The relay dead zones are shorting out the only records that still point to Nia\'s last route.',
+      primaryGoal: 'Reach the dead radio sites in sequence and re-open the route map before the cleanup crews jam the district again.',
+      secondaryPressure: 'The path should force the player to keep moving instead of digging in at one location.',
+      failureState: 'Fail if the route goes cold before all relay sites are reached.',
+      payoff: 'Rook restores enough of the route map to identify the forged intake tunnel at the hospital loading wing.',
+      prototypeRuntime: {
+        id: 'flatline-gap',
+        title: 'Flatline Gap',
+        objectives: [
+          {
+            kind: 'route',
+            description: 'Reach the 4 dead radio sites before the district jams again',
+            targets: [
+              { x: 1216, y: 3136 },
+              { x: 1728, y: 3136 },
+              { x: 2240, y: 2944 },
+              { x: 2752, y: 2816 },
+            ],
+            radius: 84,
+            timeLimitSeconds: 95,
+          },
+        ],
+        reward: 3200,
+      },
+    },
+    {
+      id: 'clean-sheets',
+      title: 'Clean Sheets',
+      hook: 'Inside the loading tunnel, the paper trail is cleaner than it should be.',
+      primaryGoal: 'Break into the loading tunnel and recover the falsified transfer records before they are scrubbed.',
+      secondaryPressure: 'The player should feel like they are slipping into a secure service corridor, not storming a fortress.',
+      failureState: 'Fail if the records are burned before Rook reaches the archive room.',
+      payoff: 'The records reveal that the surviving nurse hacker is being moved during an active lockdown window.',
+      prototypeRuntime: {
+        id: 'clean-sheets',
+        title: 'Clean Sheets',
+        objectives: [
+          {
+            kind: 'reach',
+            description: 'Reach the hospital loading tunnel archive room',
+            target: { x: 3200, y: 2752 },
+            radius: 88,
+          },
+          {
+            kind: 'collect',
+            description: 'Collect the 1 forged transfer record cache',
+            count: 1,
+          },
+        ],
+        reward: 3600,
+      },
+    },
+    {
+      id: 'crash-cart',
+      title: 'Crash Cart',
+      hook: 'The witness route is blown, and the only way out is a damaged ambulance sprint through blocked intersections.',
+      primaryGoal: 'Follow the emergency route and keep the ambulance corridor open long enough to clear the district.',
+      secondaryPressure: 'The challenge should come from route control and sustained pressure, not one static shootout.',
+      failureState: 'Fail if the corridor collapses before the ambulance clears the district.',
+      payoff: 'The escape proves the hospital routes are being actively manipulated from inside the lockdown perimeter.',
+      prototypeRuntime: {
+        id: 'crash-cart',
+        title: 'Crash Cart',
+        objectives: [
+          {
+            kind: 'route',
+            description: 'Follow the emergency corridor out of the hospital district',
+            targets: [
+              { x: 3264, y: 2368 },
+              { x: 3456, y: 1920 },
+              { x: 3648, y: 1472 },
+            ],
+            radius: 88,
+            timeLimitSeconds: 70,
+          },
+          {
+            kind: 'survive',
+            description: 'Keep the exit lane clear for 10 seconds',
+            seconds: 10,
+          },
+        ],
+        reward: 3900,
+      },
+    },
+    {
+      id: 'ward-6-exit',
+      title: 'Ward 6 Exit',
+      hook: 'The nurse hacker can still open the dispatch logs, but only if Rook gets them out through the lockdown routes.',
+      primaryGoal: 'Reach the extraction point, protect the hacker long enough to break the lockdown, and clear the district alive.',
+      secondaryPressure: 'The player should feel the lockdown squeezing tighter instead of simply fighting another wave.',
+      failureState: 'Fail if the extraction window collapses or Rook cannot hold the line long enough for the hacker to clear the route.',
+      payoff: 'The hospital insider points Rook toward the taxi dispatch records in the next chapter.',
+      prototypeRuntime: {
+        id: 'ward-6-exit',
+        title: 'Ward 6 Exit',
+        objectives: [
+          {
+            kind: 'reach',
+            description: 'Reach the Ward 6 extraction point before the lockdown seals',
+            target: { x: 3776, y: 1280 },
+            radius: 88,
+          },
+          {
+            kind: 'eliminate',
+            description: 'Take down 5 marked lockdown enforcers',
+            count: 5,
+            targetsOnly: true,
+          },
+          {
+            kind: 'survive',
+            description: 'Hold the extraction lane for 15 seconds',
+            seconds: 15,
+          },
+        ],
+        reward: 4600,
+      },
+    },
+  ],
+};
+
 export const FIND_THE_MISSING_DISPATCHER: StoryAct = {
   id: 'find-the-missing-dispatcher',
   order: 1,
   title: 'Find The Missing Dispatcher',
   summary:
     'Rook follows Nia\'s physical evidence trail through the waterfront and learns the city is being manipulated by a hidden logistics network.',
-  chapters: [DEAD_DROP_DISTRICT, SPARE_PARTS_GOSPEL],
+  chapters: [DEAD_DROP_DISTRICT, SPARE_PARTS_GOSPEL, STATIC_ON_THE_HOSPITAL_BAND],
 };
 
 export const STORY_MODE_PROTOTYPE: StoryMode = {

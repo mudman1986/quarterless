@@ -1,4 +1,6 @@
 import { createMission, type Mission, type MissionSpec } from '../../core/mission';
+import type { VehicleKind } from '../../core/world';
+import type { Vec2 } from '../../core/vector';
 
 export type StorySystem =
   | 'scriptedEncounter'
@@ -31,6 +33,25 @@ export interface StoryMissionPlan {
   payoff: string;
   requiredSystems?: readonly StorySystem[];
   prototypeRuntime?: MissionSpec;
+  prototypeScript?: StoryRuntimeScript;
+}
+
+export interface VehicleRouteActorScript {
+  kind: 'vehicleRoute';
+  actorId: string;
+  vehicleKind: VehicleKind;
+  route: readonly Vec2[];
+  speed: number;
+  followRadius: number;
+  captureRadius?: number;
+  captureMaxSpeed?: number;
+  tailDrainPerSecond?: number;
+  loseGraceSeconds?: number;
+}
+
+export interface StoryRuntimeScript {
+  primaryActorId: string;
+  actors: readonly VehicleRouteActorScript[];
 }
 
 export interface StoryChapter {

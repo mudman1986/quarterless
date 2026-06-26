@@ -10,6 +10,8 @@ async function launchStoryMode(page: import('@playwright/test').Page): Promise<v
   await page.goto('/quarterless/');
   await expect(page.getByRole('heading', { name: 'Retro Arcade' })).toBeVisible({ timeout: 10_000 });
   await page.getByRole('button', { name: 'Story Mode' }).click();
+  await expect(page.getByRole('heading', { name: 'Story Mode' })).toBeVisible({ timeout: 10_000 });
+  await page.getByRole('button', { name: /Start Story|Continue Story/ }).click();
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
   await page.locator('#game canvas').click();
 }
@@ -30,6 +32,13 @@ test.afterEach(async ({ page }) => {
 test('landing page exposes a story-mode entry point for Sindicate', async ({ page }) => {
   await page.goto('/quarterless/');
   await expect(page.getByRole('button', { name: 'Story Mode' })).toBeVisible();
+});
+
+test('story mode opens a dedicated story menu with chapter select', async ({ page }) => {
+  await page.goto('/quarterless/');
+  await page.getByRole('button', { name: 'Story Mode' }).click();
+  await expect(page.getByRole('heading', { name: 'Story Mode' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Dead Drop District/i })).toBeVisible();
 });
 
 test('story mode boots and restores saved story progress after refresh', async ({ page }) => {
@@ -141,11 +150,11 @@ test('story mode shows a prototype-complete panel when the current story slice f
     }
 
     scene.storyProgress.current = {
-      chapterId: 'spare-parts-gospel',
-      missionId: 'towline-oath',
+      chapterId: 'static-on-the-hospital-band',
+      missionId: 'ward-6-exit',
       objectiveIndex: 0,
     };
-    scene.prevMissionId = 'towline-oath';
+    scene.prevMissionId = 'ward-6-exit';
     scene.prevMissionComplete = false;
     scene.world.campaign.currentIndex = scene.world.campaign.missions.length;
     scene.handleEvents();

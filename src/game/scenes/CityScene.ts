@@ -60,10 +60,12 @@ import {
   saveStoryProgress,
   selectStoryChapter,
   setStoryObjectiveIndex,
+  STORY_LAUNCH_PROGRESS_KEY,
   storyProgressSaveKey,
   type StoryProgressSnapshot,
 } from '../story/storyProgress';
 import { compileStoryChapterRuntimeCampaign } from '../story/storyMode';
+import type { StoryRuntimeScript, VehicleRouteActorScript } from '../story/storyMode';
 
 const COLORS = {
   road: 0x2b2b30,
@@ -236,7 +238,8 @@ interface StoryScriptState {
   tailSeconds: number;
   captureSeconds: number;
   tailLostSeconds: number;
-  targetCarIndex: number | null;
+  actorCarIndices: Record<string, number>;
+  actorRouteIndices: Record<string, number>;
   targetPedIndex: number | null;
   targetSpawned: boolean;
   introShown: boolean;
@@ -377,10 +380,19 @@ export class CityScene extends Phaser.Scene {
   }
 
   init(data: CitySceneStartData = {}): void {
+    const launchStore = (() => {
+      try {
+        return typeof window !== 'undefined' ? window.sessionStorage : null;
+      } catch {
+        return null;
+      }
+    })();
+    const launchProgress = launchStore ? loadStoryProgress(launchStore, STORY_LAUNCH_PROGRESS_KEY) : null;
+    if (launchStore) clearStoryProgress(launchStore, STORY_LAUNCH_PROGRESS_KEY);
     this.requestedLoadKey = data.loadSaveKey ?? GAME_STATE_KEY;
     this.skipResumeOnCreate = !!data.skipResume;
     this.requestedMode = data.mode ?? this.queryRequestsStoryMode();
-    this.requestedStoryProgress = data.storyProgress ?? null;
+    this.requestedStoryProgress = data.storyProgress ?? launchProgress ?? null;
   }
 
   private queryRequestsStoryMode(): 'sandbox' | 'story' {
@@ -570,7 +582,8 @@ export class CityScene extends Phaser.Scene {
         tailSeconds: 0,
         captureSeconds: 0,
         tailLostSeconds: 0,
-        targetCarIndex: null,
+        actorCarIndices: {},
+        actorRouteIndices: {},
         targetPedIndex: null,
         targetSpawned: false,
         introShown: false,
@@ -578,19 +591,20 @@ export class CityScene extends Phaser.Scene {
       };
     }
 
-    this.runStoryScript(chapter.id, mission.id, dt);
+    this.runStoryScript(mission.prototypeScript, dt);
     this.world.setStoryObjectiveProgress({
       tailSeconds: this.storyScript.tailSeconds,
       captureSeconds: this.storyScript.captureSeconds,
     });
   }
 
-  private ensureStoryTargetCar(pos: Vec2, kind: VehicleKind = 'ambulance'): number {
+  private ensureStoryTargetCar(actorId: string, pos: Vec2, kind: VehicleKind = 'ambulance'): number {
     const script = this.storyScript!;
-    if (script.targetCarIndex !== null && this.world.cars[script.targetCarIndex]) {
-      const car = this.world.cars[script.targetCarIndex]!;
-      this.world.cars[script.targetCarIndex] = { ...car, pos };
-      return script.targetCarIndex;
+    const existing = script.actorCarIndices[actorId];
+    if (existing !== undefined && this.world.cars[existing]) {
+      const car = this.world.cars[existing]!;
+      this.world.cars[existing] = { ...car, pos };
+      return existing;
     }
     const index = this.world.cars.length;
     this.world.cars.push({ pos, heading: 0, speed: 0, radius: vehicleBodySpecForKind(kind).radius });
@@ -605,79 +619,68 @@ export class CityScene extends Phaser.Scene {
     (this.world as unknown as { towDispatchCooldowns: number[] }).towDispatchCooldowns.push(0);
     (this.world as unknown as { wreckedCars: boolean[] }).wreckedCars.push(false);
     (this.world as unknown as { towedCars: boolean[] }).towedCars.push(false);
-    script.targetCarIndex = index;
+    script.actorCarIndices[actorId] = index;
+    script.actorRouteIndices[actorId] = 0;
     return index;
   }
 
-  private runStoryScript(chapterId: string, missionId: string, dt: number): void {
+  private runVehicleRouteActor(actor: VehicleRouteActorScript, dt: number): { carIndex: number; routeIndex: number } {
     const script = this.storyScript!;
-    if (chapterId === 'dead-drop-district' && missionId === 'false-ambulance') {
-      const route = [vec2(2560, 1472), vec2(3008, 1472), vec2(3456, 1216), vec2(3648, 1024)];
-      const carIndex = this.ensureStoryTargetCar(route[Math.min(route.length - 1, Math.floor(script.tailSeconds / 3))] ?? route[0], 'ambulance');
-      const phase = Math.min(route.length - 1, Math.floor(script.tailSeconds / 3));
-      const target = route[phase] ?? route[route.length - 1]!;
-      const car = this.world.cars[carIndex]!;
-      const dx = target.x - car.pos.x;
-      const dy = target.y - car.pos.y;
-      const dist = Math.hypot(dx, dy);
-      const heading = dist > 0 ? Math.atan2(dy, dx) : car.heading;
-      const step = Math.min(dist, dt * 120);
-      this.world.cars[carIndex] = {
-        ...car,
-        heading,
-        speed: step > 0 ? 120 : 0,
-        pos: dist > 0 ? vec2(car.pos.x + (dx / dist) * step, car.pos.y + (dy / dist) * step) : car.pos,
-      };
+    const first = actor.route[0] ?? vec2(0, 0);
+    const carIndex = this.ensureStoryTargetCar(actor.actorId, first, actor.vehicleKind);
+    const car = this.world.cars[carIndex]!;
+    const routeIndex = script.actorRouteIndices[actor.actorId] ?? 0;
+    const target = actor.route[Math.min(routeIndex, actor.route.length - 1)] ?? first;
+    const dx = target.x - car.pos.x;
+    const dy = target.y - car.pos.y;
+    const dist = Math.hypot(dx, dy);
+    const heading = dist > 0 ? Math.atan2(dy, dx) : car.heading;
+    const step = Math.min(dist, dt * actor.speed);
+    this.world.cars[carIndex] = {
+      ...car,
+      heading,
+      speed: step > 0 ? actor.speed : 0,
+      pos: dist > 0 ? vec2(car.pos.x + (dx / dist) * step, car.pos.y + (dy / dist) * step) : car.pos,
+    };
+    if (dist <= 8 && routeIndex < actor.route.length - 1) script.actorRouteIndices[actor.actorId] = routeIndex + 1;
+    return { carIndex, routeIndex: script.actorRouteIndices[actor.actorId] ?? routeIndex };
+  }
 
-      const playerDist = distance(this.world.focus, this.world.cars[carIndex]!.pos);
-      if (playerDist <= 320) {
-        script.tailSeconds += dt;
-        script.tailLostSeconds = 0;
-      } else {
-        script.tailLostSeconds += dt;
-      }
-
-      if (script.tailLostSeconds > 2.5) script.tailSeconds = Math.max(0, script.tailSeconds - dt * 2);
-      if (script.tailSeconds >= 12) {
-        const captureDist = distance(this.world.focus, route[route.length - 1]!);
-        if (captureDist <= 120 && Math.abs(this.world.drivingCar?.speed ?? 0) < 25) script.captureSeconds += dt;
-      } else {
-        script.captureSeconds = 0;
-      }
-      return;
-    }
-
-    if (chapterId === 'spare-parts-gospel' && missionId === 'the-empty-shell') {
-      const route = [vec2(1984, 2176), vec2(2496, 2112), vec2(3008, 2112)];
-      const carIndex = this.ensureStoryTargetCar(route[Math.min(route.length - 1, Math.floor(script.tailSeconds / 3.4))] ?? route[0], 'sedan');
-      const phase = Math.min(route.length - 1, Math.floor(script.tailSeconds / 3.4));
-      const target = route[phase] ?? route[route.length - 1]!;
-      const car = this.world.cars[carIndex]!;
-      const dx = target.x - car.pos.x;
-      const dy = target.y - car.pos.y;
-      const dist = Math.hypot(dx, dy);
-      const heading = dist > 0 ? Math.atan2(dy, dx) : car.heading;
-      const step = Math.min(dist, dt * 110);
-      this.world.cars[carIndex] = {
-        ...car,
-        heading,
-        speed: step > 0 ? 110 : 0,
-        pos: dist > 0 ? vec2(car.pos.x + (dx / dist) * step, car.pos.y + (dy / dist) * step) : car.pos,
-      };
-      const playerDist = distance(this.world.focus, this.world.cars[carIndex]!.pos);
-      if (playerDist <= 320) {
-        script.tailSeconds += dt;
-        script.tailLostSeconds = 0;
-      } else {
-        script.tailLostSeconds += dt;
-      }
-      if (script.tailLostSeconds > 2.5) script.tailSeconds = Math.max(0, script.tailSeconds - dt * 2);
+  private runStoryScript(runtime: StoryRuntimeScript | undefined, dt: number): void {
+    const script = this.storyScript!;
+    if (!runtime) {
+      script.tailSeconds = 0;
       script.captureSeconds = 0;
       return;
     }
 
-    script.tailSeconds = 0;
-    script.captureSeconds = 0;
+    const actor = runtime.actors.find((entry) => entry.actorId === runtime.primaryActorId);
+    if (!actor || actor.kind !== 'vehicleRoute') {
+      script.tailSeconds = 0;
+      script.captureSeconds = 0;
+      return;
+    }
+
+    const state = this.runVehicleRouteActor(actor, dt);
+    const targetPos = this.world.cars[state.carIndex]!.pos;
+    const playerDist = distance(this.world.focus, targetPos);
+    if (playerDist <= actor.followRadius) {
+      script.tailSeconds += dt;
+      script.tailLostSeconds = 0;
+    } else {
+      script.tailLostSeconds += dt;
+    }
+
+    const tailDrain = actor.tailDrainPerSecond ?? 2;
+    const loseGrace = actor.loseGraceSeconds ?? 2.5;
+    if (script.tailLostSeconds > loseGrace) script.tailSeconds = Math.max(0, script.tailSeconds - dt * tailDrain);
+
+    const captureReady = actor.captureRadius !== undefined && actor.captureMaxSpeed !== undefined && state.routeIndex >= actor.route.length - 1;
+    if (captureReady && playerDist <= (actor.captureRadius ?? 0) && Math.abs(this.world.drivingCar?.speed ?? 0) <= (actor.captureMaxSpeed ?? 0)) {
+      script.captureSeconds += dt;
+    } else {
+      script.captureSeconds = 0;
+    }
   }
 
   private persistGameState(key = GAME_STATE_KEY): void {

@@ -1,6 +1,15 @@
 import './arcade/arcade.css';
 import { startPreviews } from './arcade/previews';
 import type { GameRuntime, GameStarter } from './arcade/types';
+import { STORY_MODE_PROTOTYPE } from './game/story/deadDropDistrict';
+import {
+  clearStoryProgress,
+  createStoryProgress,
+  loadStoryProgress,
+  saveStoryProgress,
+  selectStoryChapter,
+  STORY_LAUNCH_PROGRESS_KEY,
+} from './game/story/storyProgress';
 
 type LaunchMode = 'sandbox' | 'story';
 
@@ -55,6 +64,66 @@ const games: readonly ArcadeGame[] = [
 
 let activeGame: GameRuntime | null = null;
 let stopPreviews: (() => void) | null = null;
+
+function chapterCards(progress = createStoryProgress(STORY_MODE_PROTOTYPE)): string {
+  const chapters = STORY_MODE_PROTOTYPE.acts.flatMap((act) => act.chapters);
+  return chapters
+    .map((chapter) => {
+      const unlocked = progress.unlockedChapterIds.includes(chapter.id);
+      const completed = progress.completedChapterIds.includes(chapter.id);
+      return `
+        <button
+          class="story-chapter-card${unlocked ? '' : ' story-chapter-card--locked'}"
+          type="button"
+          data-story-chapter="${chapter.id}"
+          ${unlocked ? '' : 'disabled'}
+          aria-label="${chapter.title}${unlocked ? '' : ' locked'}"
+        >
+          <span class="story-chapter-kicker">Chapter ${chapter.order}</span>
+          <span class="story-chapter-title">${chapter.title}</span>
+          <span class="story-chapter-meta">${completed ? 'Completed' : unlocked ? 'Unlocked' : 'Locked'}</span>
+        </button>`;
+    })
+    .join('');
+}
+
+function storyProgressStore(): Storage | null {
+  try {
+    return typeof window !== 'undefined' ? window.localStorage : null;
+  } catch {
+    return null;
+  }
+}
+
+function launchProgressStore(): Storage | null {
+  try {
+    return typeof window !== 'undefined' ? window.sessionStorage : null;
+  } catch {
+    return null;
+  }
+}
+
+function currentStoryProgress() {
+  const store = storyProgressStore();
+  return store ? loadStoryProgress(store) ?? createStoryProgress(STORY_MODE_PROTOTYPE) : createStoryProgress(STORY_MODE_PROTOTYPE);
+}
+
+function primeStoryLaunch(progress: ReturnType<typeof createStoryProgress>): void {
+  const store = launchProgressStore();
+  if (!store) return;
+  saveStoryProgress(
+    store,
+    {
+      storyId: progress.storyId,
+      current: progress.current,
+      unlockedChapterIds: progress.unlockedChapterIds,
+      completedChapterIds: progress.completedChapterIds,
+      completedMissionIds: progress.completedMissionIds,
+      branchOutcomes: progress.branchOutcomes,
+    },
+    STORY_LAUNCH_PROGRESS_KEY,
+  );
+}
 
 function appRoot(): HTMLElement {
   const root = document.querySelector<HTMLElement>('#app');
@@ -125,6 +194,8 @@ function gameCard(game: ArcadeGame): string {
 
 function renderLanding(): void {
   syncLaunchQuery();
+  const launchStore = launchProgressStore();
+  if (launchStore) clearStoryProgress(launchStore, STORY_LAUNCH_PROGRESS_KEY);
   stopActiveGame();
   stopPreviews?.();
   setBodyMode('landing');
@@ -148,7 +219,79 @@ function renderLanding(): void {
     button.addEventListener('click', () => {
       const selected = games.find((game) => game.id === button.dataset.play);
       const mode = button.dataset.mode === 'story' ? 'story' : 'sandbox';
-      if (selected) void launchGame(selected, mode);
+      if (!selected) return;
+      if (selected.id === 'sindicate' && mode === 'story') {
+        renderStoryMenu(selected);
+        return;
+      }
+      void launchGame(selected, mode);
+    });
+  }
+}
+
+function renderStoryMenu(game: ArcadeGame): void {
+  stopPreviews?.();
+  stopPreviews = null;
+  stopActiveGame();
+  setBodyMode('landing');
+  const progress = currentStoryProgress();
+  const currentChapter = STORY_MODE_PROTOTYPE.acts
+    .flatMap((act) => act.chapters)
+    .find((chapter) => chapter.id === progress.current?.chapterId);
+  const root = appRoot();
+  root.innerHTML = `
+    <main class="arcade-page" aria-label="Story mode selection">
+      <div class="arcade-inner">
+        <header class="arcade-topbar">
+          <div>
+            <h1 class="arcade-title">Story Mode</h1>
+            <p class="story-menu-copy">Choose where Rook's investigation continues.</p>
+          </div>
+        </header>
+        <section class="story-menu-grid">
+          <article class="story-menu-panel story-menu-panel--primary">
+            <h2>Sindicate Story</h2>
+            <p>${STORY_MODE_PROTOTYPE.premise}</p>
+            <div class="play-actions play-actions--stacked">
+              <button class="play-button" type="button" data-story-action="continue">
+                ${progress.completedChapterIds.length === 0 && progress.current?.chapterId === 'dead-drop-district' ? 'Start Story' : 'Continue Story'}
+              </button>
+              <button class="play-button play-button--secondary" type="button" data-story-action="new">
+                New Story
+              </button>
+              <button class="play-button play-button--secondary" type="button" data-story-action="back">
+                Back to Arcade
+              </button>
+            </div>
+            <p class="story-menu-status">Current chapter: ${currentChapter?.title ?? 'Dead Drop District'}</p>
+          </article>
+          <section class="story-menu-panel" aria-label="Unlocked chapters">
+            <h2>Chapter Select</h2>
+            <div class="story-chapter-grid">
+              ${chapterCards(progress)}
+            </div>
+          </section>
+        </section>
+      </div>
+    </main>`;
+
+  root.querySelector<HTMLButtonElement>('[data-story-action="continue"]')?.addEventListener('click', () => {
+    primeStoryLaunch(progress);
+    void launchGame(game, 'story');
+  });
+  root.querySelector<HTMLButtonElement>('[data-story-action="new"]')?.addEventListener('click', () => {
+    const fresh = createStoryProgress(STORY_MODE_PROTOTYPE);
+    primeStoryLaunch(fresh);
+    void launchGame(game, 'story');
+  });
+  root.querySelector<HTMLButtonElement>('[data-story-action="back"]')?.addEventListener('click', renderLanding);
+  for (const button of root.querySelectorAll<HTMLButtonElement>('[data-story-chapter]')) {
+    button.addEventListener('click', () => {
+      const chapterId = button.dataset.storyChapter;
+      if (!chapterId) return;
+      const selected = selectStoryChapter(STORY_MODE_PROTOTYPE, progress, chapterId);
+      primeStoryLaunch(selected);
+      void launchGame(game, 'story');
     });
   }
 }
