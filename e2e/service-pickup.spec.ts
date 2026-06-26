@@ -755,7 +755,7 @@ test('stealing a patrol car starts and completes a live suspect bust side missio
   page,
 }) => {
   await boot(page);
-  const { patrol, suspectA } = await seedPolicePatrolMission(page);
+  const { patrol, suspectB } = await seedPolicePatrolMission(page);
 
   await page.locator('#game canvas').click();
   await page.evaluate(
@@ -823,7 +823,7 @@ test('stealing a patrol car starts and completes a live suspect bust side missio
 
   expect(start.drivingKind).toBe('police');
   expect(start.mission?.kind).toBe('police');
-  expect(start.target).toEqual(suspectA);
+  expect(start.target).toEqual(suspectB);
   expect(start.suspectCount).toBe(1);
   expect(start.markerVisible).toBe(true);
   expect(start.hud).toContain('POLICE: Bust the suspect');
