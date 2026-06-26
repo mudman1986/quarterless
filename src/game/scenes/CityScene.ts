@@ -15,7 +15,8 @@ import {
   clearGameState,
   GAME_STATE_KEY,
   loadGameState,
-  MANUAL_SAVE_KEY,
+  MANUAL_SAVE_SLOT_COUNT,
+  manualSaveKey,
   saveGameState,
 } from '../../core/gameState';
 import {
@@ -236,8 +237,10 @@ export class CityScene extends Phaser.Scene {
   private newGameKey!: Phaser.Input.Keyboard.Key;
   private saveGameKey!: Phaser.Input.Keyboard.Key;
   private loadGameKey!: Phaser.Input.Keyboard.Key;
+  private manualSlotKeys: Phaser.Input.Keyboard.Key[] = [];
   private pauseMenu!: Phaser.GameObjects.Text;
   private pauseResumeButton!: Phaser.GameObjects.Text;
+  private pauseSlotButton!: Phaser.GameObjects.Text;
   private pauseSaveButton!: Phaser.GameObjects.Text;
   private pauseLoadButton!: Phaser.GameObjects.Text;
   private pauseNewGameButton!: Phaser.GameObjects.Text;
@@ -246,6 +249,7 @@ export class CityScene extends Phaser.Scene {
   /** High-score persistence. */
   private store: KeyValueStore = safeStorage();
   private savedBest = 0;
+  private selectedManualSlot = 1;
   private skipPersistOnShutdown = false;
   private requestedLoadKey: string | null = GAME_STATE_KEY;
   private skipResumeOnCreate = false;
@@ -374,6 +378,11 @@ export class CityScene extends Phaser.Scene {
     this.newGameKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.N);
     this.saveGameKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.S);
     this.loadGameKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.L);
+    this.manualSlotKeys = [
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.ONE),
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.TWO),
+      kb.addKey(Phaser.Input.Keyboard.KeyCodes.THREE),
+    ];
     this.paused = false;
     this.refreshPauseMenu();
     if (typeof window !== 'undefined') {
@@ -1383,12 +1392,13 @@ export class CityScene extends Phaser.Scene {
     place(this.hud, 10, 10); // top-left status readout
     place(this.banner, width / 2, 84); // mission announcement
     place(this.bustedText, width / 2, height / 2);
-    place(this.pauseMenu, width / 2, height / 2 - 128);
-    place(this.pauseResumeButton, width / 2, height / 2 - 14);
-    place(this.pauseSaveButton, width / 2, height / 2 + 32);
-    place(this.pauseLoadButton, width / 2, height / 2 + 78);
-    place(this.pauseNewGameButton, width / 2, height / 2 + 124);
-    place(this.pauseTouchButton, width / 2, height / 2 + 196);
+    place(this.pauseMenu, width / 2, height / 2 - 156);
+    place(this.pauseResumeButton, width / 2, height / 2 - 42);
+    place(this.pauseSlotButton, width / 2, height / 2 + 4);
+    place(this.pauseSaveButton, width / 2, height / 2 + 50);
+    place(this.pauseLoadButton, width / 2, height / 2 + 96);
+    place(this.pauseNewGameButton, width / 2, height / 2 + 142);
+    place(this.pauseTouchButton, width / 2, height / 2 + 214);
 
     if (this.minimapBg) {
       // Clamp the top-right anchor so the whole map stays on screen even on a
@@ -1453,7 +1463,7 @@ export class CityScene extends Phaser.Scene {
     this.pauseMenu = this.add
       .text(
         this.scale.width / 2,
-        this.scale.height / 2 - 128,
+        this.scale.height / 2 - 156,
         '',
         {
           fontFamily: 'monospace',
@@ -1470,12 +1480,13 @@ export class CityScene extends Phaser.Scene {
       .setVisible(false);
 
     this.pauseResumeButton = this.createPauseActionButton('Resume  [P]', () => this.togglePause());
+    this.pauseSlotButton = this.createPauseActionButton('', () => this.cycleManualSlot());
     this.pauseSaveButton = this.createPauseActionButton('Save Game  [S]', () => this.saveManualGame());
     this.pauseLoadButton = this.createPauseActionButton('Load Saved Game  [L]', () => this.loadManualGame());
     this.pauseNewGameButton = this.createPauseActionButton('New Game  [N]', () => this.startNewGame());
 
     this.pauseTouchButton = this.add
-      .text(this.scale.width / 2, this.scale.height / 2 + 196, '', {
+      .text(this.scale.width / 2, this.scale.height / 2 + 214, '', {
         fontFamily: 'monospace',
         fontSize: '18px',
         color: '#67e8f9',
@@ -1632,6 +1643,9 @@ export class CityScene extends Phaser.Scene {
     // Toggle pause; while paused the simulation is frozen.
     if (Phaser.Input.Keyboard.JustDown(this.pauseKey)) this.togglePause();
     if (this.paused) {
+      this.manualSlotKeys.forEach((key, index) => {
+        if (Phaser.Input.Keyboard.JustDown(key)) this.selectManualSlot(index + 1);
+      });
       if (Phaser.Input.Keyboard.JustDown(this.saveGameKey)) this.saveManualGame();
       if (Phaser.Input.Keyboard.JustDown(this.loadGameKey)) this.loadManualGame();
       this.prevTouchConfirm = !!touchSnapshot?.confirmPressed;
@@ -1738,45 +1752,72 @@ export class CityScene extends Phaser.Scene {
   private setPauseUiVisible(visible: boolean): void {
     this.pauseMenu.setVisible(visible);
     this.pauseResumeButton.setVisible(visible);
+    this.pauseSlotButton.setVisible(visible);
     this.pauseSaveButton.setVisible(visible);
     this.pauseLoadButton.setVisible(visible);
     this.pauseNewGameButton.setVisible(visible);
   }
 
-  private hasManualSave(): boolean {
-    return loadGameState(this.store, MANUAL_SAVE_KEY) !== null;
+  private currentManualSaveKey(): string {
+    return manualSaveKey(this.selectedManualSlot);
+  }
+
+  private hasManualSave(slot = this.selectedManualSlot): boolean {
+    return loadGameState(this.store, manualSaveKey(slot)) !== null;
+  }
+
+  private selectManualSlot(slot: number): void {
+    const normalized = Math.max(1, Math.min(MANUAL_SAVE_SLOT_COUNT, slot));
+    if (this.selectedManualSlot === normalized) return;
+    this.selectedManualSlot = normalized;
+    this.refreshPauseMenu();
+  }
+
+  private cycleManualSlot(): void {
+    this.selectedManualSlot = this.selectedManualSlot % MANUAL_SAVE_SLOT_COUNT + 1;
+    this.refreshPauseMenu();
   }
 
   private refreshPauseMenu(): void {
     if (!this.pauseMenu) return;
     const hasManualSave = this.hasManualSave();
+    const slotHelp = Array.from({ length: MANUAL_SAVE_SLOT_COUNT }, (_, index) => `${index + 1}`).join('/');
     this.pauseMenu.setText(
       [
         'PAUSED',
         '',
-        'Resume, save this run, load your saved slot, or start over.',
+        'Resume, save this run, load a chosen slot, or start over.',
+        `Press ${slotHelp} or tap Slot to choose a save slot.`,
       ].join('\n'),
     );
+    this.pauseSlotButton.setText(
+      `Slot ${this.selectedManualSlot}/${MANUAL_SAVE_SLOT_COUNT}${hasManualSave ? '  •  Occupied' : '  •  Empty'}\nTap to cycle · Keys ${slotHelp}`,
+    );
+    this.pauseSaveButton.setText(`Save Slot ${this.selectedManualSlot}  [S]`);
     this.pauseLoadButton
-      .setText(hasManualSave ? 'Load Saved Game  [L]' : 'Load Saved Game  [L]\nEmpty slot')
+      .setText(
+        hasManualSave
+          ? `Load Slot ${this.selectedManualSlot}  [L]`
+          : `Load Slot ${this.selectedManualSlot}  [L]\nEmpty slot`,
+      )
       .setAlpha(hasManualSave ? 1 : 0.6);
   }
 
   private saveManualGame(): void {
-    this.persistGameState(MANUAL_SAVE_KEY);
+    this.persistGameState(this.currentManualSaveKey());
     this.refreshPauseMenu();
-    this.showBanner('GAME SAVED');
+    this.showBanner(`SAVED SLOT ${this.selectedManualSlot}`);
   }
 
   private loadManualGame(): void {
     if (!this.hasManualSave()) {
-      this.showBanner('NO SAVED GAME');
+      this.showBanner(`SLOT ${this.selectedManualSlot} EMPTY`);
       this.refreshPauseMenu();
       return;
     }
     this.paused = false;
     this.skipPersistOnShutdown = true;
-    this.scene.restart({ loadSaveKey: MANUAL_SAVE_KEY });
+    this.scene.restart({ loadSaveKey: this.currentManualSaveKey() });
   }
 
   /** Restart the scene, beginning a brand-new game (the high score persists). */

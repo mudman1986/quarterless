@@ -4,6 +4,7 @@ import {
   clearGameState,
   GAME_STATE_KEY,
   MANUAL_SAVE_KEY,
+  manualSaveKey,
   loadGameState,
   saveGameState,
 } from './gameState';
@@ -235,6 +236,26 @@ describe('game state storage', () => {
       version: 1,
       world: world.snapshot(),
       timeOfDay: 88,
+    });
+  });
+
+  it('keeps multiple manual save slots independent', () => {
+    const store = fakeStore();
+    const first = new World({ player: { pos: { x: 4, y: 5 }, angle: 0, radius: 7 } });
+    const second = new World({ player: { pos: { x: 8, y: 9 }, angle: 0, radius: 7 } });
+
+    saveGameState(store, { world: first.snapshot(), timeOfDay: 88 }, manualSaveKey(1));
+    saveGameState(store, { world: second.snapshot(), timeOfDay: 144 }, manualSaveKey(2));
+
+    expect(loadGameState(store, manualSaveKey(1))).toEqual({
+      version: 1,
+      world: first.snapshot(),
+      timeOfDay: 88,
+    });
+    expect(loadGameState(store, manualSaveKey(2))).toEqual({
+      version: 1,
+      world: second.snapshot(),
+      timeOfDay: 144,
     });
   });
 });

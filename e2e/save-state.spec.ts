@@ -22,6 +22,10 @@ const GAME = '() => window.__game';
 const SAVE_KEY = 'sindicate.gameState';
 const MANUAL_SAVE_KEY = 'sindicate.manualSave';
 
+function manualSaveKey(slot: number): string {
+  return slot <= 1 ? MANUAL_SAVE_KEY : `${MANUAL_SAVE_KEY}.${slot}`;
+}
+
 type PersistedState = {
   pos: { x: number; y: number };
   health: { current: number; max: number };
@@ -168,7 +172,7 @@ test('Sindicate can manually save a run and load it later from pause', async ({ 
   await page.keyboard.press('p');
   await page.keyboard.press('s');
 
-  const manualRaw = await page.evaluate((key) => window.localStorage.getItem(key), MANUAL_SAVE_KEY);
+  const manualRaw = await page.evaluate((key) => window.localStorage.getItem(key), manualSaveKey(1));
   expect(manualRaw).not.toBeNull();
   const manualStored = JSON.parse(manualRaw ?? 'null') as StoredSave;
   expect(manualStored.world.player.pos).toEqual({ x: 310, y: 470 });
@@ -238,4 +242,99 @@ test('Sindicate can manually save a run and load it later from pause', async ({ 
   expect(loadedState.hudText).toBe(manualBaseline.hudText);
   expect(loadedState.timeOfDay).toBeGreaterThanOrEqual(manualStored.timeOfDay);
   expect(loadedState.timeOfDay).toBeLessThan(manualStored.timeOfDay + 5);
+});
+
+test('Sindicate keeps multiple manual save slots independent', async ({ page }) => {
+  await boot(page);
+
+  await page.evaluate(() => {
+    const game = (window as unknown as { __game: GameProbe }).__game;
+    const scene = game.scene.getScene('City');
+    const world = scene.world;
+    world.player.pos = { x: 111, y: 222 };
+    world.health.current = 66;
+    world.weapon.ammo = 7;
+    world.score.current = 100;
+    world.score.best = 400;
+    world.wanted.heat = 115;
+    scene.timeOfDay = 150;
+  });
+
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: GameProbe }).__game;
+    if (!game) return false;
+    const hudText = game.scene.getScene('City').hud.text;
+    return hudText.includes('HP 66/100') && hudText.includes('$100  (best $400)');
+  });
+
+  const slotOneState = await readState(page);
+  await page.keyboard.press('p');
+  await page.keyboard.press('s');
+
+  await page.keyboard.press('p');
+  await page.evaluate(() => {
+    const game = (window as unknown as { __game: GameProbe }).__game;
+    const scene = game.scene.getScene('City');
+    const world = scene.world;
+    world.player.pos = { x: 333, y: 444 };
+    world.health.current = 55;
+    world.weapon.ammo = 13;
+    world.score.current = 200;
+    world.score.best = 500;
+    world.wanted.heat = 230;
+    scene.timeOfDay = 320;
+  });
+
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: GameProbe }).__game;
+    if (!game) return false;
+    const hudText = game.scene.getScene('City').hud.text;
+    return hudText.includes('HP 55/100') && hudText.includes('$200  (best $500)');
+  });
+
+  const slotTwoState = await readState(page);
+  await page.keyboard.press('p');
+  await page.keyboard.press('2');
+  await page.keyboard.press('s');
+
+  const slotOneRaw = await page.evaluate((key) => window.localStorage.getItem(key), manualSaveKey(1));
+  const slotTwoRaw = await page.evaluate((key) => window.localStorage.getItem(key), manualSaveKey(2));
+  expect(slotOneRaw).not.toBeNull();
+  expect(slotTwoRaw).not.toBeNull();
+  expect(slotOneRaw).not.toBe(slotTwoRaw);
+
+  await page.keyboard.press('1');
+  await page.keyboard.press('l');
+
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: GameProbe }).__game;
+    if (!game) return false;
+    const world = game.scene.getScene('City').world;
+    return world.player.pos.x === 111 && world.player.pos.y === 222 && world.score.current === 100;
+  });
+
+  const loadedSlotOneState = await readState(page);
+  expect(loadedSlotOneState.pos).toEqual(slotOneState.pos);
+  expect(loadedSlotOneState.health).toEqual(slotOneState.health);
+  expect(loadedSlotOneState.ammo).toBe(slotOneState.ammo);
+  expect(loadedSlotOneState.score).toEqual(slotOneState.score);
+  expect(loadedSlotOneState.wantedStars).toBe(slotOneState.wantedStars);
+
+  await page.keyboard.press('p');
+  await page.keyboard.press('2');
+  await page.keyboard.press('l');
+
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: GameProbe }).__game;
+    if (!game) return false;
+    const world = game.scene.getScene('City').world;
+    return world.player.pos.x === 333 && world.player.pos.y === 444 && world.score.current === 200;
+  });
+
+  const loadedSlotTwoState = await readState(page);
+  expect(loadedSlotTwoState.pos).toEqual(slotTwoState.pos);
+  expect(loadedSlotTwoState.health).toEqual(slotTwoState.health);
+  expect(loadedSlotTwoState.ammo).toBe(slotTwoState.ammo);
+  expect(loadedSlotTwoState.score).toEqual(slotTwoState.score);
+  expect(loadedSlotTwoState.wantedStars).toBe(slotTwoState.wantedStars);
 });

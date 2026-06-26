@@ -3,6 +3,7 @@ import type { WorldSnapshot } from './world';
 
 export const GAME_STATE_KEY = 'sindicate.gameState';
 export const MANUAL_SAVE_KEY = 'sindicate.manualSave';
+export const MANUAL_SAVE_SLOT_COUNT = 3;
 export const GAME_STATE_VERSION = 1;
 
 export interface GameStateSnapshot {
@@ -13,6 +14,11 @@ export interface GameStateSnapshot {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+export function manualSaveKey(slot: number): string {
+  const normalized = Math.max(1, Math.min(MANUAL_SAVE_SLOT_COUNT, Math.floor(slot) || 1));
+  return normalized === 1 ? MANUAL_SAVE_KEY : `${MANUAL_SAVE_KEY}.${normalized}`;
 }
 
 export function loadGameState(
