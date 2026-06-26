@@ -395,12 +395,12 @@ Implemented now:
 
 - Typed story authoring exists in `src/game/story/storyMode.ts`.
 - Ordered story progression and persistence exist in `src/game/story/storyProgress.ts`.
-- Chapter 1, Dead Drop District, through Chapter 7, Freight Union Morning, are authored in code in `src/game/story/deadDropDistrict.ts`.
+- Chapter 1, Dead Drop District, through Chapter 9, Glass Towers, Empty Floors, are authored in code in `src/game/story/deadDropDistrict.ts`.
 - The scene can boot into story mode and persist story progress alongside the normal world save.
 - Story mode now has a dedicated landing-page story menu with continue, new-story, and chapter-select entry points, while still supporting `?story=1` or `?mode=story` in the browser URL.
 - New `route`, `tail`, and `capture` objectives exist in `src/core/mission.ts`.
 - A reusable prototype mission-actor layer now drives fake ambulances, staged convoy handoffs, escort-style route actors, named mission-target squads, district-state labels, and data-driven fail rules from authored story data instead of hardcoded mission branches in the scene.
-- Dead Drop District through Freight Union Morning now compile into a playable seven-chapter prototype runtime campaign spanning two acts.
+- Dead Drop District through Glass Towers, Empty Floors now compile into a playable nine-chapter prototype runtime campaign spanning two acts.
 - Story mode now shows authored chapter briefing panels, mission transition recap/briefing panels with reward summaries, and chapter-complete or story-complete panels with richer authored text.
 - The dedicated story menu now includes an act-grouped chapter map, chapter selection, progress totals, and a recap archive for completed chapters.
 - Story mode now supports replaying unlocked chapters from both the dedicated story menu and the in-game pause menu.
@@ -408,7 +408,7 @@ Implemented now:
 
 Prototype limitations right now:
 
-- Chapter 1 through Chapter 7 missions are playable approximations, not fully scripted bespoke set pieces.
+- Chapter 1 through Chapter 9 missions are playable approximations, not fully scripted bespoke set pieces.
 - Tail, capture, escort, stealth, and district-state behavior are still represented by simpler linear objective chains where needed.
 - The mission-actor layer now covers route-driven vehicles, staged convoy handoffs, escorts, named mission-target squads, district-state labels, and simple fail rules, but it still lacks richer custom encounter scripting and persistent systemic choreography.
 - There is not yet a full chapter-map front end or a complete post-mission scorecard; the current act-grouped menu, recap archive, and reward callouts are functional rather than final.
@@ -579,7 +579,7 @@ What is already true in code:
 - All 5 Dead Drop District missions now have prototype runtime specs.
 - The chapter can compile into a playable sequential campaign.
 - The chapter can save and resume story progress.
-- The prototype can roll forward through Chapter 7 across two acts.
+- The prototype can roll forward through Chapter 9 across two acts.
 - The prototype can replay unlocked chapters from both the story menu and the pause menu.
 - Fake ambulance, convoy, escort, and named-squad behavior are now driven by authored mission-actor script data instead of only hardcoded scene branches.
 - Completed chapters now surface in a recap archive on the act-grouped story menu.
@@ -596,5 +596,5 @@ Recommended next production step:
 
 1. Expand the mission-actor layer from staged route actors into full multi-stage raids, convoy handoffs with multiple tracked actors, and more persistent systemic district-state choreography.
 2. Add fuller post-mission scorecards and a more polished chapter-map style story front end on top of the current act-grouped menu and recap archive.
-3. Continue authoring Chapter 8 and beyond on top of the broader actor layer.
+3. Continue authoring Chapter 10 and beyond on top of the broader actor layer.
 4. Broaden regression coverage from the focused story browser suite into longer multi-chapter progression and more world-level scripted-actor tests.

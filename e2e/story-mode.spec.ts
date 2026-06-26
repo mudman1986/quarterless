@@ -204,11 +204,11 @@ test('story mode shows a prototype-complete panel when the current story slice f
     }
 
     scene.storyProgress.current = {
-      chapterId: 'freight-union-morning',
-      missionId: 'the-long-manifest',
+      chapterId: 'glass-towers-empty-floors',
+      missionId: 'vacancy-notice',
       objectiveIndex: 0,
     };
-    scene.prevMissionId = 'the-long-manifest';
+    scene.prevMissionId = 'vacancy-notice';
     scene.prevMissionComplete = false;
     scene.world.campaign.currentIndex = scene.world.campaign.missions.length;
     scene.handleEvents();

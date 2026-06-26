@@ -1301,6 +1301,378 @@ export const FREIGHT_UNION_MORNING: StoryChapter = {
   ],
 };
 
+export const NEON_COURIERS: StoryChapter = {
+  id: 'neon-couriers',
+  actId: 'court-the-citys-middle-powers',
+  order: 2,
+  title: 'Neon Couriers',
+  storyRole: 'Street racers and courier crews know how to move through the city faster than official systems do.',
+  combinedGoal:
+    'Win over the courier crews, learn how the Switchboard routes around surveillance, and steal the tape that maps the fast lanes no official dispatcher admits exist.',
+  missions: [
+    {
+      id: 'signal-sprint',
+      title: 'Signal Sprint',
+      hook: 'The couriers trust route memory more than bravado.',
+      primaryGoal: 'Clear the courier sprint route ahead of the rival team to prove Rook knows the fast lanes.',
+      secondaryPressure: 'The route should reward clean pathing rather than raw top speed.',
+      failureState: 'Fail if the courier route times out before Rook clears every sprint gate.',
+      payoff: 'The crews admit Rook can read the city fast enough to learn their dead-drop network.',
+      prototypeRuntime: {
+        id: 'signal-sprint',
+        title: 'Signal Sprint',
+        objectives: [
+          {
+            kind: 'route',
+            description: 'Clear the courier sprint route ahead of the rival team',
+            targets: [
+              { x: 960, y: 1984 },
+              { x: 1472, y: 1856 },
+              { x: 1984, y: 1792 },
+              { x: 2496, y: 1728 },
+            ],
+            radius: 84,
+            timeLimitSeconds: 70,
+          },
+        ],
+        reward: 4000,
+      },
+    },
+    {
+      id: 'drop-stack',
+      title: 'Drop Stack',
+      hook: 'Every delivered package changes the patrol map for the next one.',
+      primaryGoal: 'Hit the dead-drop stack in the right order before the route closes behind the crew.',
+      secondaryPressure: 'The route should feel like a changing traffic puzzle, not a static collect chain.',
+      failureState: 'Fail if the stack route times out before the last package lane is reached.',
+      payoff: 'Rook learns which courier routes pass under the surveillance grid unnoticed.',
+      prototypeRuntime: {
+        id: 'drop-stack',
+        title: 'Drop Stack',
+        objectives: [
+          {
+            kind: 'route',
+            description: 'Reach the courier dead drops in sequence before the route closes',
+            targets: [
+              { x: 2752, y: 1664 },
+              { x: 3264, y: 1600 },
+              { x: 3776, y: 1536 },
+            ],
+            radius: 84,
+            timeLimitSeconds: 80,
+          },
+        ],
+        reward: 4300,
+      },
+    },
+    {
+      id: 'blind-corner',
+      title: 'Blind Corner',
+      hook: 'One passenger still knows which roads cameras cannot quite see.',
+      primaryGoal: 'Escort the blind-corner guide through the surveillance gaps long enough to map the safe route.',
+      secondaryPressure: 'The player should feel pressure to keep the guide close without drifting out of escort range.',
+      failureState: 'Fail if the guide is left outside the moving safe lane for too long.',
+      payoff: 'The guide points Rook to the crew carrying the producer\'s tape.',
+      prototypeRuntime: {
+        id: 'blind-corner',
+        title: 'Blind Corner',
+        objectives: [{ kind: 'survive', description: 'Keep the guide moving through the blind-corner route for 16 seconds', seconds: 16 }],
+        reward: 4600,
+      },
+      prototypeScript: {
+        primaryActorId: 'blind-corner-guide',
+        actors: [
+          {
+            kind: 'pedestrianRoute',
+            actorId: 'blind-corner-guide',
+            route: [
+              { x: 3712, y: 1792 },
+              { x: 3520, y: 2048 },
+              { x: 3200, y: 2240 },
+            ],
+            speed: 44,
+            escortRadius: 180,
+          },
+        ],
+        failRules: [
+          {
+            kind: 'escortRadius',
+            actorId: 'blind-corner-guide',
+            radius: 220,
+            maxSeconds: 3,
+            failureText: 'The guide slipped out of the safe blind-corner lane.',
+          },
+        ],
+      },
+    },
+    {
+      id: 'rival-tape',
+      title: 'Rival Tape',
+      hook: 'The tape is changing vehicles in the middle of the boulevard rush.',
+      primaryGoal: 'Stay on the tape route through the courier handoff until the decoder safehouse is identified.',
+      secondaryPressure: 'The route should escalate through one handoff rather than one long straight tail.',
+      failureState: 'Fail if the tape handoff is lost before the decoder car reaches the safehouse line.',
+      payoff: 'Rook now knows where the producer is cutting the dispatch evidence loose from the network.',
+      prototypeRuntime: {
+        id: 'rival-tape',
+        title: 'Rival Tape',
+        objectives: [{ kind: 'tail', description: 'Stay on the tape handoff route', seconds: 12 }],
+        reward: 5000,
+      },
+      prototypeScript: {
+        primaryActorId: 'bike-runner',
+        stages: [
+          {
+            id: 'bike-run',
+            title: 'Track The Bike Runner',
+            primaryActorId: 'bike-runner',
+            districtState: { label: 'Courier Relay', summary: 'The tape is still with the bike runner threading the boulevard.' },
+            actors: [
+              {
+                kind: 'vehicleRoute',
+                actorId: 'bike-runner',
+                vehicleKind: 'sports',
+                route: [
+                  { x: 2944, y: 2368 },
+                  { x: 3328, y: 2368 },
+                  { x: 3648, y: 2240 },
+                ],
+                speed: 125,
+                followRadius: 320,
+                tailDrainPerSecond: 2,
+                loseGraceSeconds: 2.5,
+              },
+            ],
+            nextWhen: { kind: 'routeComplete', actorId: 'bike-runner' },
+          },
+          {
+            id: 'decoder-handoff',
+            title: 'Stay On The Decoder Car',
+            primaryActorId: 'decoder-coupe',
+            districtState: { label: 'Decoder Handoff', summary: 'The tape has moved into the decoder car headed for the safehouse.' },
+            actors: [
+              {
+                kind: 'vehicleRoute',
+                actorId: 'decoder-coupe',
+                vehicleKind: 'coupe',
+                route: [
+                  { x: 3648, y: 2240 },
+                  { x: 3904, y: 1984 },
+                  { x: 4032, y: 1728 },
+                ],
+                speed: 120,
+                followRadius: 320,
+                tailDrainPerSecond: 2,
+                loseGraceSeconds: 2.5,
+              },
+            ],
+          },
+        ],
+        actors: [],
+      },
+    },
+    {
+      id: 'lamps-out',
+      title: 'Lamps Out',
+      hook: 'The couriers can move unseen only if the boulevard festival falls dark in the right order.',
+      primaryGoal: 'Reach the power vans in sequence and hold the blackout long enough for the courier sweep to pass.',
+      secondaryPressure: 'The route should feel like orchestrated disruption instead of another random destruction spree.',
+      failureState: 'Fail if the blackout order breaks before the courier sweep clears the boulevard.',
+      payoff: 'The crews become willing allies and point Rook toward the property managers working with the Switchboard.',
+      prototypeRuntime: {
+        id: 'lamps-out',
+        title: 'Lamps Out',
+        objectives: [
+          {
+            kind: 'route',
+            description: 'Reach the power vans in the blackout order',
+            targets: [
+              { x: 3904, y: 1536 },
+              { x: 3456, y: 1472 },
+              { x: 3008, y: 1408 },
+            ],
+            radius: 84,
+            timeLimitSeconds: 75,
+          },
+          {
+            kind: 'survive',
+            description: 'Keep the boulevard dark for 12 seconds',
+            seconds: 12,
+          },
+        ],
+        reward: 5400,
+      },
+    },
+  ],
+};
+
+export const GLASS_TOWERS_EMPTY_FLOORS: StoryChapter = {
+  id: 'glass-towers-empty-floors',
+  actId: 'court-the-citys-middle-powers',
+  order: 3,
+  title: 'Glass Towers, Empty Floors',
+  storyRole: 'Corporate property managers are using staged accidents to depress district prices before buying them up.',
+  combinedGoal:
+    'Turn the courier evidence into a property-fraud case, expose the staged-collapse routes, and hit the transaction archive before the brokers can bury it.',
+  missions: [
+    {
+      id: 'tenant-warning',
+      title: 'Tenant Warning',
+      hook: 'Three tenant leaders still need the evidence before the private security sweep reaches them.',
+      primaryGoal: 'Reach the tenant warning route in order and deliver the evidence before the sweep closes the blocks.',
+      secondaryPressure: 'The route should feel like you are outrunning a pressure wave, not just collecting objectives.',
+      failureState: 'Fail if the warning route times out before the last leader is reached.',
+      payoff: 'The tenants reveal which generator nodes are being used to fake the next outage.',
+      prototypeRuntime: {
+        id: 'tenant-warning',
+        title: 'Tenant Warning',
+        objectives: [
+          {
+            kind: 'route',
+            description: 'Reach the tenant leaders before the sweep closes the blocks',
+            targets: [
+              { x: 1024, y: 960 },
+              { x: 1536, y: 1024 },
+              { x: 2048, y: 1088 },
+            ],
+            radius: 84,
+            timeLimitSeconds: 75,
+          },
+        ],
+        reward: 4200,
+      },
+    },
+    {
+      id: 'window-tax',
+      title: 'Window Tax',
+      hook: 'The outage pattern is being managed from maintenance vans that never stop in the same place twice.',
+      primaryGoal: 'Track the maintenance route and hold the vans long enough to expose the generator order.',
+      secondaryPressure: 'The route should feel like corporate choreography rather than gang panic.',
+      failureState: 'Fail if the maintenance route disappears before the generator order is captured.',
+      payoff: 'Rook learns exactly which tower will be used to flush the broker into the underground garage meet.',
+      prototypeRuntime: {
+        id: 'window-tax',
+        title: 'Window Tax',
+        objectives: [{ kind: 'tail', description: 'Stay on the maintenance route until the generator order is exposed', seconds: 11 }],
+        reward: 4500,
+      },
+      prototypeScript: {
+        primaryActorId: 'maintenance-van',
+        actors: [
+          {
+            kind: 'vehicleRoute',
+            actorId: 'maintenance-van',
+            vehicleKind: 'van',
+            route: [
+              { x: 2240, y: 1216 },
+              { x: 2752, y: 1280 },
+              { x: 3264, y: 1344 },
+            ],
+            speed: 105,
+            followRadius: 320,
+            tailDrainPerSecond: 2,
+            loseGraceSeconds: 2.5,
+          },
+        ],
+      },
+    },
+    {
+      id: 'lobby-flood',
+      title: 'Lobby Flood',
+      hook: 'The broker only leaves the tower if the sprinkler panic hits the right floor at the right time.',
+      primaryGoal: 'Clear the panic route and force the broker into the garage exit lane.',
+      secondaryPressure: 'The player should feel like the trap is being built step by step instead of sprung all at once.',
+      failureState: 'Fail if the broker route slips free before the garage lane is forced shut.',
+      payoff: 'The broker is pushed into the forged-deeds convoy that carries the transaction archive.',
+      prototypeRuntime: {
+        id: 'lobby-flood',
+        title: 'Lobby Flood',
+        objectives: [
+          {
+            kind: 'reach',
+            description: 'Reach the garage exit lane before the broker escapes',
+            target: { x: 3456, y: 1536 },
+            radius: 88,
+          },
+          {
+            kind: 'capture',
+            description: 'Hold the broker lane long enough to force the garage lock',
+            seconds: 3,
+          },
+        ],
+        reward: 4800,
+      },
+    },
+    {
+      id: 'fire-sale-run',
+      title: 'Fire Sale Run',
+      hook: 'The forged deeds are moving in a box truck that must not be destroyed before the archive reaches the press.',
+      primaryGoal: 'Escort the archive truck through the district until it reaches the press lane alive.',
+      secondaryPressure: 'The route should force active protection instead of just staying nearby.',
+      failureState: 'Fail if the archive truck falls outside the safe lane too long.',
+      payoff: 'Rook turns the forged deeds into proof of the district-level property play.',
+      prototypeRuntime: {
+        id: 'fire-sale-run',
+        title: 'Fire Sale Run',
+        objectives: [{ kind: 'survive', description: 'Keep the archive truck moving for 18 seconds', seconds: 18 }],
+        reward: 5200,
+      },
+      prototypeScript: {
+        primaryActorId: 'archive-truck',
+        actors: [
+          {
+            kind: 'pedestrianRoute',
+            actorId: 'archive-truck',
+            route: [
+              { x: 3648, y: 1728 },
+              { x: 3328, y: 1984 },
+              { x: 3008, y: 2176 },
+            ],
+            speed: 42,
+            escortRadius: 180,
+          },
+        ],
+        failRules: [
+          {
+            kind: 'escortRadius',
+            actorId: 'archive-truck',
+            radius: 220,
+            maxSeconds: 3,
+            failureText: 'The archive truck slipped out of the safe press lane.',
+          },
+        ],
+      },
+    },
+    {
+      id: 'vacancy-notice',
+      title: 'Vacancy Notice',
+      hook: 'The transaction archive is moving to the half-built tower where the whole district play was planned.',
+      primaryGoal: 'Reach the half-built tower and hold the archive lane long enough to drag the full transaction file into the open.',
+      secondaryPressure: 'The ending should feel like a public reveal climbing into the skyline, not another street skirmish.',
+      failureState: 'Fail if the tower archive lane breaks before the transaction file is exposed.',
+      payoff: 'Rook and the tenant bloc force the first public corporate fracture in the Switchboard coalition.',
+      prototypeRuntime: {
+        id: 'vacancy-notice',
+        title: 'Vacancy Notice',
+        objectives: [
+          {
+            kind: 'reach',
+            description: 'Reach the half-built tower archive lane before the convoy seals it',
+            target: { x: 3904, y: 2368 },
+            radius: 88,
+          },
+          {
+            kind: 'survive',
+            description: 'Hold the archive lane for 20 seconds',
+            seconds: 20,
+          },
+        ],
+        reward: 5800,
+      },
+    },
+  ],
+};
+
 export const FIND_THE_MISSING_DISPATCHER: StoryAct = {
   id: 'find-the-missing-dispatcher',
   order: 1,
@@ -1316,7 +1688,7 @@ export const COURT_THE_CITYS_MIDDLE_POWERS: StoryAct = {
   title: 'Court The City\'s Middle Powers',
   summary:
     'Rook turns proof into alliances by winning over the city\'s dock crews, couriers, and neighborhood networks before the Switchboard can isolate them.',
-  chapters: [FREIGHT_UNION_MORNING],
+  chapters: [FREIGHT_UNION_MORNING, NEON_COURIERS, GLASS_TOWERS_EMPTY_FLOORS],
 };
 
 export const STORY_MODE_PROTOTYPE: StoryMode = {
