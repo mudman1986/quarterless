@@ -66,9 +66,8 @@ describe('compileStoryChapterRuntimeCampaign', () => {
     const missions = compileStoryChapterRuntimeCampaign(DEAD_DROP_DISTRICT, 'burned-locker', 1);
 
     expect(missions).toHaveLength(4);
-    expect(missions?.[0]?.id).toBe('burned-locker');
-    expect(missions?.[0]?.currentIndex).toBe(1);
-    expect(missions?.[1]?.id).toBe('wreck-before-dawn');
+    expect(missions?.[0]).toMatchObject({ id: 'burned-locker', currentIndex: 1 });
+    expect(missions?.[1]).toMatchObject({ id: 'wreck-before-dawn' });
   });
 });
 
@@ -79,6 +78,8 @@ describe('buildSandboxCampaigns', () => {
     expect(campaigns).toHaveLength(4);
     expect(campaigns[0]).toHaveLength(2);
     expect(campaigns[0]?.[0]?.title).toBe('Make a Name');
-    expect(currentObjective(campaigns[3]?.[0]!)?.kind).toBe('reach');
+    expect(campaigns[3]?.[0]).toBeDefined();
+    const firstServiceMission = campaigns[3]?.[0];
+    expect(firstServiceMission ? currentObjective(firstServiceMission)?.kind : null).toBe('reach');
   });
 });

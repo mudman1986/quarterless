@@ -2,12 +2,20 @@ import './arcade/arcade.css';
 import { startPreviews } from './arcade/previews';
 import type { GameRuntime, GameStarter } from './arcade/types';
 
+type LaunchMode = 'sandbox' | 'story';
+
+interface LaunchOption {
+  label: string;
+  mode: LaunchMode;
+}
+
 interface ArcadeGame {
   id: string;
   title: string;
   badge?: string;
   description: string;
   accent: string;
+  launchOptions?: readonly LaunchOption[];
   load: () => Promise<{ startGame: GameStarter }>;
 }
 
@@ -19,6 +27,10 @@ const games: readonly ArcadeGame[] = [
     description:
       'Top-down city chaos with traffic, wanted heat, service vehicles, taxis, and missions.',
     accent: '#47d7ff',
+    launchOptions: [
+      { label: 'Play Sindicate', mode: 'sandbox' },
+      { label: 'Story Mode', mode: 'story' },
+    ],
     load: () => import('./game/main'),
   },
   {
@@ -62,6 +74,40 @@ function stopActiveGame(): void {
   delete (window as unknown as { __game?: unknown }).__game;
 }
 
+function syncLaunchQuery(mode?: LaunchMode): void {
+  const url = new URL(window.location.href);
+  if (mode === 'story') {
+    url.searchParams.set('mode', 'story');
+    url.searchParams.set('story', '1');
+  } else {
+    url.searchParams.delete('mode');
+    url.searchParams.delete('story');
+  }
+  window.history.replaceState({}, '', url);
+}
+
+function launchButtons(game: ArcadeGame): string {
+  const options = game.launchOptions ?? [{ label: `Play ${game.title}`, mode: 'sandbox' as const }];
+  const stacked = options.length > 1 ? ' play-actions--stacked' : '';
+  return `
+    <div class="play-actions${stacked}">
+      ${options
+        .map(
+          (option) => `
+        <button
+          class="play-button${option.mode === 'story' ? ' play-button--secondary' : ''}"
+          type="button"
+          data-play="${game.id}"
+          data-mode="${option.mode}"
+          aria-label="${option.label}"
+        >
+          ${option.label}
+        </button>`,
+        )
+        .join('')}
+    </div>`;
+}
+
 function gameCard(game: ArcadeGame): string {
   return `
     <article class="game-card" style="--accent: ${game.accent}">
@@ -72,14 +118,13 @@ function gameCard(game: ArcadeGame): string {
       <div class="game-card-body">
         <h2>${game.title}</h2>
         <p>${game.description}</p>
-        <button class="play-button" type="button" data-play="${game.id}" aria-label="Play ${game.title}">
-          Play ${game.title}
-        </button>
+        ${launchButtons(game)}
       </div>
     </article>`;
 }
 
 function renderLanding(): void {
+  syncLaunchQuery();
   stopActiveGame();
   stopPreviews?.();
   setBodyMode('landing');
@@ -102,17 +147,18 @@ function renderLanding(): void {
   for (const button of root.querySelectorAll<HTMLButtonElement>('[data-play]')) {
     button.addEventListener('click', () => {
       const selected = games.find((game) => game.id === button.dataset.play);
-      if (selected) void launchGame(selected);
+      const mode = button.dataset.mode === 'story' ? 'story' : 'sandbox';
+      if (selected) void launchGame(selected, mode);
     });
   }
 }
 
-function renderLoading(game: ArcadeGame): void {
+function renderLoading(game: ArcadeGame, mode: LaunchMode): void {
   setBodyMode('loading');
   appRoot().innerHTML = `
     <main class="loading-screen" aria-live="polite">
       <div class="loading-panel">
-        <h1>Loading ${game.title}</h1>
+        <h1>Loading ${mode === 'story' ? `${game.title} Story Mode` : game.title}</h1>
         <div class="loading-bar" aria-hidden="true"></div>
       </div>
     </main>`;
@@ -132,11 +178,12 @@ function renderError(message: string): void {
   root.querySelector<HTMLButtonElement>('.retry-button')?.addEventListener('click', renderLanding);
 }
 
-async function launchGame(game: ArcadeGame): Promise<void> {
+async function launchGame(game: ArcadeGame, mode: LaunchMode = 'sandbox'): Promise<void> {
   stopPreviews?.();
   stopPreviews = null;
   stopActiveGame();
-  renderLoading(game);
+  syncLaunchQuery(game.id === 'sindicate' ? mode : undefined);
+  renderLoading(game, mode);
 
   try {
     const module = await game.load();

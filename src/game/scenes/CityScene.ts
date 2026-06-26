@@ -28,7 +28,7 @@ import {
   saveHighScore,
   type KeyValueStore,
 } from '../../core/highScore';
-import { createMission, type Mission } from '../../core/mission';
+import type { Mission } from '../../core/mission';
 import type { Car } from '../../core/vehicle';
 import type { Pedestrian } from '../../core/pedestrianAI';
 import { type TrafficAI, openDirections, tileCoord } from '../../core/trafficAI';
@@ -277,6 +277,7 @@ export class CityScene extends Phaser.Scene {
   private hud!: Phaser.GameObjects.Text;
   private bustedText!: Phaser.GameObjects.Text;
   private banner!: Phaser.GameObjects.Text;
+  private storyPanel!: Phaser.GameObjects.Text;
   private touchControlsGfx!: Phaser.GameObjects.Graphics;
   private prevTouchConfirm = false;
 
@@ -340,6 +341,8 @@ export class CityScene extends Phaser.Scene {
   private sirenTimer = 0;
   /** Seconds left to show the announcement banner. */
   private announceRemaining = 0;
+  private storyPanelRemaining = 0;
+  private pendingStoryRestart: StoryProgressSnapshot | null = null;
   /** Elapsed time driving the day/night cycle, and its dimming overlay. */
   private timeOfDay = 0;
   private dayNightOverlay!: Phaser.GameObjects.Rectangle;
@@ -403,6 +406,8 @@ export class CityScene extends Phaser.Scene {
     this.prevTouchControlsKey = '';
     this.touchControlsDirty = true;
     this.prevTouchConfirm = false;
+    this.storyPanelRemaining = 0;
+    this.pendingStoryRestart = null;
 
     this.city = buildCity(CITY_SPEC);
     createGameTextures(this);
@@ -445,6 +450,7 @@ export class CityScene extends Phaser.Scene {
     this.createMinimap();
     this.layoutHud();
     this.syncMinimap();
+    this.showStoryBriefingIfNeeded();
 
     this.input_ = new KeyboardInput(this.input.keyboard!);
     this.touchInput_ = new TouchInput(this.input);
@@ -1371,6 +1377,7 @@ export class CityScene extends Phaser.Scene {
 
     place(this.hud, 10, 10); // top-left status readout
     place(this.banner, width / 2, 84); // mission announcement
+    place(this.storyPanel, width / 2, height / 2 - 12);
     place(this.bustedText, width / 2, height / 2);
     place(this.pauseMenu, width / 2, height / 2 - 156);
     place(this.pauseResumeButton, width / 2, height / 2 - 42);
@@ -1457,6 +1464,21 @@ export class CityScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setScrollFactor(0)
       .setDepth(2500)
+      .setVisible(false);
+
+    this.storyPanel = this.add
+      .text(this.scale.width / 2, this.scale.height / 2 - 12, '', {
+        fontFamily: 'monospace',
+        fontSize: '20px',
+        color: '#f8fafc',
+        align: 'center',
+        backgroundColor: '#000000e0',
+        padding: { x: 22, y: 16 },
+        wordWrap: { width: 560, useAdvancedWrap: true },
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(2502)
       .setVisible(false);
 
     this.pauseResumeButton = this.createPauseActionButton('Resume  [P]', () => this.togglePause());
@@ -1632,6 +1654,22 @@ export class CityScene extends Phaser.Scene {
       return;
     }
 
+    if (this.pendingStoryRestart) {
+      if (this.storyPanelRemaining > 0) {
+        this.storyPanelRemaining -= deltaMs / 1000;
+      }
+      if (this.storyPanelRemaining <= 0) {
+        const progress = this.pendingStoryRestart;
+        this.pendingStoryRestart = null;
+        this.storyPanel.setVisible(false);
+        this.skipPersistOnShutdown = true;
+        clearGameState(this.store);
+        this.scene.restart({ skipResume: true, mode: 'story', storyProgress: progress });
+      }
+      this.prevTouchConfirm = !!touchSnapshot?.confirmPressed;
+      return;
+    }
+
     const keyboard = this.input_.read();
     const touch = this.touchEnabled && touchSnapshot ? touchSnapshot.controls : NO_CONTROLS;
     const controls = mergeControls(keyboard, touch);
@@ -1661,6 +1699,10 @@ export class CityScene extends Phaser.Scene {
     if (this.announceRemaining > 0) {
       this.announceRemaining -= dt;
       if (this.announceRemaining <= 0) this.banner.setVisible(false);
+    }
+    if (this.storyPanelRemaining > 0) {
+      this.storyPanelRemaining -= dt;
+      if (this.storyPanelRemaining <= 0) this.storyPanel.setVisible(false);
     }
 
     this.prevTouchConfirm = !!touchSnapshot?.confirmPressed;
@@ -1812,6 +1854,7 @@ export class CityScene extends Phaser.Scene {
   /** Persist the high score, play sounds, and announce mission changes. */
   private handleEvents(): void {
     const w = this.world;
+    const previousStoryChapter = this.mode === 'story' && this.storyProgress ? currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress) : null;
 
     // Save a new high score as soon as it is beaten.
     if (w.score.best > this.savedBest) {
@@ -1843,14 +1886,14 @@ export class CityScene extends Phaser.Scene {
         const nextChapter = this.storyProgress ? currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress) : null;
         this.persistGameState();
         if (nextMission?.prototypeRuntime && nextChapter) {
-          this.showBanner(`CHAPTER COMPLETE\n${nextChapter.title}`);
-          this.paused = false;
-          this.skipPersistOnShutdown = true;
-          clearGameState(this.store);
-          this.scene.restart({ skipResume: true, mode: 'story', storyProgress: this.storyProgress });
+          this.showStoryPanel(
+            `CHAPTER COMPLETE\n${previousStoryChapter?.title ?? 'Story Chapter'}\n\nNext: ${nextChapter.title}`,
+            2.4,
+          );
+          this.pendingStoryRestart = this.storyProgress;
           return;
         }
-        this.showBanner(this.storyProgress?.current ? 'STORY PROTOTYPE COMPLETE' : 'STORY COMPLETE');
+        this.showStoryPanel(this.storyProgress?.current ? 'STORY PROTOTYPE COMPLETE' : 'STORY COMPLETE', 2.8);
       } else {
         this.showBanner('ALL MISSIONS COMPLETE!');
       }
@@ -1909,6 +1952,24 @@ export class CityScene extends Phaser.Scene {
   private showBanner(text: string): void {
     this.banner.setText(text).setVisible(true);
     this.announceRemaining = ANNOUNCE_SECONDS;
+  }
+
+  private showStoryPanel(text: string, seconds: number): void {
+    this.storyPanel.setText(text).setVisible(true);
+    this.storyPanelRemaining = seconds;
+  }
+
+  private showStoryBriefingIfNeeded(): void {
+    if (this.mode !== 'story' || !this.storyProgress?.current) return;
+    const chapter = currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress);
+    const mission = currentStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress);
+    if (!chapter || !mission) return;
+    if (this.storyProgress.current.objectiveIndex !== 0) return;
+    if (mission.id !== chapter.missions[0]?.id) return;
+    this.showStoryPanel(
+      `CHAPTER 1\n${chapter.title}\n\n${chapter.storyRole}\n\n${mission.hook}`,
+      4.8,
+    );
   }
 
   private carTexture(index: number): string {
