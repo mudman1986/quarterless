@@ -15,7 +15,6 @@ import {
 } from '../../core/world';
 import type { WorldOptions } from '../../core/world';
 import { CITY_SPEC } from '../citySpec';
-import { createMission, type Mission } from '../../core/mission';
 import {
   clearGameState,
   GAME_STATE_KEY,
@@ -48,6 +47,7 @@ import {
 import { Sound } from '../audio/Sound';
 import { createGameTextures, TEX } from '../art/textures';
 import { NO_CONTROLS } from '../../core/types';
+import { buildSandboxCampaigns } from '../story/sandboxCampaigns';
 
 const COLORS = {
   road: 0x2b2b30,
@@ -674,141 +674,8 @@ export class CityScene extends Phaser.Scene {
 
   /** A pool of short campaigns. When one is finished a random other begins, so
    * the action never stops. Objective text spells out exactly what to do. */
-  private buildCampaigns(): Mission[][] {
-    const { spec } = this.city;
-    const b = spec.block;
-    const reach = (tx: number, ty: number, description: string) => ({
-      kind: 'reach' as const,
-      description,
-      target: tileCenter(spec, tx, ty),
-      radius: 56,
-    });
-    const reachPoint = (target: Vec2, description: string) => ({
-      kind: 'reach' as const,
-      description,
-      target,
-      radius: 64,
-    });
-    const policeStation = this.city.facilities.find((facility) => facility.kind === 'policeStation');
-    const hospital = this.city.facilities.find((facility) => facility.kind === 'hospital');
-    const towYard = this.city.facilities.find((facility) => facility.kind === 'towYard');
-    const taxiDepot = this.city.facilities.find((facility) => facility.kind === 'taxiDepot');
-
-    const makeName: Mission[] = [
-      createMission({
-        id: 'intro',
-        title: 'Make a Name',
-        objectives: [
-          reach(b * 3, b * 2, 'Drive to the marked junction (yellow ring)'),
-          { kind: 'eliminate', description: 'Take down 3 targets — press F to shoot', count: 3 },
-        ],
-        reward: 1000,
-      }),
-      createMission({
-        id: 'supply',
-        title: 'Tooled Up',
-        objectives: [
-          { kind: 'collect', description: 'Grab 2 ammo crates (drive or walk over them)', count: 2 },
-          reach(b * 6, b * 3, 'Deliver to the lockup (yellow ring)'),
-        ],
-        reward: 1500,
-      }),
-    ];
-
-    const heat: Mission[] = [
-      createMission({
-        id: 'rampage',
-        title: 'Send a Message',
-        objectives: [
-          { kind: 'wanted', description: 'Cause chaos until you hit a 3-star wanted level', stars: 3 },
-        ],
-        reward: 2000,
-      }),
-      createMission({
-        id: 'laylow',
-        title: 'Lay Low',
-        objectives: [
-          { kind: 'survive', description: 'Shake the cops — stay alive 30s while wanted', seconds: 30 },
-        ],
-        reward: 3000,
-      }),
-    ];
-
-    const mostWanted: Mission[] = [
-      createMission({
-        id: 'takedown',
-        title: 'Takedown',
-        objectives: [
-          {
-            kind: 'eliminate',
-            description: 'Take down 6 marked targets — run them over or shoot (F)',
-            count: 6,
-            targetsOnly: true,
-          },
-        ],
-        reward: 4000,
-      }),
-      createMission({
-        id: 'getaway',
-        title: 'Getaway',
-        objectives: [
-          reach(b * 9, b * 9, 'Reach the safehouse across town (yellow ring)'),
-          { kind: 'survive', description: 'Lie low for 20s', seconds: 20 },
-        ],
-        reward: 5000,
-      }),
-    ];
-
-    const service: Mission[] = [
-      createMission({
-        id: 'patrol-shift',
-        title: 'Patrol Shift',
-        objectives: [
-          ...(policeStation ? [reachPoint(policeStation.roadSpawn, 'Reach the marked police station')] : []),
-          { kind: 'service', description: 'Steal a patrol car and bust 1 suspect', service: 'police', count: 1 },
-        ],
-        reward: 1800,
-      }),
-      createMission({
-        id: 'body-run',
-        title: 'Body Run',
-        objectives: [
-          ...(hospital ? [reachPoint(hospital.roadSpawn, 'Reach the marked hospital vehicle bay')] : []),
-          {
-            kind: 'service',
-            description: 'Steal an ambulance and complete 1 recovery — leave a body if you need a job',
-            service: 'ambulance',
-            count: 1,
-          },
-        ],
-        reward: 2200,
-      }),
-      createMission({
-        id: 'wreck-duty',
-        title: 'Wreck Duty',
-        objectives: [
-          ...(towYard ? [reachPoint(towYard.roadSpawn, 'Reach the marked tow yard')] : []),
-          {
-            kind: 'service',
-            description: 'Steal a tow truck and complete 1 recovery — wreck a car first if needed',
-            service: 'tow',
-            count: 1,
-          },
-        ],
-        reward: 2400,
-      }),
-      createMission({
-        id: 'cab-shift',
-        title: 'Cab Shift',
-        objectives: [
-          ...(taxiDepot ? [reachPoint(taxiDepot.roadSpawn, 'Reach the marked taxi depot')] : []),
-          { kind: 'service', description: 'Steal a taxi and complete 1 fare', service: 'taxi', count: 1 },
-        ],
-        reward: 2000,
-      }),
-    ];
-
-    return [makeName, heat, mostWanted, service];
+  private buildCampaigns() {
+    return buildSandboxCampaigns(this.city);
   }
 
   private drawCity(): void {
