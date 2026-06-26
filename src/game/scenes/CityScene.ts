@@ -11,7 +11,13 @@ import { SERVICE_SPAWN_SPACING, World, type VehicleKind } from '../../core/world
 import type { WorldOptions } from '../../core/world';
 import { CITY_SPEC } from '../citySpec';
 import { createMission, type Mission } from '../../core/mission';
-import { clearGameState, loadGameState, saveGameState } from '../../core/gameState';
+import {
+  clearGameState,
+  GAME_STATE_KEY,
+  loadGameState,
+  MANUAL_SAVE_KEY,
+  saveGameState,
+} from '../../core/gameState';
 import {
   loadHighScore,
   saveHighScore,
@@ -160,6 +166,11 @@ const TOUCH_ACTION = 0xf59e0b;
 const TOUCH_FIRE = 0xef4444;
 const TOUCH_CONFIRM = 0x22d3ee;
 
+interface CitySceneStartData {
+  loadSaveKey?: string | null;
+  skipResume?: boolean;
+}
+
 /**
  * Renders the core `World` simulation with Phaser. The scene owns no game
  * rules: it builds the city, feeds keyboard input into `world.tick`, and draws
@@ -223,13 +234,21 @@ export class CityScene extends Phaser.Scene {
   private paused = false;
   private pauseKey!: Phaser.Input.Keyboard.Key;
   private newGameKey!: Phaser.Input.Keyboard.Key;
+  private saveGameKey!: Phaser.Input.Keyboard.Key;
+  private loadGameKey!: Phaser.Input.Keyboard.Key;
   private pauseMenu!: Phaser.GameObjects.Text;
+  private pauseResumeButton!: Phaser.GameObjects.Text;
+  private pauseSaveButton!: Phaser.GameObjects.Text;
+  private pauseLoadButton!: Phaser.GameObjects.Text;
+  private pauseNewGameButton!: Phaser.GameObjects.Text;
   private pauseTouchButton!: Phaser.GameObjects.Text;
 
   /** High-score persistence. */
   private store: KeyValueStore = safeStorage();
   private savedBest = 0;
   private skipPersistOnShutdown = false;
+  private requestedLoadKey: string | null = GAME_STATE_KEY;
+  private skipResumeOnCreate = false;
   private readonly beforeUnloadHandler = (): void => {
     this.persistGameState();
   };
@@ -268,6 +287,11 @@ export class CityScene extends Phaser.Scene {
 
   constructor() {
     super('City');
+  }
+
+  init(data: CitySceneStartData = {}): void {
+    this.requestedLoadKey = data.loadSaveKey ?? GAME_STATE_KEY;
+    this.skipResumeOnCreate = !!data.skipResume;
   }
 
   create(): void {
@@ -310,7 +334,8 @@ export class CityScene extends Phaser.Scene {
     this.intersectionCenters = this.computeIntersectionCenters();
     const spawn = tileCenter(this.city.spec, this.city.spec.block, this.city.spec.block);
 
-    const savedState = loadGameState(this.store);
+    const loadKey = this.skipResumeOnCreate ? null : this.requestedLoadKey;
+    const savedState = loadKey ? loadGameState(this.store, loadKey) : null;
     this.savedBest = Math.max(loadHighScore(this.store), savedState?.world.score.best ?? 0);
     if (this.savedBest > 0) this.savedBest = saveHighScore(this.store, this.savedBest);
     const worldOptions = this.buildWorldOptions(spawn, this.savedBest);
@@ -319,12 +344,14 @@ export class CityScene extends Phaser.Scene {
         this.world = World.fromSnapshot(worldOptions, savedState.world);
         this.timeOfDay = savedState.timeOfDay;
       } catch {
-        clearGameState(this.store);
+        clearGameState(this.store, loadKey ?? GAME_STATE_KEY);
         this.world = new World(worldOptions);
       }
     } else {
       this.world = new World(worldOptions);
     }
+    this.requestedLoadKey = GAME_STATE_KEY;
+    this.skipResumeOnCreate = false;
 
     this.drawCity();
     this.createEntitySprites();
@@ -345,7 +372,10 @@ export class CityScene extends Phaser.Scene {
     const kb = this.input.keyboard!;
     this.pauseKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.P);
     this.newGameKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.N);
+    this.saveGameKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.S);
+    this.loadGameKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.L);
     this.paused = false;
+    this.refreshPauseMenu();
     if (typeof window !== 'undefined') {
       window.addEventListener('beforeunload', this.beforeUnloadHandler);
     }
@@ -391,13 +421,13 @@ export class CityScene extends Phaser.Scene {
     };
   }
 
-  private persistGameState(): void {
+  private persistGameState(key = GAME_STATE_KEY): void {
     if (!this.world) return;
     saveGameState(this.store, {
       world: this.world.snapshot(),
       timeOfDay: this.timeOfDay,
-    });
-    this.saveAccumulator = 0;
+    }, key);
+    if (key === GAME_STATE_KEY) this.saveAccumulator = 0;
   }
 
   /** A lively mix of cars parked in the marked bays and cars driven by NPC traffic. */
@@ -1353,8 +1383,12 @@ export class CityScene extends Phaser.Scene {
     place(this.hud, 10, 10); // top-left status readout
     place(this.banner, width / 2, 84); // mission announcement
     place(this.bustedText, width / 2, height / 2);
-    place(this.pauseMenu, width / 2, height / 2);
-    place(this.pauseTouchButton, width / 2, height / 2 + 118);
+    place(this.pauseMenu, width / 2, height / 2 - 128);
+    place(this.pauseResumeButton, width / 2, height / 2 - 14);
+    place(this.pauseSaveButton, width / 2, height / 2 + 32);
+    place(this.pauseLoadButton, width / 2, height / 2 + 78);
+    place(this.pauseNewGameButton, width / 2, height / 2 + 124);
+    place(this.pauseTouchButton, width / 2, height / 2 + 196);
 
     if (this.minimapBg) {
       // Clamp the top-right anchor so the whole map stays on screen even on a
@@ -1419,8 +1453,8 @@ export class CityScene extends Phaser.Scene {
     this.pauseMenu = this.add
       .text(
         this.scale.width / 2,
-        this.scale.height / 2,
-        'PAUSED\n\nP — Resume\nN — New Game',
+        this.scale.height / 2 - 128,
+        '',
         {
           fontFamily: 'monospace',
           fontSize: '28px',
@@ -1435,8 +1469,13 @@ export class CityScene extends Phaser.Scene {
       .setDepth(2500)
       .setVisible(false);
 
+    this.pauseResumeButton = this.createPauseActionButton('Resume  [P]', () => this.togglePause());
+    this.pauseSaveButton = this.createPauseActionButton('Save Game  [S]', () => this.saveManualGame());
+    this.pauseLoadButton = this.createPauseActionButton('Load Saved Game  [L]', () => this.loadManualGame());
+    this.pauseNewGameButton = this.createPauseActionButton('New Game  [N]', () => this.startNewGame());
+
     this.pauseTouchButton = this.add
-      .text(this.scale.width / 2, this.scale.height / 2 + 118, '', {
+      .text(this.scale.width / 2, this.scale.height / 2 + 196, '', {
         fontFamily: 'monospace',
         fontSize: '18px',
         color: '#67e8f9',
@@ -1450,6 +1489,7 @@ export class CityScene extends Phaser.Scene {
       .setVisible(false)
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => this.toggleTouchEnabled());
+    this.refreshPauseMenu();
     this.refreshPauseTouchButton();
 
     // A full-screen dimming overlay for the day/night cycle. Oversized and
@@ -1464,6 +1504,27 @@ export class CityScene extends Phaser.Scene {
     this.touchControlsGfx = this.add.graphics().setScrollFactor(0).setDepth(1700);
     const { width, height } = this.scale.gameSize;
     this.touchLayout = touchLayoutForViewport(width, height);
+  }
+
+  private createPauseActionButton(label: string, onPress: () => void): Phaser.GameObjects.Text {
+    return this.add
+      .text(this.scale.width / 2, this.scale.height / 2, label, {
+        fontFamily: 'monospace',
+        fontSize: '20px',
+        color: '#67e8f9',
+        align: 'center',
+        backgroundColor: '#000000d0',
+        padding: { x: 18, y: 10 },
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(2501)
+      .setVisible(false)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => {
+        if (!this.paused) return;
+        onPress();
+      });
   }
 
   /** Build the corner minimap: a static city backdrop plus a live dot overlay. */
@@ -1571,6 +1632,8 @@ export class CityScene extends Phaser.Scene {
     // Toggle pause; while paused the simulation is frozen.
     if (Phaser.Input.Keyboard.JustDown(this.pauseKey)) this.togglePause();
     if (this.paused) {
+      if (Phaser.Input.Keyboard.JustDown(this.saveGameKey)) this.saveManualGame();
+      if (Phaser.Input.Keyboard.JustDown(this.loadGameKey)) this.loadManualGame();
       this.prevTouchConfirm = !!touchSnapshot?.confirmPressed;
       return;
     }
@@ -1641,8 +1704,9 @@ export class CityScene extends Phaser.Scene {
   /** Freeze or resume the simulation and show/hide the pause menu. */
   private togglePause(): void {
     this.paused = !this.paused;
-    this.pauseMenu.setVisible(this.paused);
+    this.setPauseUiVisible(this.paused);
     if (this.paused) this.persistGameState();
+    this.refreshPauseMenu();
     this.touchControlsDirty = true;
     this.refreshPauseTouchButton();
     this.syncTouchControls();
@@ -1671,12 +1735,56 @@ export class CityScene extends Phaser.Scene {
       .setVisible(show);
   }
 
+  private setPauseUiVisible(visible: boolean): void {
+    this.pauseMenu.setVisible(visible);
+    this.pauseResumeButton.setVisible(visible);
+    this.pauseSaveButton.setVisible(visible);
+    this.pauseLoadButton.setVisible(visible);
+    this.pauseNewGameButton.setVisible(visible);
+  }
+
+  private hasManualSave(): boolean {
+    return loadGameState(this.store, MANUAL_SAVE_KEY) !== null;
+  }
+
+  private refreshPauseMenu(): void {
+    if (!this.pauseMenu) return;
+    const hasManualSave = this.hasManualSave();
+    this.pauseMenu.setText(
+      [
+        'PAUSED',
+        '',
+        'Resume, save this run, load your saved slot, or start over.',
+      ].join('\n'),
+    );
+    this.pauseLoadButton
+      .setText(hasManualSave ? 'Load Saved Game  [L]' : 'Load Saved Game  [L]\nEmpty slot')
+      .setAlpha(hasManualSave ? 1 : 0.6);
+  }
+
+  private saveManualGame(): void {
+    this.persistGameState(MANUAL_SAVE_KEY);
+    this.refreshPauseMenu();
+    this.showBanner('GAME SAVED');
+  }
+
+  private loadManualGame(): void {
+    if (!this.hasManualSave()) {
+      this.showBanner('NO SAVED GAME');
+      this.refreshPauseMenu();
+      return;
+    }
+    this.paused = false;
+    this.skipPersistOnShutdown = true;
+    this.scene.restart({ loadSaveKey: MANUAL_SAVE_KEY });
+  }
+
   /** Restart the scene, beginning a brand-new game (the high score persists). */
   private startNewGame(): void {
     this.paused = false;
     this.skipPersistOnShutdown = true;
     clearGameState(this.store);
-    this.scene.restart();
+    this.scene.restart({ skipResume: true });
   }
 
   /** Persist the high score, play sounds, and announce mission changes. */

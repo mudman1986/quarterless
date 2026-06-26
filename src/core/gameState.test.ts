@@ -3,6 +3,7 @@ import { createMission } from './mission';
 import {
   clearGameState,
   GAME_STATE_KEY,
+  MANUAL_SAVE_KEY,
   loadGameState,
   saveGameState,
 } from './gameState';
@@ -221,5 +222,19 @@ describe('game state storage', () => {
     clearGameState(store);
 
     expect(loadGameState(store)).toBeNull();
+  });
+
+  it('supports an independent custom save slot', () => {
+    const store = fakeStore();
+    const world = new World({ player: { pos: { x: 4, y: 5 }, angle: 0, radius: 7 } });
+
+    saveGameState(store, { world: world.snapshot(), timeOfDay: 88 }, MANUAL_SAVE_KEY);
+
+    expect(loadGameState(store)).toBeNull();
+    expect(loadGameState(store, MANUAL_SAVE_KEY)).toEqual({
+      version: 1,
+      world: world.snapshot(),
+      timeOfDay: 88,
+    });
   });
 });

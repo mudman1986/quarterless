@@ -2,6 +2,7 @@ import type { KeyValueStore } from './highScore';
 import type { WorldSnapshot } from './world';
 
 export const GAME_STATE_KEY = 'sindicate.gameState';
+export const MANUAL_SAVE_KEY = 'sindicate.manualSave';
 export const GAME_STATE_VERSION = 1;
 
 export interface GameStateSnapshot {
