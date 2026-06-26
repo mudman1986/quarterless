@@ -153,6 +153,21 @@ const CAMERA_EDGE_GUTTER = 12;
 const MINIMAP_SIZE = 168;
 /** Seconds a mission announcement banner stays on screen. */
 const ANNOUNCE_SECONDS = 3.2;
+
+function enteredCarLabel(kind: VehicleKind): string {
+  if (kind === 'ambulance') return 'AMBULANCE';
+  if (kind === 'tow') return 'TOW TRUCK';
+  if (kind === 'police') return 'POLICE CAR';
+  if (kind === 'taxi') return 'TAXI';
+  if (kind === 'sedan') return 'SEDAN';
+  if (kind === 'coupe') return 'COUPE';
+  if (kind === 'muscle') return 'MUSCLE CAR';
+  if (kind === 'sports') return 'SPORTS CAR';
+  if (kind === 'pickup') return 'PICKUP TRUCK';
+  if (kind === 'van') return 'VAN';
+  if (kind === 'limo') return 'LIMO';
+  return 'CAR';
+}
 /** Length in seconds of a full day/night cycle (30 minutes). */
 const DAY_LENGTH = 1800;
 const SAVE_INTERVAL = 0.5;
@@ -297,6 +312,7 @@ export class CityScene extends Phaser.Scene {
   private prevServiceMissionId: number | null = null;
   private prevServiceStage: 'pickup' | 'return' | '' = '';
   private prevExplosions = 0;
+  private prevDrivingCarIndex: number | null = null;
   private prevHudText = '';
   private prevBustedMessage = '';
   private prevLightAxis: 'horizontal' | 'vertical' | null = null;
@@ -350,6 +366,7 @@ export class CityScene extends Phaser.Scene {
     this.prevTaxiStage = '';
     this.prevServiceMissionId = null;
     this.prevServiceStage = '';
+    this.prevDrivingCarIndex = null;
     this.prevHudText = '';
     this.prevBustedMessage = '';
     this.prevLightAxis = null;
@@ -379,6 +396,7 @@ export class CityScene extends Phaser.Scene {
     } else {
       this.world = new World(worldOptions);
     }
+    this.prevDrivingCarIndex = this.world.drivingCarIndex;
     this.requestedLoadKey = GAME_STATE_KEY;
     this.skipResumeOnCreate = false;
 
@@ -1877,6 +1895,9 @@ export class CityScene extends Phaser.Scene {
 
     const missionId = w.mission?.id ?? null;
     const objective = w.missionObjective?.description ?? '';
+    if (this.prevDrivingCarIndex === null && w.drivingCarIndex !== null) {
+      this.showBanner(`ENTERED ${enteredCarLabel(w.carKind(w.drivingCarIndex))}`);
+    }
     if (w.missionComplete && !this.prevMissionComplete) {
       this.sfx.fanfare();
       this.showBanner('ALL MISSIONS COMPLETE!');
@@ -1922,6 +1943,7 @@ export class CityScene extends Phaser.Scene {
     this.prevServiceMissionId = serviceMission?.id ?? null;
     this.prevServiceStage = serviceMission && serviceMission.kind !== 'police' ? serviceMission.stage : '';
     this.prevExplosions = w.explosionsTriggered;
+    this.prevDrivingCarIndex = w.drivingCarIndex;
   }
 
   private serviceMarkerColor(kind: 'police' | 'ambulance' | 'tow', minimap = false): number {
