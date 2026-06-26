@@ -8,7 +8,9 @@ import {
   SERVICE_TIMEOUT,
   TRAFFIC_CAR_KINDS,
   VEHICLE_BURN_DURATION,
+  carTuningForKind,
   isCivilianRoadVehicleKind,
+  trafficCruiseSpeedForKind,
 } from './world';
 import { type OnFootActor } from './entity';
 import { type Car } from './vehicle';
@@ -61,6 +63,14 @@ describe('World on foot', () => {
     expect(isCivilianRoadVehicleKind('tow')).toBe(false);
   });
 
+  it('gives sports cars more speed and sharper handling than pickups', () => {
+    const sports = carTuningForKind('sports');
+    const pickup = carTuningForKind('pickup');
+    expect(sports.maxSpeed).toBeGreaterThan(pickup.maxSpeed);
+    expect(sports.turnRate).toBeGreaterThan(pickup.turnRate);
+    expect(trafficCruiseSpeedForKind('sports')).toBeGreaterThan(trafficCruiseSpeedForKind('pickup'));
+  });
+
   it('starts on foot with the camera focused on the player', () => {
     const w = new World({ player: player() });
     expect(w.isDriving).toBe(false);
@@ -82,6 +92,22 @@ describe('World on foot', () => {
 });
 
 describe('World entering and exiting a car', () => {
+  it('applies per-class tuning when the player drives different civilian cars', () => {
+    const sports = new World({ player: player(), cars: [carAt(20, 0)], carKinds: ['sports'] });
+    const pickup = new World({ player: player(), cars: [carAt(20, 0)], carKinds: ['pickup'] });
+
+    sports.tick(controls({ action: true }), 1 / 60);
+    pickup.tick(controls({ action: true }), 1 / 60);
+
+    for (let i = 0; i < 180; i++) {
+      sports.tick(controls({ up: true, right: true }), 1 / 60);
+      pickup.tick(controls({ up: true, right: true }), 1 / 60);
+    }
+
+    expect(sports.drivingCar!.speed).toBeGreaterThan(pickup.drivingCar!.speed);
+    expect(Math.abs(sports.drivingCar!.heading)).toBeGreaterThan(Math.abs(pickup.drivingCar!.heading));
+  });
+
   it('enters a nearby car when action is pressed', () => {
     const w = new World({ player: player(), cars: [carAt(20, 0)] });
     w.tick(controls({ action: true }), 1 / 60);

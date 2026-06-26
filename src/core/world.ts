@@ -292,6 +292,48 @@ export const TRAFFIC_CAR_KINDS = [
 
 export type TrafficCarKind = (typeof TRAFFIC_CAR_KINDS)[number];
 
+type CivilianProfileKind = TrafficCarKind | 'taxi';
+type CivilianCarProfile = {
+  trafficSpeed: number;
+  tuning: Partial<CarTuning>;
+};
+
+const CIVILIAN_CAR_PROFILES: Record<CivilianProfileKind, CivilianCarProfile> = {
+  car: { trafficSpeed: TRAFFIC_SPEED, tuning: {} },
+  sedan: {
+    trafficSpeed: 134,
+    tuning: { enginePower: 230, maxSpeed: 330, turnRate: 2.55, gripSpeed: 82 },
+  },
+  coupe: {
+    trafficSpeed: 142,
+    tuning: { enginePower: 240, maxSpeed: 342, turnRate: 2.8, gripSpeed: 76 },
+  },
+  muscle: {
+    trafficSpeed: 146,
+    tuning: { enginePower: 255, maxSpeed: 356, drag: 105, turnRate: 2.35, gripSpeed: 92 },
+  },
+  sports: {
+    trafficSpeed: 154,
+    tuning: { enginePower: 275, brakePower: 340, maxSpeed: 380, turnRate: 3, gripSpeed: 70 },
+  },
+  pickup: {
+    trafficSpeed: 120,
+    tuning: { enginePower: 205, maxSpeed: 265, reversePower: 145, drag: 132, turnRate: 2.2, gripSpeed: 96 },
+  },
+  van: {
+    trafficSpeed: 114,
+    tuning: { enginePower: 190, maxSpeed: 248, reversePower: 140, drag: 140, turnRate: 2.05, gripSpeed: 102 },
+  },
+  limo: {
+    trafficSpeed: 126,
+    tuning: { enginePower: 210, maxSpeed: 288, drag: 128, turnRate: 2.15, gripSpeed: 98 },
+  },
+  taxi: {
+    trafficSpeed: 140,
+    tuning: { enginePower: 235, maxSpeed: 326, turnRate: 2.65, gripSpeed: 78 },
+  },
+};
+
 /** Vehicle body rendered for a drivable world car slot. */
 export type VehicleKind = TrafficCarKind | 'ambulance' | 'tow' | 'police' | 'taxi';
 
@@ -310,6 +352,15 @@ export function isCivilianRoadVehicleKind(kind: VehicleKind): boolean {
     default:
       return false;
   }
+}
+
+export function carTuningForKind(kind: VehicleKind, base: CarTuning = DEFAULT_CAR_TUNING): CarTuning {
+  const profile = CIVILIAN_CAR_PROFILES[kind as CivilianProfileKind];
+  return profile ? { ...base, ...profile.tuning } : base;
+}
+
+export function trafficCruiseSpeedForKind(kind: VehicleKind): number {
+  return CIVILIAN_CAR_PROFILES[kind as CivilianProfileKind]?.trafficSpeed ?? TRAFFIC_SPEED;
 }
 
 /** Common state for a dispatched service vehicle that follows the roads. */
@@ -1299,10 +1350,11 @@ export class World {
       const ai = this.carDrivers[i];
       if (!ai || i === this.drivingCarIndex || this.wreckedCars[i] || this.carIsBurning(i)) continue;
       const car = this.cars[i];
+      const cruiseSpeed = trafficCruiseSpeedForKind(this.carKind(i));
 
       let dir = ai.dir;
       let blocked = ai.blocked ?? 0;
-      let speed = TRAFFIC_SPEED;
+      let speed = cruiseSpeed;
       let escapeTarget = ai.escapeTarget;
       let routeTarget = ai.routeTarget;
       if (escapeTarget && distance(car.pos, escapeTarget) <= this.city.spec.tile) {
@@ -1334,7 +1386,7 @@ export class World {
           if (lane) laneTarget = laneCross(lane, ai.dir);
         }
         if (laneTarget !== undefined) {
-          speed = TRAFFIC_SPEED * LANE_CHANGE_SPEED_FACTOR; // roll forward while easing across
+          speed = cruiseSpeed * LANE_CHANGE_SPEED_FACTOR; // roll forward while easing across
           blocked = 0;
         } else {
           // Nowhere to go around them: wait, then U-turn to find another route.
@@ -2994,7 +3046,7 @@ export class World {
       return;
     }
 
-    const stepped = stepCar(car, c, dt, this.tuning);
+    const stepped = stepCar(car, c, dt, carTuningForKind(this.carKind(idx), this.tuning));
     const collided = collideCarWithWalls(stepped, this.walls);
     this.cars[idx] = { ...collided, pos: this.wrapPos(collided.pos) };
   }
