@@ -402,6 +402,7 @@ Implemented now:
 - Dead Drop District currently compiles into a playable prototype runtime campaign.
 - Focused Playwright coverage exists for story-mode entry and story save/resume after refresh.
 - Story mode now shows a basic chapter briefing panel on launch and a chapter-complete panel before advancing.
+- Focused Playwright coverage now also covers story manual save-slot persistence and the current prototype-complete panel.
 
 Prototype limitations right now:
 
@@ -581,13 +582,13 @@ What is still missing before it counts as a full slice:
 
 - Real scripted encounter control for cleanup crews and the fake ambulance.
 - Rich chapter-specific presentation such as authored briefings, callouts, recap screens, and post-mission summaries.
-- Broader browser-level story-mode regression coverage beyond the current smoke path.
+- Broader browser-level story-mode regression coverage beyond the current smoke path and save/panel checks.
 
 ## What To Do Next
 
 Recommended next production step:
 
 1. Replace the Dead Drop District prototype approximations with true scripted encounter, tail, and capture behavior.
-2. Expand Playwright coverage from smoke-level boot and refresh-resume into chapter progression, chapter completion, and manual save-slot coverage.
+2. Expand Playwright coverage from smoke-level boot, refresh-resume, save-slot persistence, and prototype-complete panels into full chapter progression and chapter-completion restart coverage.
 3. Expand the new story panels into authored briefings, chapter-complete recaps, and post-mission summary presentation.
 4. Add a chapter-select or story menu flow for replaying unlocked content without relying on internal scene restarts.
