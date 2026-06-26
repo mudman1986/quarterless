@@ -166,6 +166,26 @@ const TOUCH_STICK_STROKE = 0xe2e8f0;
 const TOUCH_ACTION = 0xf59e0b;
 const TOUCH_FIRE = 0xef4444;
 const TOUCH_CONFIRM = 0x22d3ee;
+const PARKED_TRAFFIC_MIX: readonly VehicleKind[] = [
+  'sedan',
+  'car',
+  'coupe',
+  'pickup',
+  'van',
+  'muscle',
+  'limo',
+  'car',
+];
+const MOVING_TRAFFIC_MIX: readonly VehicleKind[] = [
+  'car',
+  'sedan',
+  'coupe',
+  'muscle',
+  'sports',
+  'pickup',
+  'van',
+  'car',
+];
 
 interface CitySceneStartData {
   loadSaveKey?: string | null;
@@ -454,6 +474,8 @@ export class CityScene extends Phaser.Scene {
     const drivers: (TrafficAI | null)[] = [];
     const kinds: VehicleKind[] = [];
     const respawnsAtTow: boolean[] = [];
+    const parkedKind = (seed: number): VehicleKind => PARKED_TRAFFIC_MIX[seed % PARKED_TRAFFIC_MIX.length] ?? 'car';
+    const movingKind = (seed: number): VehicleKind => MOVING_TRAFFIC_MIX[seed % MOVING_TRAFFIC_MIX.length] ?? 'car';
 
     const pushTrafficCar = (
       car: Car,
@@ -498,7 +520,7 @@ export class CityScene extends Phaser.Scene {
     const stride = Math.max(1, Math.ceil(spots.length / PARKED_CAR_BUDGET));
     spots.forEach((spot, i) => {
       if (i % stride !== 0) return;
-      pushTrafficCar({ pos: spot.pos, heading: spot.heading, speed: 0, radius: 14 }, null, 'car');
+      pushTrafficCar({ pos: spot.pos, heading: spot.heading, speed: 0, radius: 14 }, null, parkedKind(i));
       this.parkedSpots.push(spot);
     });
 
@@ -545,7 +567,7 @@ export class CityScene extends Phaser.Scene {
         pushTrafficCar(
           { pos: start, heading: Math.PI / 2, speed: 0, radius: 14 },
           { dir: vec2(0, 1) },
-          n % 6 === 0 ? 'taxi' : 'car',
+          n % 6 === 0 ? 'taxi' : movingKind(n),
         );
       }
       if (northTx < cols && !this.city.isWater(northTx, northTy)) {
@@ -553,7 +575,7 @@ export class CityScene extends Phaser.Scene {
         pushTrafficCar(
           { pos: start, heading: -Math.PI / 2, speed: 0, radius: 14 },
           { dir: vec2(0, -1) },
-          n % 7 === 0 ? 'taxi' : 'car',
+          n % 7 === 0 ? 'taxi' : movingKind(n + 3),
         );
       }
       n++;
@@ -570,7 +592,7 @@ export class CityScene extends Phaser.Scene {
         pushTrafficCar(
           { pos: start, heading: 0, speed: 0, radius: 14 },
           { dir: vec2(1, 0) },
-          n % 6 === 0 ? 'taxi' : 'car',
+          n % 6 === 0 ? 'taxi' : movingKind(n + 1),
         );
       }
       if (westTy < rows && !this.city.isWater(westTx, westTy)) {
@@ -578,7 +600,7 @@ export class CityScene extends Phaser.Scene {
         pushTrafficCar(
           { pos: start, heading: Math.PI, speed: 0, radius: 14 },
           { dir: vec2(-1, 0) },
-          n % 7 === 0 ? 'taxi' : 'car',
+          n % 7 === 0 ? 'taxi' : movingKind(n + 4),
         );
       }
       n++;
@@ -1909,6 +1931,13 @@ export class CityScene extends Phaser.Scene {
     if (kind === 'tow') return TEX.tow;
     if (kind === 'police') return TEX.policeCar;
     if (kind === 'taxi') return TEX.taxi;
+    if (kind === 'sedan') return TEX.sedan;
+    if (kind === 'coupe') return TEX.coupe;
+    if (kind === 'muscle') return TEX.muscle;
+    if (kind === 'sports') return TEX.sports;
+    if (kind === 'pickup') return TEX.pickup;
+    if (kind === 'van') return TEX.van;
+    if (kind === 'limo') return TEX.limo;
     return index === this.world.drivingCarIndex ? TEX.playerCar : TEX.npcCar;
   }
 

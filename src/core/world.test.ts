@@ -6,7 +6,9 @@ import {
   SCORE_PER_POLICE,
   PLAYER_MAX_HEALTH,
   SERVICE_TIMEOUT,
+  TRAFFIC_CAR_KINDS,
   VEHICLE_BURN_DURATION,
+  isCivilianRoadVehicleKind,
 } from './world';
 import { type OnFootActor } from './entity';
 import { type Car } from './vehicle';
@@ -51,6 +53,14 @@ const laneCenteredFacilityRoadSpawn = (
 };
 
 describe('World on foot', () => {
+  it('treats the expanded civilian traffic classes as ordinary road cars', () => {
+    expect(TRAFFIC_CAR_KINDS.every((kind) => isCivilianRoadVehicleKind(kind))).toBe(true);
+    expect(isCivilianRoadVehicleKind('taxi')).toBe(true);
+    expect(isCivilianRoadVehicleKind('police')).toBe(false);
+    expect(isCivilianRoadVehicleKind('ambulance')).toBe(false);
+    expect(isCivilianRoadVehicleKind('tow')).toBe(false);
+  });
+
   it('starts on foot with the camera focused on the player', () => {
     const w = new World({ player: player() });
     expect(w.isDriving).toBe(false);

@@ -9,6 +9,13 @@ import Phaser from 'phaser';
 export const TEX = {
   playerCar: 'tex-player-car',
   npcCar: 'tex-npc-car',
+  sedan: 'tex-sedan',
+  coupe: 'tex-coupe',
+  muscle: 'tex-muscle',
+  sports: 'tex-sports',
+  pickup: 'tex-pickup',
+  van: 'tex-van',
+  limo: 'tex-limo',
   taxi: 'tex-taxi',
   policeCar: 'tex-police-car',
   ambulance: 'tex-ambulance',
@@ -29,8 +36,24 @@ const SVC_W = 40;
 const SVC_H = 20;
 const PERSON = 16;
 
+interface CarShape {
+  roofX?: number;
+  roofY?: number;
+  roofW?: number;
+  roofH?: number;
+  bodyRadius?: number;
+  windshieldX?: number;
+}
+
 /** Draw a top-down car (pointing +x) into a graphics buffer. */
-function drawCar(g: Phaser.GameObjects.Graphics, body: number, roof: number): void {
+function drawCar(g: Phaser.GameObjects.Graphics, body: number, roof: number, shape: CarShape = {}): void {
+  const roofX = shape.roofX ?? 9;
+  const roofY = shape.roofY ?? 3;
+  const roofW = shape.roofW ?? 14;
+  const roofH = shape.roofH ?? CAR_H - 6;
+  const bodyRadius = shape.bodyRadius ?? 4;
+  const windshieldX = shape.windshieldX ?? CAR_W - 11;
+
   // Tyres first, so the body sits over them.
   g.fillStyle(0x111114, 1);
   g.fillRect(6, -1, 7, 3);
@@ -40,15 +63,15 @@ function drawCar(g: Phaser.GameObjects.Graphics, body: number, roof: number): vo
 
   // Body.
   g.fillStyle(body, 1);
-  g.fillRoundedRect(0, 1, CAR_W, CAR_H - 2, 4);
+  g.fillRoundedRect(0, 1, CAR_W, CAR_H - 2, bodyRadius);
 
   // Cabin / roof.
   g.fillStyle(roof, 1);
-  g.fillRoundedRect(9, 3, 14, CAR_H - 6, 3);
+  g.fillRoundedRect(roofX, roofY, roofW, roofH, 3);
 
   // Windshield highlight near the front.
   g.fillStyle(0xbfe6ff, 0.85);
-  g.fillRect(CAR_W - 11, 4, 3, CAR_H - 8);
+  g.fillRect(windshieldX, 4, 3, CAR_H - 8);
 
   // Headlights at the very front.
   g.fillStyle(0xfff6c2, 1);
@@ -175,6 +198,86 @@ function drawTaxi(g: Phaser.GameObjects.Graphics): void {
   g.fillStyle(0x111114, 1);
   g.fillRect(15, 2, 4, 1);
 }
+
+function drawSedan(g: Phaser.GameObjects.Graphics): void {
+  drawCar(g, 0x0f766e, 0x164e63, { roofX: 8, roofW: 16 });
+  g.fillStyle(0xe2e8f0, 0.75);
+  g.fillRect(4, 8, 24, 1.5);
+}
+
+function drawCoupe(g: Phaser.GameObjects.Graphics): void {
+  drawCar(g, 0x2563eb, 0x1e3a8a, { roofX: 11, roofW: 11, bodyRadius: 5 });
+  g.fillStyle(0x93c5fd, 0.9);
+  g.fillRect(8, 4, 3, 2);
+}
+
+function drawMuscle(g: Phaser.GameObjects.Graphics): void {
+  drawCar(g, 0xea580c, 0x7c2d12, { roofX: 10, roofW: 12, bodyRadius: 5 });
+  g.fillStyle(0xfef3c7, 0.9);
+  g.fillRect(5, 5, 18, 2);
+  g.fillRect(5, CAR_H - 7, 18, 2);
+}
+
+function drawSports(g: Phaser.GameObjects.Graphics): void {
+  drawCar(g, 0xbe123c, 0x881337, { roofX: 12, roofY: 4, roofW: 10, roofH: CAR_H - 8, bodyRadius: 6 });
+  g.fillStyle(0xfda4af, 0.9);
+  g.fillRect(6, CAR_H / 2 - 1, 16, 2);
+}
+
+function drawPickup(g: Phaser.GameObjects.Graphics): void {
+  g.fillStyle(0x111114, 1);
+  g.fillRect(6, -1, 7, 3);
+  g.fillRect(6, CAR_H - 2, 7, 3);
+  g.fillRect(CAR_W - 14, -1, 7, 3);
+  g.fillRect(CAR_W - 14, CAR_H - 2, 7, 3);
+
+  g.fillStyle(0x65a30d, 1);
+  g.fillRoundedRect(7, 1, CAR_W - 7, CAR_H - 2, 4);
+  g.fillRect(0, 3, 13, CAR_H - 6);
+
+  g.fillStyle(0x3f6212, 1);
+  g.fillRoundedRect(14, 3, 10, CAR_H - 6, 3);
+
+  g.lineStyle(1.5, 0xd9f99d, 0.7);
+  g.strokeRect(2, 4, 9, CAR_H - 8);
+
+  g.fillStyle(0xbfe6ff, 0.85);
+  g.fillRect(CAR_W - 11, 4, 3, CAR_H - 8);
+
+  g.fillStyle(0xfff6c2, 1);
+  g.fillRect(CAR_W - 2, 3, 2, 3);
+  g.fillRect(CAR_W - 2, CAR_H - 6, 2, 3);
+}
+
+function drawVan(g: Phaser.GameObjects.Graphics): void {
+  g.fillStyle(0x111114, 1);
+  g.fillRect(5, -1, 7, 3);
+  g.fillRect(5, CAR_H - 2, 7, 3);
+  g.fillRect(CAR_W - 14, -1, 7, 3);
+  g.fillRect(CAR_W - 14, CAR_H - 2, 7, 3);
+
+  g.fillStyle(0xe5e7eb, 1);
+  g.fillRoundedRect(0, 1, CAR_W, CAR_H - 2, 3);
+  g.fillStyle(0x1d4ed8, 1);
+  g.fillRect(3, 4, 18, CAR_H - 8);
+  g.fillStyle(0x94a3b8, 1);
+  g.fillRoundedRect(18, 2, 12, CAR_H - 4, 2);
+  g.fillStyle(0xbfe6ff, 0.9);
+  g.fillRect(CAR_W - 10, 4, 3, CAR_H - 8);
+
+  g.fillStyle(0xfff6c2, 1);
+  g.fillRect(CAR_W - 2, 3, 2, 3);
+  g.fillRect(CAR_W - 2, CAR_H - 6, 2, 3);
+}
+
+function drawLimo(g: Phaser.GameObjects.Graphics): void {
+  drawCar(g, 0x111827, 0x020617, { roofX: 6, roofW: 19, bodyRadius: 4 });
+  g.fillStyle(0xe5e7eb, 0.65);
+  g.fillRect(5, 4, 2, CAR_H - 8);
+  g.fillRect(10, 4, 2, CAR_H - 8);
+  g.fillRect(15, 4, 2, CAR_H - 8);
+}
+
 function drawPerson(g: Phaser.GameObjects.Graphics, shirt: number, skin: number): void {
   const c = PERSON / 2;
   // Shoulders.
@@ -197,6 +300,13 @@ export function createGameTextures(scene: Phaser.Scene): void {
 
   make(TEX.playerCar, CAR_W, CAR_H, (g) => drawCar(g, 0x2f7d32, 0x1b4d1f));
   make(TEX.npcCar, CAR_W, CAR_H, (g) => drawCar(g, 0xb91c1c, 0x7f1212));
+  make(TEX.sedan, CAR_W, CAR_H, drawSedan);
+  make(TEX.coupe, CAR_W, CAR_H, drawCoupe);
+  make(TEX.muscle, CAR_W, CAR_H, drawMuscle);
+  make(TEX.sports, CAR_W, CAR_H, drawSports);
+  make(TEX.pickup, CAR_W, CAR_H, drawPickup);
+  make(TEX.van, CAR_W, CAR_H, drawVan);
+  make(TEX.limo, CAR_W, CAR_H, drawLimo);
   make(TEX.taxi, CAR_W, CAR_H, drawTaxi);
   make(TEX.policeCar, CAR_W, CAR_H, (g) => drawCar(g, 0x1d4ed8, 0x0b245f));
 

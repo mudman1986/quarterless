@@ -278,8 +278,39 @@ export interface Corpse {
 /** The stage a dispatched service vehicle is at in its pickup sequence. */
 export type ServicePhase = 'approach' | 'collect' | 'return' | 'depart';
 
+/** Civilian traffic classes used for ordinary parked and roaming road cars. */
+export const TRAFFIC_CAR_KINDS = [
+  'car',
+  'sedan',
+  'coupe',
+  'muscle',
+  'sports',
+  'pickup',
+  'van',
+  'limo',
+] as const;
+
+export type TrafficCarKind = (typeof TRAFFIC_CAR_KINDS)[number];
+
 /** Vehicle body rendered for a drivable world car slot. */
-export type VehicleKind = 'car' | 'ambulance' | 'tow' | 'police' | 'taxi';
+export type VehicleKind = TrafficCarKind | 'ambulance' | 'tow' | 'police' | 'taxi';
+
+export function isCivilianRoadVehicleKind(kind: VehicleKind): boolean {
+  switch (kind) {
+    case 'car':
+    case 'sedan':
+    case 'coupe':
+    case 'muscle':
+    case 'sports':
+    case 'pickup':
+    case 'van':
+    case 'limo':
+    case 'taxi':
+      return true;
+    default:
+      return false;
+  }
+}
 
 /** Common state for a dispatched service vehicle that follows the roads. */
 export interface ServiceVehicle {
@@ -2463,8 +2494,7 @@ export class World {
   }
 
   private isCivilianRoadCar(index: number): boolean {
-    const kind = this.carKind(index);
-    return kind === 'car' || kind === 'taxi';
+    return isCivilianRoadVehicleKind(this.carKind(index));
   }
 
   private taxiPassengerName(): string {
