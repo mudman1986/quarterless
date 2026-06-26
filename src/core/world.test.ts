@@ -11,6 +11,7 @@ import {
   carTuningForKind,
   isCivilianRoadVehicleKind,
   trafficCruiseSpeedForKind,
+  vehicleBodySpecForKind,
 } from './world';
 import { type OnFootActor } from './entity';
 import { type Car } from './vehicle';
@@ -69,6 +70,15 @@ describe('World on foot', () => {
     expect(sports.maxSpeed).toBeGreaterThan(pickup.maxSpeed);
     expect(sports.turnRate).toBeGreaterThan(pickup.turnRate);
     expect(trafficCruiseSpeedForKind('sports')).toBeGreaterThan(trafficCruiseSpeedForKind('pickup'));
+  });
+
+  it('gives sports cars a smaller footprint than trucks and vans', () => {
+    const sports = vehicleBodySpecForKind('sports');
+    const pickup = vehicleBodySpecForKind('pickup');
+    const van = vehicleBodySpecForKind('van');
+    expect(sports.radius).toBeLessThan(pickup.radius);
+    expect(sports.spriteWidth).toBeLessThan(pickup.spriteWidth);
+    expect(sports.spriteHeight).toBeLessThan(van.spriteHeight);
   });
 
   it('starts on foot with the camera focused on the player', () => {

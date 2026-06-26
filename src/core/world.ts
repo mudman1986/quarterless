@@ -291,11 +291,18 @@ export const TRAFFIC_CAR_KINDS = [
 ] as const;
 
 export type TrafficCarKind = (typeof TRAFFIC_CAR_KINDS)[number];
+/** Vehicle body rendered for a drivable world car slot. */
+export type VehicleKind = TrafficCarKind | 'ambulance' | 'tow' | 'police' | 'taxi';
 
 type CivilianProfileKind = TrafficCarKind | 'taxi';
 type CivilianCarProfile = {
   trafficSpeed: number;
   tuning: Partial<CarTuning>;
+};
+type VehicleBodySpec = {
+  radius: number;
+  spriteWidth: number;
+  spriteHeight: number;
 };
 
 const CIVILIAN_CAR_PROFILES: Record<CivilianProfileKind, CivilianCarProfile> = {
@@ -313,12 +320,12 @@ const CIVILIAN_CAR_PROFILES: Record<CivilianProfileKind, CivilianCarProfile> = {
     tuning: { enginePower: 255, maxSpeed: 356, drag: 105, turnRate: 2.35, gripSpeed: 92 },
   },
   sports: {
-    trafficSpeed: 154,
-    tuning: { enginePower: 275, brakePower: 340, maxSpeed: 380, turnRate: 3, gripSpeed: 70 },
+    trafficSpeed: 160,
+    tuning: { enginePower: 292, brakePower: 350, drag: 96, maxSpeed: 392, turnRate: 3.2, gripSpeed: 60 },
   },
   pickup: {
-    trafficSpeed: 120,
-    tuning: { enginePower: 205, maxSpeed: 265, reversePower: 145, drag: 132, turnRate: 2.2, gripSpeed: 96 },
+    trafficSpeed: 114,
+    tuning: { enginePower: 188, maxSpeed: 248, reversePower: 132, drag: 150, turnRate: 1.95, gripSpeed: 112 },
   },
   van: {
     trafficSpeed: 114,
@@ -334,8 +341,20 @@ const CIVILIAN_CAR_PROFILES: Record<CivilianProfileKind, CivilianCarProfile> = {
   },
 };
 
-/** Vehicle body rendered for a drivable world car slot. */
-export type VehicleKind = TrafficCarKind | 'ambulance' | 'tow' | 'police' | 'taxi';
+const VEHICLE_BODY_SPECS: Record<VehicleKind, VehicleBodySpec> = {
+  car: { radius: 14, spriteWidth: 34, spriteHeight: 18 },
+  sedan: { radius: 14, spriteWidth: 35, spriteHeight: 18 },
+  coupe: { radius: 13, spriteWidth: 33, spriteHeight: 17 },
+  muscle: { radius: 15, spriteWidth: 38, spriteHeight: 19 },
+  sports: { radius: 12, spriteWidth: 30, spriteHeight: 15 },
+  pickup: { radius: 15, spriteWidth: 39, spriteHeight: 20 },
+  van: { radius: 16, spriteWidth: 40, spriteHeight: 22 },
+  limo: { radius: 17, spriteWidth: 46, spriteHeight: 18 },
+  taxi: { radius: 14, spriteWidth: 35, spriteHeight: 18 },
+  police: { radius: 14, spriteWidth: 35, spriteHeight: 18 },
+  ambulance: { radius: 16, spriteWidth: 42, spriteHeight: 22 },
+  tow: { radius: 16, spriteWidth: 42, spriteHeight: 22 },
+};
 
 export function isCivilianRoadVehicleKind(kind: VehicleKind): boolean {
   switch (kind) {
@@ -352,6 +371,10 @@ export function isCivilianRoadVehicleKind(kind: VehicleKind): boolean {
     default:
       return false;
   }
+}
+
+export function vehicleBodySpecForKind(kind: VehicleKind): Readonly<VehicleBodySpec> {
+  return VEHICLE_BODY_SPECS[kind];
 }
 
 export function carTuningForKind(kind: VehicleKind, base: CarTuning = DEFAULT_CAR_TUNING): CarTuning {
@@ -2082,10 +2105,11 @@ export class World {
   ): ServiceVehicle {
     const pos = this.serviceSpawnPoint(facilityKind, target, slot) ?? this.nearestCornerTile(target);
     const approach = this.nearestRoadPoint(target) ?? target;
+    const kind = facilityKind === 'hospital' ? 'ambulance' : 'tow';
     return {
       pos,
       heading: 0,
-      radius: 14,
+      radius: vehicleBodySpecForKind(kind).radius,
       dir: nearestCardinal(angle(sub(approach, pos))),
       target: approach,
       depot: pos,

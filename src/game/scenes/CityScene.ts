@@ -7,7 +7,12 @@ import {
   type ParkingSpot,
 } from '../../core/city';
 import Phaser from 'phaser';
-import { SERVICE_SPAWN_SPACING, World, type VehicleKind } from '../../core/world';
+import {
+  SERVICE_SPAWN_SPACING,
+  World,
+  type VehicleKind,
+  vehicleBodySpecForKind,
+} from '../../core/world';
 import type { WorldOptions } from '../../core/world';
 import { CITY_SPEC } from '../citySpec';
 import { createMission, type Mission } from '../../core/mission';
@@ -476,6 +481,7 @@ export class CityScene extends Phaser.Scene {
     const respawnsAtTow: boolean[] = [];
     const parkedKind = (seed: number): VehicleKind => PARKED_TRAFFIC_MIX[seed % PARKED_TRAFFIC_MIX.length] ?? 'car';
     const movingKind = (seed: number): VehicleKind => MOVING_TRAFFIC_MIX[seed % MOVING_TRAFFIC_MIX.length] ?? 'car';
+    const bodyRadius = (kind: VehicleKind): number => vehicleBodySpecForKind(kind).radius;
 
     const pushTrafficCar = (
       car: Car,
@@ -506,7 +512,7 @@ export class CityScene extends Phaser.Scene {
       const { tx, ty } = tileCoord(spec, pos);
       const dir = openDirections(this.city, tx, ty)[0] ?? vec2(1, 0);
       pushTrafficCar(
-        { pos, heading: Math.atan2(dir.y, dir.x), speed: 0, radius: 14 },
+        { pos, heading: Math.atan2(dir.y, dir.x), speed: 0, radius: bodyRadius(kind) },
         null,
         kind,
         { respawnsAtTow: false },
@@ -520,7 +526,8 @@ export class CityScene extends Phaser.Scene {
     const stride = Math.max(1, Math.ceil(spots.length / PARKED_CAR_BUDGET));
     spots.forEach((spot, i) => {
       if (i % stride !== 0) return;
-      pushTrafficCar({ pos: spot.pos, heading: spot.heading, speed: 0, radius: 14 }, null, parkedKind(i));
+      const kind = parkedKind(i);
+      pushTrafficCar({ pos: spot.pos, heading: spot.heading, speed: 0, radius: bodyRadius(kind) }, null, kind);
       this.parkedSpots.push(spot);
     });
 
@@ -535,7 +542,7 @@ export class CityScene extends Phaser.Scene {
       const { tx, ty } = tileCoord(spec, depotPos);
       const dir = openDirections(this.city, tx, ty)[0] ?? vec2(1, 0);
       pushTrafficCar(
-        { pos: depotPos, heading: Math.atan2(dir.y, dir.x), speed: 0, radius: 14 },
+        { pos: depotPos, heading: Math.atan2(dir.y, dir.x), speed: 0, radius: bodyRadius('taxi') },
         { dir },
         'taxi',
       );
@@ -564,18 +571,20 @@ export class CityScene extends Phaser.Scene {
       const northTy = Math.max(block * 2, rows - block * 2 - 1);
       if (southTx < cols && !this.city.isWater(southTx, southTy)) {
         const start = tileCenter(spec, southTx, southTy);
+        const kind = n % 6 === 0 ? 'taxi' : movingKind(n);
         pushTrafficCar(
-          { pos: start, heading: Math.PI / 2, speed: 0, radius: 14 },
+          { pos: start, heading: Math.PI / 2, speed: 0, radius: bodyRadius(kind) },
           { dir: vec2(0, 1) },
-          n % 6 === 0 ? 'taxi' : movingKind(n),
+          kind,
         );
       }
       if (northTx < cols && !this.city.isWater(northTx, northTy)) {
         const start = tileCenter(spec, northTx, northTy);
+        const kind = n % 7 === 0 ? 'taxi' : movingKind(n + 3);
         pushTrafficCar(
-          { pos: start, heading: -Math.PI / 2, speed: 0, radius: 14 },
+          { pos: start, heading: -Math.PI / 2, speed: 0, radius: bodyRadius(kind) },
           { dir: vec2(0, -1) },
-          n % 7 === 0 ? 'taxi' : movingKind(n + 3),
+          kind,
         );
       }
       n++;
@@ -589,18 +598,20 @@ export class CityScene extends Phaser.Scene {
       const westTy = ty + westLane;
       if (eastTy < rows && !this.city.isWater(eastTx, eastTy)) {
         const start = tileCenter(spec, eastTx, eastTy);
+        const kind = n % 6 === 0 ? 'taxi' : movingKind(n + 1);
         pushTrafficCar(
-          { pos: start, heading: 0, speed: 0, radius: 14 },
+          { pos: start, heading: 0, speed: 0, radius: bodyRadius(kind) },
           { dir: vec2(1, 0) },
-          n % 6 === 0 ? 'taxi' : movingKind(n + 1),
+          kind,
         );
       }
       if (westTy < rows && !this.city.isWater(westTx, westTy)) {
         const start = tileCenter(spec, westTx, westTy);
+        const kind = n % 7 === 0 ? 'taxi' : movingKind(n + 4);
         pushTrafficCar(
-          { pos: start, heading: Math.PI, speed: 0, radius: 14 },
+          { pos: start, heading: Math.PI, speed: 0, radius: bodyRadius(kind) },
           { dir: vec2(-1, 0) },
-          n % 7 === 0 ? 'taxi' : movingKind(n + 4),
+          kind,
         );
       }
       n++;
@@ -1943,9 +1954,13 @@ export class CityScene extends Phaser.Scene {
 
   private syncSprites(): void {
     this.world.cars.forEach((car, i) => {
+      const size = vehicleBodySpecForKind(this.world.carKind(i));
       let sprite = this.carSprites[i];
       if (!sprite) {
-        sprite = this.add.image(car.pos.x, car.pos.y, this.carTexture(i)).setDepth(4);
+        sprite = this.add
+          .image(car.pos.x, car.pos.y, this.carTexture(i))
+          .setDisplaySize(size.spriteWidth, size.spriteHeight)
+          .setDepth(4);
         this.carSprites[i] = sprite;
       }
       if (this.world.towedCars[i] && this.world.wreckedCars[i]) {
@@ -1954,13 +1969,20 @@ export class CityScene extends Phaser.Scene {
       }
       if (this.world.wreckedCars[i]) {
         // A destroyed car is a charred, static wreck.
-        sprite.setVisible(true).setTexture(TEX.npcCar).setTint(0x3a3a3a).setPosition(car.pos.x, car.pos.y).setRotation(car.heading);
+        sprite
+          .setVisible(true)
+          .setTexture(TEX.npcCar)
+          .setDisplaySize(size.spriteWidth, size.spriteHeight)
+          .setTint(0x3a3a3a)
+          .setPosition(car.pos.x, car.pos.y)
+          .setRotation(car.heading);
         return;
       }
       if (this.world.carIsBurning(i)) {
         sprite
           .setVisible(true)
           .setTexture(this.carTexture(i))
+          .setDisplaySize(size.spriteWidth, size.spriteHeight)
           .setTint(this.burningCarTint(i))
           .setPosition(car.pos.x, car.pos.y)
           .setRotation(car.heading);
@@ -1970,6 +1992,7 @@ export class CityScene extends Phaser.Scene {
         .clearTint()
         .setVisible(true)
         .setTexture(this.carTexture(i))
+        .setDisplaySize(size.spriteWidth, size.spriteHeight)
         .setPosition(car.pos.x, car.pos.y)
         .setRotation(car.heading);
     });
