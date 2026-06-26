@@ -388,9 +388,12 @@ export class CityScene extends Phaser.Scene {
       const verticalRoad =
         facility.roadSpawn.x < facility.building.x || facility.roadSpawn.x > facility.building.x + facility.building.w;
       const offset = slot * SERVICE_SPAWN_SPACING;
-      return verticalRoad
+      const pos = verticalRoad
         ? vec2(facility.roadSpawn.x, facility.roadSpawn.y + offset)
         : vec2(facility.roadSpawn.x + offset, facility.roadSpawn.y);
+      const { tx, ty } = tileCoord(spec, pos);
+      const center = tileCenter(spec, tx, ty);
+      return verticalRoad ? vec2(center.x, pos.y) : vec2(pos.x, center.y);
     };
 
     const pushFacilityVehicle = (facility: Facility, kind: VehicleKind): void => {
@@ -419,10 +422,15 @@ export class CityScene extends Phaser.Scene {
     // Dedicated taxis start from the two taxi depots so they read as part of
     // the city rather than random yellow traffic.
     for (const depot of this.city.facilities.filter((facility) => facility.kind === 'taxiDepot')) {
-      const { tx, ty } = tileCoord(spec, depot.roadSpawn);
+      const verticalRoad =
+        depot.roadSpawn.x < depot.building.x || depot.roadSpawn.x > depot.building.x + depot.building.w;
+      const depotPos = verticalRoad
+        ? vec2(tileCenter(spec, ...Object.values(tileCoord(spec, depot.roadSpawn)) as [number, number]).x, depot.roadSpawn.y)
+        : vec2(depot.roadSpawn.x, tileCenter(spec, ...Object.values(tileCoord(spec, depot.roadSpawn)) as [number, number]).y);
+      const { tx, ty } = tileCoord(spec, depotPos);
       const dir = openDirections(this.city, tx, ty)[0] ?? vec2(1, 0);
       pushTrafficCar(
-        { pos: depot.roadSpawn, heading: Math.atan2(dir.y, dir.x), speed: 0, radius: 14 },
+        { pos: depotPos, heading: Math.atan2(dir.y, dir.x), speed: 0, radius: 14 },
         { dir },
         'taxi',
       );

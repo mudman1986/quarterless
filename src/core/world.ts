@@ -1855,9 +1855,19 @@ export class World {
     const verticalRoad =
       facility.roadSpawn.x < facility.building.x ||
       facility.roadSpawn.x > facility.building.x + facility.building.w;
-    return verticalRoad
+    const pos = verticalRoad
       ? vec2(facility.roadSpawn.x, facility.roadSpawn.y + offset)
       : vec2(facility.roadSpawn.x + offset, facility.roadSpawn.y);
+    return this.alignFacilityRoadLane(pos, verticalRoad);
+  }
+
+  /** Snap a facility-side road point into the centre of its current travel lane,
+   * keeping its along-road offset intact so queued service vehicles still fan out
+   * from the depot instead of all spawning on top of one another. */
+  private alignFacilityRoadLane(pos: Vec2, verticalRoad: boolean): Vec2 {
+    const { tx, ty } = tileCoord(this.city!.spec, pos);
+    const center = tileCenter(this.city!.spec, tx, ty);
+    return verticalRoad ? vec2(center.x, pos.y) : vec2(pos.x, center.y);
   }
 
   /** Nearest road-tile centre a service vehicle can actually drive to beside a job. */

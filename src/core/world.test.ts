@@ -39,6 +39,16 @@ const pedAt = (x: number, y: number): Pedestrian => ({
 const advance = (w: World, seconds: number, c = controls()): void => {
   for (let i = 0; i < Math.ceil(seconds * 60); i++) w.tick(c, 1 / 60);
 };
+const laneCenteredFacilityRoadSpawn = (
+  city: ReturnType<typeof buildCity>,
+  facility: ReturnType<typeof buildCity>['facilities'][number],
+) => {
+  const verticalRoad =
+    facility.roadSpawn.x < facility.building.x || facility.roadSpawn.x > facility.building.x + facility.building.w;
+  const { tx, ty } = tileCoord(city.spec, facility.roadSpawn);
+  const center = tileCenter(city.spec, tx, ty);
+  return verticalRoad ? vec2(center.x, facility.roadSpawn.y) : vec2(facility.roadSpawn.x, center.y);
+};
 
 describe('World on foot', () => {
   it('starts on foot with the camera focused on the player', () => {
@@ -1466,7 +1476,7 @@ describe('World living world', () => {
     ];
 
     w.tick(controls(), 0); // dispatch without advancing away from the spawn point
-    expect(w.ambulance?.pos).toEqual(hospital!.roadSpawn);
+    expect(w.ambulance?.pos).toEqual(laneCenteredFacilityRoadSpawn(city, hospital!));
   });
 
   it('sends a timed-out ambulance back to its hospital garage bay', () => {
@@ -1490,7 +1500,7 @@ describe('World living world', () => {
     w.tick(controls(), 1 / 60);
 
     expect(w.ambulance?.phase).toBe('depart');
-    expect(w.ambulance?.target).toEqual(hospital!.roadSpawn);
+    expect(w.ambulance?.target).toEqual(laneCenteredFacilityRoadSpawn(city, hospital!));
   });
 });
 
@@ -2440,7 +2450,7 @@ describe('World tow truck', () => {
     w.wreckedCars[0] = true;
 
     w.tick(controls(), 0); // dispatch without advancing away from the spawn point
-    expect(w.tows[0]?.pos).toEqual(towYard!.roadSpawn);
+    expect(w.tows[0]?.pos).toEqual(laneCenteredFacilityRoadSpawn(city, towYard!));
   });
 
   it('sends a timed-out tow truck back to its tow-yard garage bay', () => {
@@ -2464,7 +2474,7 @@ describe('World tow truck', () => {
     w.tick(controls(), 1 / 60);
 
     expect(w.tows[0]?.phase).toBe('depart');
-    expect(w.tows[0]?.target).toEqual(towYard!.roadSpawn);
+    expect(w.tows[0]?.target).toEqual(laneCenteredFacilityRoadSpawn(city, towYard!));
   });
 
   it('respawns a picked-up exploded car at the nearest tow yard', () => {
@@ -2494,7 +2504,7 @@ describe('World tow truck', () => {
 
     w.tick(controls(), 0); // process the respawn without letting the new car drive away
     expect(w.wreckedCars[0]).toBe(false);
-    expect(w.cars[0].pos).toEqual(towYard!.roadSpawn);
+  expect(w.cars[0].pos).toEqual(laneCenteredFacilityRoadSpawn(city, towYard!));
   });
 });
 
@@ -2770,6 +2780,148 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
 
     expect(w.ambulance?.phase).toBe('collect');
     expect(w.ambulance?.crew).not.toBeNull();
+  });
+
+  it('reaches wrecks near the live map bottom road instead of circling until timeout', () => {
+    const city = buildCity(CITY_SPEC);
+    const bottomRoadStart = Math.floor((city.spec.rows - 1) / city.spec.block) * city.spec.block;
+    const bottomRoadTy = bottomRoadStart + Math.floor((city.spec.roadWidth ?? 1) / 2);
+    const sideStreetTy = bottomRoadStart - 3;
+    const bottomTowYard = city.facilities
+      .filter((facility) => facility.kind === 'towYard')
+      .sort(
+        (a, b) =>
+          b.roadSpawn.y - a.roadSpawn.y ||
+          Math.abs(a.roadSpawn.x - city.width / 2) - Math.abs(b.roadSpawn.x - city.width / 2),
+      )[0];
+    expect(bottomTowYard).toBeDefined();
+
+    const sideStreetTx = Array.from({ length: city.spec.cols }, (_, tx) => tx)
+      .filter((tx) => city.isRoad(tx, sideStreetTy))
+      .sort(
+        (a, b) =>
+          Math.abs(tileCenter(city.spec, a, sideStreetTy).x - bottomTowYard!.roadSpawn.x) -
+          Math.abs(tileCenter(city.spec, b, sideStreetTy).x - bottomTowYard!.roadSpawn.x),
+      )[0];
+    expect(sideStreetTx).toBeDefined();
+
+    const bottomRoadTarget = tileCenter(
+      city.spec,
+      Math.min(city.spec.cols - 1, sideStreetTx! + city.spec.block * 2),
+      bottomRoadTy,
+    );
+    const sideStreetTarget = tileCenter(city.spec, sideStreetTx!, sideStreetTy);
+    const bottomSidewalk = city.sidewalks
+      .filter((sidewalk) => sidewalk.y >= (bottomRoadStart + (city.spec.roadWidth ?? 1)) * city.spec.tile)
+      .sort(
+        (a, b) =>
+          distance(vec2(a.x + a.w / 2, a.y + a.h / 2), sideStreetTarget) -
+            distance(vec2(b.x + b.w / 2, b.y + b.h / 2), sideStreetTarget) ||
+          a.y - b.y,
+      )[0];
+    expect(bottomSidewalk).toBeDefined();
+    const bottomSidewalkTarget = vec2(
+      bottomSidewalk!.x + bottomSidewalk!.w / 2,
+      bottomSidewalk!.y + bottomSidewalk!.h / 2,
+    );
+
+    for (const [label, wreckPos] of [
+      ['bottom road', bottomRoadTarget],
+      ['bottom side street', sideStreetTarget],
+      ['bottom sidewalk edge', bottomSidewalkTarget],
+    ] as const) {
+      const w = new World({
+        player: player(),
+        cars: [{ pos: wreckPos, heading: 0, speed: 0, radius: 12 }],
+        city,
+        carDrivers: [null],
+        viewRadius: 4000,
+        bounds: { width: city.width, height: city.height },
+        rng: () => 0.9,
+      });
+      w.wreckedCars[0] = true;
+
+      let reached = false;
+      for (let i = 0; i < 3600 && !w.towedCars[0]; i++) {
+        w.tick(controls(), 1 / 60);
+        const tow = w.tows[0];
+        if (tow?.crew && tow.phase === 'collect') {
+          reached = true;
+          break;
+        }
+      }
+
+      expect(reached || w.towedCars[0], label).toBe(true);
+    }
+  });
+
+  it('clears several live-city wrecks near the bottom road without a tow timing out at dispatch', () => {
+    const city = buildCity(CITY_SPEC);
+    const bottomRoadStart = Math.floor((city.spec.rows - 1) / city.spec.block) * city.spec.block;
+    const bottomRoadTy = bottomRoadStart + Math.floor((city.spec.roadWidth ?? 1) / 2);
+    const sideStreetTy = bottomRoadStart - 3;
+    const bottomTowYard = city.facilities
+      .filter((facility) => facility.kind === 'towYard')
+      .sort(
+        (a, b) =>
+          b.roadSpawn.y - a.roadSpawn.y ||
+          Math.abs(a.roadSpawn.x - city.width / 2) - Math.abs(b.roadSpawn.x - city.width / 2),
+      )[0];
+    expect(bottomTowYard).toBeDefined();
+
+    const sideStreetTx = Array.from({ length: city.spec.cols }, (_, tx) => tx)
+      .filter((tx) => city.isRoad(tx, sideStreetTy))
+      .sort(
+        (a, b) =>
+          Math.abs(tileCenter(city.spec, a, sideStreetTy).x - bottomTowYard!.roadSpawn.x) -
+          Math.abs(tileCenter(city.spec, b, sideStreetTy).x - bottomTowYard!.roadSpawn.x),
+      )[0];
+    expect(sideStreetTx).toBeDefined();
+
+    const sideStreetTarget = tileCenter(city.spec, sideStreetTx!, sideStreetTy);
+    const bottomRoadTarget = tileCenter(
+      city.spec,
+      Math.min(city.spec.cols - 1, sideStreetTx! + city.spec.block * 2),
+      bottomRoadTy,
+    );
+    const bottomSidewalk = city.sidewalks
+      .filter((sidewalk) => sidewalk.y >= (bottomRoadStart + (city.spec.roadWidth ?? 1)) * city.spec.tile)
+      .sort(
+        (a, b) =>
+          distance(vec2(a.x + a.w / 2, a.y + a.h / 2), sideStreetTarget) -
+            distance(vec2(b.x + b.w / 2, b.y + b.h / 2), sideStreetTarget) ||
+          a.y - b.y,
+      )[0];
+    expect(bottomSidewalk).toBeDefined();
+    const bottomSidewalkTarget = vec2(
+      bottomSidewalk!.x + bottomSidewalk!.w / 2,
+      bottomSidewalk!.y + bottomSidewalk!.h / 2,
+    );
+
+    const w = new World({
+      player: player(),
+      cars: [bottomRoadTarget, sideStreetTarget, bottomSidewalkTarget].map((pos) => ({
+        pos,
+        heading: 0,
+        speed: 0,
+        radius: 12,
+      })),
+      city,
+      carDrivers: [null, null, null],
+      viewRadius: 4000,
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+    for (let i = 0; i < w.wreckedCars.length; i++) w.wreckedCars[i] = true;
+
+    let maxConcurrent = 0;
+    for (let i = 0; i < 5000 && !w.towedCars.every(Boolean); i++) {
+      w.tick(controls(), 1 / 60);
+      maxConcurrent = Math.max(maxConcurrent, w.tows.length);
+    }
+
+    expect(maxConcurrent).toBeGreaterThan(1);
+    expect(w.towedCars.every(Boolean)).toBe(true);
   });
 
   it('lets the player steal the parked ambulance while the medic is loading the body', () => {
