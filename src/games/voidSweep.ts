@@ -1,6 +1,10 @@
 import type { GameRuntime } from '../arcade/types';
 import { createGameOverOverlay } from '../arcade/gameOverOverlay';
 
+interface ArcadeGameTestHook {
+  triggerGameOver(score?: number): void;
+}
+
 interface Vec2 {
   x: number;
   y: number;
@@ -63,6 +67,18 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
       lastTime = performance.now();
     },
   });
+  const testHook: ArcadeGameTestHook = {
+    triggerGameOver(nextScore) {
+      if (typeof nextScore === 'number') score = Math.max(0, Math.floor(nextScore));
+      paused = false;
+      shield = 0;
+      invulnerableFor = 0;
+      syncPauseUi();
+      gameOver = true;
+      gameOverOverlay.show(score);
+    },
+  };
+  (window as unknown as { __arcadeGame?: ArcadeGameTestHook }).__arcadeGame = testHook;
 
   const syncPauseUi = (): void => {
     pauseButton.textContent = paused ? 'Resume' : 'Pause';
@@ -289,6 +305,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
       canvas.removeEventListener('pointermove', pointermove);
       canvas.removeEventListener('pointerdown', pointermove);
       gameOverOverlay.destroy();
+      delete (window as unknown as { __arcadeGame?: ArcadeGameTestHook }).__arcadeGame;
       pauseButton.remove();
       pauseOverlay.remove();
       canvas.remove();

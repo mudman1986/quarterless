@@ -1,5 +1,9 @@
 import { expect, type Page } from '@playwright/test';
 
+interface ArcadeGameTestHook {
+  triggerGameOver(score?: number): void;
+}
+
 export async function launchSindicate(page: Page): Promise<void> {
   await page.goto('/quarterless/');
   await expect(page.getByRole('heading', { name: 'Retro Arcade' })).toBeVisible({
@@ -9,4 +13,20 @@ export async function launchSindicate(page: Page): Promise<void> {
   const canvas = page.locator('#game canvas');
   await expect(canvas).toBeVisible({ timeout: 15_000 });
   await canvas.click();
+}
+
+export async function launchArcadeGame(page: Page, title: 'Pixel Sprint' | 'Void Sweep'): Promise<void> {
+  await page.goto('/quarterless/');
+  await expect(page.getByRole('heading', { name: 'Retro Arcade' })).toBeVisible({ timeout: 10_000 });
+  await page.getByRole('button', { name: `Play ${title}` }).click();
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
+  await page.waitForFunction(() => Boolean((window as unknown as { __arcadeGame?: unknown }).__arcadeGame));
+}
+
+export async function triggerArcadeGameOver(page: Page, score?: number): Promise<void> {
+  await page.evaluate((nextScore) => {
+    const hook = (window as unknown as { __arcadeGame?: ArcadeGameTestHook }).__arcadeGame;
+    if (!hook) throw new Error('Missing arcade test hook');
+    hook.triggerGameOver(nextScore);
+  }, score);
 }
