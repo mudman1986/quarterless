@@ -1,6 +1,7 @@
 import { createMission, type Mission, type MissionSpec } from '../../core/mission';
 import type { VehicleKind } from '../../core/world';
 import type { Vec2 } from '../../core/vector';
+import type { Pedestrian } from '../../core/pedestrianAI';
 
 export type StorySystem =
   | 'scriptedEncounter'
@@ -49,9 +50,51 @@ export interface VehicleRouteActorScript {
   loseGraceSeconds?: number;
 }
 
+export interface PedestrianRouteActorScript {
+  kind: 'pedestrianRoute';
+  actorId: string;
+  route: readonly Vec2[];
+  speed: number;
+  uniform?: Pedestrian['uniform'];
+  escortRadius?: number;
+}
+
+export interface PedestrianSquadActorScript {
+  kind: 'pedestrianSquad';
+  actorId: string;
+  center: Vec2;
+  count: number;
+  spread: number;
+  uniform?: Pedestrian['uniform'];
+  missionTargets?: boolean;
+}
+
+export type StoryActorScript =
+  | VehicleRouteActorScript
+  | PedestrianRouteActorScript
+  | PedestrianSquadActorScript;
+
+export interface LoseActorFailRule {
+  kind: 'loseActor';
+  actorId: string;
+  maxSeconds: number;
+  failureText: string;
+}
+
+export interface EscortRadiusFailRule {
+  kind: 'escortRadius';
+  actorId: string;
+  radius: number;
+  maxSeconds: number;
+  failureText: string;
+}
+
+export type StoryFailRule = LoseActorFailRule | EscortRadiusFailRule;
+
 export interface StoryRuntimeScript {
   primaryActorId: string;
-  actors: readonly VehicleRouteActorScript[];
+  actors: readonly StoryActorScript[];
+  failRules?: readonly StoryFailRule[];
 }
 
 export interface StoryChapter {

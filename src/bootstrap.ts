@@ -87,6 +87,23 @@ function chapterCards(progress = createStoryProgress(STORY_MODE_PROTOTYPE)): str
     .join('');
 }
 
+function recapItems(progress = createStoryProgress(STORY_MODE_PROTOTYPE)): string {
+  const chapters = STORY_MODE_PROTOTYPE.acts.flatMap((act) => act.chapters);
+  const completed = chapters.filter((chapter) => progress.completedChapterIds.includes(chapter.id));
+  if (completed.length === 0) {
+    return '<li class="story-archive-empty">No completed chapters yet.</li>';
+  }
+  return completed
+    .map(
+      (chapter) => `
+        <li class="story-archive-item">
+          <span class="story-archive-title">${chapter.title}</span>
+          <span class="story-archive-copy">${chapter.combinedGoal}</span>
+        </li>`,
+    )
+    .join('');
+}
+
 function storyProgressStore(): Storage | null {
   try {
     return typeof window !== 'undefined' ? window.localStorage : null;
@@ -270,6 +287,12 @@ function renderStoryMenu(game: ArcadeGame): void {
             <div class="story-chapter-grid">
               ${chapterCards(progress)}
             </div>
+          </section>
+          <section class="story-menu-panel" aria-label="Recap archive">
+            <h2>Recap Archive</h2>
+            <ul class="story-archive-list">
+              ${recapItems(progress)}
+            </ul>
           </section>
         </section>
       </div>

@@ -33,7 +33,7 @@ import type { Car } from '../../core/vehicle';
 import type { Pedestrian } from '../../core/pedestrianAI';
 import { type TrafficAI, openDirections, tileCoord } from '../../core/trafficAI';
 import type { AmmoPickup } from '../../core/weapon';
-import { distance, vec2, type Vec2 } from '../../core/vector';
+import { vec2, type Vec2 } from '../../core/vector';
 import { uiScreenToWorld, uiCounterScale, uiAnchorOnScreen } from '../../core/hudLayout';
 import { greenAxis } from '../../core/trafficLight';
 import { KeyboardInput } from '../input/KeyboardInput';
@@ -65,7 +65,13 @@ import {
   type StoryProgressSnapshot,
 } from '../story/storyProgress';
 import { compileStoryChapterRuntimeCampaign } from '../story/storyMode';
-import type { StoryRuntimeScript, VehicleRouteActorScript } from '../story/storyMode';
+import type { PedestrianRouteActorScript, PedestrianSquadActorScript, StoryRuntimeScript, VehicleRouteActorScript } from '../story/storyMode';
+import {
+  advancePedestrianRouteActor,
+  advanceVehicleRouteActor,
+  applyStoryFailRules,
+  updateTailCaptureProgress,
+} from '../story/runtimeActors';
 
 const COLORS = {
   road: 0x2b2b30,
@@ -239,7 +245,9 @@ interface StoryScriptState {
   captureSeconds: number;
   tailLostSeconds: number;
   actorCarIndices: Record<string, number>;
+  actorPedIndices: Record<string, number[]>;
   actorRouteIndices: Record<string, number>;
+  failCounters: Record<string, number>;
   targetPedIndex: number | null;
   targetSpawned: boolean;
   introShown: boolean;
@@ -583,7 +591,9 @@ export class CityScene extends Phaser.Scene {
         captureSeconds: 0,
         tailLostSeconds: 0,
         actorCarIndices: {},
+        actorPedIndices: {},
         actorRouteIndices: {},
+        failCounters: {},
         targetPedIndex: null,
         targetSpawned: false,
         introShown: false,
@@ -624,26 +634,91 @@ export class CityScene extends Phaser.Scene {
     return index;
   }
 
+  private ensureStoryTargetPed(
+    actorId: string,
+    pos: Vec2,
+    opts: { uniform?: Pedestrian['uniform']; missionTarget?: boolean; count?: number; spread?: number } = {},
+  ): number[] {
+    const script = this.storyScript!;
+    const existing = script.actorPedIndices[actorId]?.filter((index) => !!this.world.pedestrians[index]);
+    if (existing && existing.length > 0) return existing;
+
+    const count = Math.max(1, opts.count ?? 1);
+    const spread = opts.spread ?? 20;
+    const created: number[] = [];
+    for (let i = 0; i < count; i++) {
+      const offsetX = count === 1 ? 0 : (i - (count - 1) / 2) * spread;
+      const ped: Pedestrian = {
+        pos: vec2(pos.x + offsetX, pos.y),
+        heading: 0,
+        radius: 7,
+        state: 'wait',
+        target: vec2(pos.x + offsetX, pos.y),
+        missionTarget: opts.missionTarget ?? false,
+        uniform: opts.uniform,
+      };
+      this.world.pedestrians.push(ped);
+      created.push(this.world.pedestrians.length - 1);
+    }
+    script.actorPedIndices[actorId] = created;
+    script.actorRouteIndices[actorId] = 0;
+    return created;
+  }
+
   private runVehicleRouteActor(actor: VehicleRouteActorScript, dt: number): { carIndex: number; routeIndex: number } {
     const script = this.storyScript!;
     const first = actor.route[0] ?? vec2(0, 0);
     const carIndex = this.ensureStoryTargetCar(actor.actorId, first, actor.vehicleKind);
-    const car = this.world.cars[carIndex]!;
     const routeIndex = script.actorRouteIndices[actor.actorId] ?? 0;
-    const target = actor.route[Math.min(routeIndex, actor.route.length - 1)] ?? first;
-    const dx = target.x - car.pos.x;
-    const dy = target.y - car.pos.y;
-    const dist = Math.hypot(dx, dy);
-    const heading = dist > 0 ? Math.atan2(dy, dx) : car.heading;
-    const step = Math.min(dist, dt * actor.speed);
+    const car = this.world.cars[carIndex]!;
+    const step = advanceVehicleRouteActor(actor, car.pos, routeIndex, dt);
     this.world.cars[carIndex] = {
       ...car,
-      heading,
-      speed: step > 0 ? actor.speed : 0,
-      pos: dist > 0 ? vec2(car.pos.x + (dx / dist) * step, car.pos.y + (dy / dist) * step) : car.pos,
+      heading: step.heading,
+      speed: step.speed,
+      pos: step.pos,
     };
-    if (dist <= 8 && routeIndex < actor.route.length - 1) script.actorRouteIndices[actor.actorId] = routeIndex + 1;
-    return { carIndex, routeIndex: script.actorRouteIndices[actor.actorId] ?? routeIndex };
+    script.actorRouteIndices[actor.actorId] = step.routeIndex;
+    return { carIndex, routeIndex: step.routeIndex };
+  }
+
+  private runPedestrianRouteActor(actor: PedestrianRouteActorScript, dt: number): { pedIndex: number; routeIndex: number } {
+    const script = this.storyScript!;
+    const first = actor.route[0] ?? vec2(0, 0);
+    const pedIndex = this.ensureStoryTargetPed(actor.actorId, first, { uniform: actor.uniform })[0]!;
+    const ped = this.world.pedestrians[pedIndex]!;
+    const routeIndex = script.actorRouteIndices[actor.actorId] ?? 0;
+    const step = advancePedestrianRouteActor(actor, ped.pos, routeIndex, dt);
+    this.world.pedestrians[pedIndex] = {
+      ...ped,
+      pos: step.pos,
+      heading: step.heading,
+      state: 'wander',
+      target: actor.route[Math.min(step.routeIndex, actor.route.length - 1)] ?? step.pos,
+      uniform: actor.uniform,
+    };
+    script.actorRouteIndices[actor.actorId] = step.routeIndex;
+    return { pedIndex, routeIndex: step.routeIndex };
+  }
+
+  private runPedestrianSquadActor(actor: PedestrianSquadActorScript): number[] {
+    return this.ensureStoryTargetPed(actor.actorId, actor.center, {
+      count: actor.count,
+      spread: actor.spread,
+      uniform: actor.uniform,
+      missionTarget: actor.missionTargets,
+    });
+  }
+
+  private restartCurrentStoryMission(failureText: string): void {
+    if (!this.storyProgress?.current) return;
+    const restart: StoryProgressSnapshot = {
+      ...this.storyProgress,
+      current: { ...this.storyProgress.current, objectiveIndex: 0 },
+    };
+    this.storyProgress = restart;
+    this.showStoryPanel(`MISSION FAILED\n\n${failureText}\n\nRetrying ${currentStoryMission(STORY_MODE_PROTOTYPE, restart)?.title ?? 'mission'}...`, 2.6);
+    this.pendingStoryRestart = restart;
   }
 
   private runStoryScript(runtime: StoryRuntimeScript | undefined, dt: number): void {
@@ -654,33 +729,67 @@ export class CityScene extends Phaser.Scene {
       return;
     }
 
-    const actor = runtime.actors.find((entry) => entry.actorId === runtime.primaryActorId);
-    if (!actor || actor.kind !== 'vehicleRoute') {
-      script.tailSeconds = 0;
-      script.captureSeconds = 0;
-      return;
+    const actorPositions: Record<string, Vec2 | null> = {};
+    let primaryVehicleActor: VehicleRouteActorScript | null = null;
+    let primaryVehiclePos: Vec2 | null = null;
+    let primaryRouteIndex = 0;
+
+    for (const actor of runtime.actors) {
+      if (actor.kind === 'vehicleRoute') {
+        const state = this.runVehicleRouteActor(actor, dt);
+        const pos = this.world.cars[state.carIndex]!.pos;
+        actorPositions[actor.actorId] = pos;
+        if (actor.actorId === runtime.primaryActorId) {
+          primaryVehicleActor = actor;
+          primaryVehiclePos = pos;
+          primaryRouteIndex = state.routeIndex;
+        }
+        continue;
+      }
+      if (actor.kind === 'pedestrianRoute') {
+        const state = this.runPedestrianRouteActor(actor, dt);
+        actorPositions[actor.actorId] = this.world.pedestrians[state.pedIndex]?.pos ?? null;
+        continue;
+      }
+      const indices = this.runPedestrianSquadActor(actor);
+      actorPositions[actor.actorId] = indices.length > 0 ? this.world.pedestrians[indices[0]]?.pos ?? null : null;
     }
 
-    const state = this.runVehicleRouteActor(actor, dt);
-    const targetPos = this.world.cars[state.carIndex]!.pos;
-    const playerDist = distance(this.world.focus, targetPos);
-    if (playerDist <= actor.followRadius) {
-      script.tailSeconds += dt;
-      script.tailLostSeconds = 0;
+    let progress = {
+      tailSeconds: script.tailSeconds,
+      captureSeconds: script.captureSeconds,
+      tailLostSeconds: script.tailLostSeconds,
+      failCounters: script.failCounters,
+    };
+
+    if (primaryVehicleActor && primaryVehiclePos) {
+      progress = updateTailCaptureProgress(
+        primaryVehicleActor,
+        progress,
+        {
+          playerPos: this.world.focus,
+          playerSpeed: this.world.drivingCar?.speed ?? 0,
+          dt,
+          actorPositions,
+        },
+        primaryVehiclePos,
+        primaryRouteIndex,
+      );
     } else {
-      script.tailLostSeconds += dt;
+      progress = { ...progress, tailSeconds: 0, captureSeconds: 0, tailLostSeconds: 0 };
     }
 
-    const tailDrain = actor.tailDrainPerSecond ?? 2;
-    const loseGrace = actor.loseGraceSeconds ?? 2.5;
-    if (script.tailLostSeconds > loseGrace) script.tailSeconds = Math.max(0, script.tailSeconds - dt * tailDrain);
-
-    const captureReady = actor.captureRadius !== undefined && actor.captureMaxSpeed !== undefined && state.routeIndex >= actor.route.length - 1;
-    if (captureReady && playerDist <= (actor.captureRadius ?? 0) && Math.abs(this.world.drivingCar?.speed ?? 0) <= (actor.captureMaxSpeed ?? 0)) {
-      script.captureSeconds += dt;
-    } else {
-      script.captureSeconds = 0;
-    }
+    const fail = applyStoryFailRules(runtime.failRules, progress, {
+      playerPos: this.world.focus,
+      playerSpeed: this.world.drivingCar?.speed ?? 0,
+      dt,
+      actorPositions,
+    });
+    script.tailSeconds = fail.progress.tailSeconds;
+    script.captureSeconds = fail.progress.captureSeconds;
+    script.tailLostSeconds = fail.progress.tailLostSeconds;
+    script.failCounters = fail.progress.failCounters;
+    if (fail.failureText) this.restartCurrentStoryMission(fail.failureText);
   }
 
   private persistGameState(key = GAME_STATE_KEY): void {
@@ -2196,8 +2305,9 @@ export class CityScene extends Phaser.Scene {
       this.showMissionBriefingPanel();
       return;
     }
+    const reward = previousMission.prototypeRuntime?.reward ?? 0;
     this.showStoryPanel(
-      `MISSION COMPLETE\n${previousMission.title}\n\n${previousMission.payoff}\n\nNext: ${mission.title}\n${mission.primaryGoal}`,
+      `MISSION COMPLETE\n${previousMission.title}\nReward: $${reward}\n\n${previousMission.payoff}\n\nNext: ${mission.title}\n${mission.primaryGoal}`,
       4.8,
     );
   }

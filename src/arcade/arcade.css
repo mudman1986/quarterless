@@ -216,7 +216,7 @@ button {
 
 .story-menu-grid {
   display: grid;
-  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr) minmax(240px, 320px);
   gap: 18px;
 }
 
@@ -255,6 +255,37 @@ button {
 .story-chapter-grid {
   display: grid;
   gap: 10px;
+}
+
+.story-archive-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.story-archive-item,
+.story-archive-empty {
+  border: 1px solid #293342;
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(9, 12, 18, 0.92);
+}
+
+.story-archive-title {
+  display: block;
+  margin-bottom: 4px;
+  color: #eef7ff;
+  font-size: 0.95rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.story-archive-copy,
+.story-archive-empty {
+  color: #b8c3d1;
+  line-height: 1.4;
 }
 
 .story-chapter-card {

@@ -39,6 +39,7 @@ test('story mode opens a dedicated story menu with chapter select', async ({ pag
   await page.getByRole('button', { name: 'Story Mode' }).click();
   await expect(page.getByRole('heading', { name: 'Story Mode' })).toBeVisible();
   await expect(page.getByRole('button', { name: /Dead Drop District/i })).toBeVisible();
+  await expect(page.getByLabel('Recap archive')).toBeVisible();
 });
 
 test('story mode boots and restores saved story progress after refresh', async ({ page }) => {
@@ -150,11 +151,11 @@ test('story mode shows a prototype-complete panel when the current story slice f
     }
 
     scene.storyProgress.current = {
-      chapterId: 'static-on-the-hospital-band',
-      missionId: 'ward-6-exit',
+      chapterId: 'precinct-ashes',
+      missionId: 'hard-copy',
       objectiveIndex: 0,
     };
-    scene.prevMissionId = 'ward-6-exit';
+    scene.prevMissionId = 'hard-copy';
     scene.prevMissionComplete = false;
     scene.world.campaign.currentIndex = scene.world.campaign.missions.length;
     scene.handleEvents();
@@ -208,6 +209,7 @@ test('story mode shows an authored mission transition panel between chapter miss
   expect(result.visible).toBe(true);
   expect(result.text).toContain('MISSION COMPLETE');
   expect(result.text).toContain('Night Ferry Run');
+  expect(result.text).toContain('Reward: $1500');
   expect(result.text).toContain('Burned Locker');
   expect(result.missionTitle).toBe('Burned Locker');
 });
@@ -262,10 +264,15 @@ test('story mode pause menu can replay an unlocked chapter selection', async ({ 
   await page.evaluate(() => {
     const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
     const scene = game?.scene.getScene('City') as {
-      storyProgress?: { unlockedChapterIds: string[]; current: { chapterId: string } | null };
+      storyProgress?: {
+        unlockedChapterIds: string[];
+        completedChapterIds: string[];
+        current: { chapterId: string } | null;
+      };
     };
     if (!scene?.storyProgress?.current) throw new Error('Missing story progress');
-    scene.storyProgress.unlockedChapterIds = ['dead-drop-district', 'spare-parts-gospel'];
+    scene.storyProgress.unlockedChapterIds = ['dead-drop-district', 'spare-parts-gospel', 'static-on-the-hospital-band'];
+    scene.storyProgress.completedChapterIds = ['dead-drop-district'];
   });
 
   await page.keyboard.press('p');
