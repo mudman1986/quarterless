@@ -23,7 +23,6 @@ import {
 } from './game/story/storyProgress';
 import {
   clearStoryLaunchRequest,
-  loadStoryLaunchRequest,
   saveStoryLaunchRequest,
   type StoryLaunchRequest,
 } from './game/story/storyLaunchState';

@@ -19,8 +19,6 @@ import {
   clearGameState,
   GAME_STATE_KEY,
   loadGameState,
-  MANUAL_SAVE_SLOT_COUNT,
-  manualSaveKey,
   saveGameState,
 } from '../../core/gameState';
 import {
@@ -60,7 +58,6 @@ import {
   loadStoryProgress,
   saveStoryProgress,
   selectStoryMission,
-  selectStoryChapter,
   setStoryObjectiveIndex,
   STORY_LAUNCH_PROGRESS_KEY,
   storyProgressSaveKey,
@@ -356,30 +353,15 @@ export class CityScene extends Phaser.Scene {
   private minimapAccumulator = MINIMAP_REFRESH_INTERVAL;
   private saveAccumulator = 0;
 
-  /** Pause / menu state. */
   private paused = false;
   private pauseKey!: Phaser.Input.Keyboard.Key;
   private storyAcknowledgeKey!: Phaser.Input.Keyboard.Key;
   private newGameKey!: Phaser.Input.Keyboard.Key;
-  private saveGameKey!: Phaser.Input.Keyboard.Key;
-  private loadGameKey!: Phaser.Input.Keyboard.Key;
-  private chapterSelectKey!: Phaser.Input.Keyboard.Key;
-  private manualSlotKeys: Phaser.Input.Keyboard.Key[] = [];
-  private pauseMenu!: Phaser.GameObjects.Text;
-  private pauseResumeButton!: Phaser.GameObjects.Text;
-  private pauseSlotButton!: Phaser.GameObjects.Text;
-  private pauseSaveButton!: Phaser.GameObjects.Text;
-  private pauseLoadButton!: Phaser.GameObjects.Text;
-  private pauseChapterButton!: Phaser.GameObjects.Text;
-  private pauseNewGameButton!: Phaser.GameObjects.Text;
-  private pauseExitButton!: Phaser.GameObjects.Text;
   private pauseTouchButton!: Phaser.GameObjects.Text;
-  private launchMenuKey!: Phaser.Input.Keyboard.Key;
 
   /** High-score persistence. */
   private store: KeyValueStore = safeStorage();
   private savedBest = 0;
-  private selectedManualSlot = 1;
   private skipPersistOnShutdown = false;
   private requestedLoadKey: string | null = GAME_STATE_KEY;
   private skipResumeOnCreate = false;
@@ -427,7 +409,6 @@ export class CityScene extends Phaser.Scene {
   private mode: 'sandbox' | 'story' = 'sandbox';
   private requestedStoryProgress: StoryProgressSnapshot | null = null;
   private storyProgress: StoryProgressSnapshot | null = null;
-  private selectedStoryChapterId: string | null = null;
   private storyScript: StoryScriptState | null = null;
   private storyMissionSummaryBaseline: StoryMissionSummaryBaseline | null = null;
 
@@ -558,17 +539,7 @@ export class CityScene extends Phaser.Scene {
     this.pauseKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.P);
     this.storyAcknowledgeKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER);
     this.newGameKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.N);
-    this.saveGameKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.S);
-    this.loadGameKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.L);
-    this.chapterSelectKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.C);
-    this.launchMenuKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.M);
-    this.manualSlotKeys = [
-      kb.addKey(Phaser.Input.Keyboard.KeyCodes.ONE),
-      kb.addKey(Phaser.Input.Keyboard.KeyCodes.TWO),
-      kb.addKey(Phaser.Input.Keyboard.KeyCodes.THREE),
-    ];
     this.paused = false;
-    this.refreshPauseMenu();
     if (typeof window !== 'undefined') {
       window.addEventListener('beforeunload', this.beforeUnloadHandler);
     }
@@ -1768,14 +1739,6 @@ export class CityScene extends Phaser.Scene {
     place(this.storyStateText, width / 2, 140);
     place(this.storyPanel, width / 2, height / 2 - 12);
     place(this.bustedText, width / 2, height / 2);
-    place(this.pauseMenu, width / 2, height / 2 - 156);
-    place(this.pauseResumeButton, width / 2, height / 2 - 42);
-    place(this.pauseSlotButton, width / 2, height / 2 + 4);
-    place(this.pauseSaveButton, width / 2, height / 2 + 50);
-    place(this.pauseLoadButton, width / 2, height / 2 + 96);
-    place(this.pauseChapterButton, width / 2, height / 2 + 142);
-    place(this.pauseNewGameButton, width / 2, height / 2 + 188);
-    place(this.pauseExitButton, width / 2, height / 2 + 234);
     place(this.pauseTouchButton, width / 2, height / 2 + 306);
 
     if (this.minimapBg) {
@@ -1837,26 +1800,6 @@ export class CityScene extends Phaser.Scene {
       .setDepth(1500)
       .setVisible(false);
 
-    // The pause menu overlay (shown while paused).
-    this.pauseMenu = this.add
-      .text(
-        this.scale.width / 2,
-        this.scale.height / 2 - 156,
-        '',
-        {
-          fontFamily: 'monospace',
-          fontSize: '28px',
-          color: '#e5e7eb',
-          align: 'center',
-          backgroundColor: '#000000d0',
-          padding: { x: 28, y: 22 },
-        },
-      )
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setDepth(2500)
-      .setVisible(false);
-
     this.storyPanel = this.add
       .text(this.scale.width / 2, this.scale.height / 2 - 12, '', {
         fontFamily: 'monospace',
@@ -1886,14 +1829,6 @@ export class CityScene extends Phaser.Scene {
       .setDepth(2501)
       .setVisible(false);
 
-    this.pauseResumeButton = this.createPauseActionButton('Resume  [P]', () => this.togglePause());
-    this.pauseSlotButton = this.createPauseActionButton('', () => this.cycleManualSlot());
-    this.pauseSaveButton = this.createPauseActionButton('Save Game  [S]', () => this.saveManualGame());
-    this.pauseLoadButton = this.createPauseActionButton('Load Saved Game  [L]', () => this.loadManualGame());
-    this.pauseChapterButton = this.createPauseActionButton('', () => this.loadSelectedStoryChapter());
-    this.pauseNewGameButton = this.createPauseActionButton('New Game  [N]', () => this.startNewGame());
-    this.pauseExitButton = this.createPauseActionButton('Sindicate Menu  [M]', () => this.returnToLaunchMenu());
-
     this.pauseTouchButton = this.add
       .text(this.scale.width / 2, this.scale.height / 2 + 214, '', {
         fontFamily: 'monospace',
@@ -1909,7 +1844,6 @@ export class CityScene extends Phaser.Scene {
       .setVisible(false)
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => this.toggleTouchEnabled());
-    this.refreshPauseMenu();
     this.refreshPauseTouchButton();
 
     // A full-screen dimming overlay for the day/night cycle. Oversized and
@@ -1924,27 +1858,6 @@ export class CityScene extends Phaser.Scene {
     this.touchControlsGfx = this.add.graphics().setScrollFactor(0).setDepth(1700);
     const { width, height } = this.scale.gameSize;
     this.touchLayout = touchLayoutForViewport(width, height);
-  }
-
-  private createPauseActionButton(label: string, onPress: () => void): Phaser.GameObjects.Text {
-    return this.add
-      .text(this.scale.width / 2, this.scale.height / 2, label, {
-        fontFamily: 'monospace',
-        fontSize: '20px',
-        color: '#67e8f9',
-        align: 'center',
-        backgroundColor: '#000000d0',
-        padding: { x: 18, y: 10 },
-      })
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setDepth(2501)
-      .setVisible(false)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => {
-        if (!this.paused) return;
-        onPress();
-      });
   }
 
   /** Build the corner minimap: a static city backdrop plus a live dot overlay. */
@@ -2238,15 +2151,6 @@ export class CityScene extends Phaser.Scene {
     }
   }
 
-  /** Story pause routes back to the launcher; only story briefings still freeze the sim in-scene. */
-  private togglePause(): void {
-    if (this.paused && this.storyPanelRequiresAcknowledge) {
-      this.acknowledgeStoryPanel();
-      return;
-    }
-    this.returnToLaunchMenu();
-  }
-
   private setTouchEnabled(enabled: boolean): void {
     this.touchEnabled = enabled;
     this.touchOptedOut = this.touchAvailable && !enabled;
@@ -2270,131 +2174,10 @@ export class CityScene extends Phaser.Scene {
       .setVisible(show);
   }
 
-  private setPauseUiVisible(visible: boolean): void {
-    this.pauseMenu.setVisible(false);
-    this.pauseResumeButton.setVisible(false);
-    this.pauseSlotButton.setVisible(false);
-    this.pauseSaveButton.setVisible(false);
-    this.pauseLoadButton.setVisible(false);
-    this.pauseChapterButton.setVisible(false);
-    this.pauseNewGameButton.setVisible(false);
-    this.pauseExitButton.setVisible(false);
-  }
-
   private returnToLaunchMenu(): void {
     this.persistGameState();
     const onExit = this.game.registry.get('exitToLaunchMenu') as (() => void) | undefined;
     onExit?.();
-  }
-
-  private currentManualSaveKey(): string {
-    return manualSaveKey(this.selectedManualSlot);
-  }
-
-  private hasManualSave(slot = this.selectedManualSlot): boolean {
-    return loadGameState(this.store, manualSaveKey(slot)) !== null;
-  }
-
-  private selectManualSlot(slot: number): void {
-    const normalized = Math.max(1, Math.min(MANUAL_SAVE_SLOT_COUNT, slot));
-    if (this.selectedManualSlot === normalized) return;
-    this.selectedManualSlot = normalized;
-    this.refreshPauseMenu();
-  }
-
-  private cycleManualSlot(): void {
-    this.selectedManualSlot = this.selectedManualSlot % MANUAL_SAVE_SLOT_COUNT + 1;
-    this.refreshPauseMenu();
-  }
-
-  private unlockedStoryChapters() {
-    if (!this.storyProgress) return [];
-    return STORY_MODE_PROTOTYPE.acts
-      .flatMap((act) => act.chapters)
-      .filter((chapter) => this.storyProgress?.unlockedChapterIds.includes(chapter.id));
-  }
-
-  private cycleStoryChapterSelection(): void {
-    if (this.mode !== 'story') return;
-    const chapters = this.unlockedStoryChapters();
-    if (chapters.length === 0) return;
-    const currentId = this.selectedStoryChapterId ?? this.storyProgress?.current?.chapterId ?? chapters[0]?.id ?? null;
-    const index = chapters.findIndex((chapter) => chapter.id === currentId);
-    const next = chapters[(index + 1 + chapters.length) % chapters.length] ?? chapters[0];
-    this.selectedStoryChapterId = next?.id ?? null;
-    this.refreshPauseMenu();
-  }
-
-  private loadSelectedStoryChapter(): void {
-    if (this.mode !== 'story' || !this.storyProgress) return;
-    const chapterId = this.selectedStoryChapterId ?? this.storyProgress.current?.chapterId;
-    if (!chapterId) return;
-    const progress = selectStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress, chapterId);
-    this.paused = false;
-    this.skipPersistOnShutdown = true;
-    clearGameState(this.store);
-    this.scene.restart({ skipResume: true, mode: 'story', storyProgress: progress });
-  }
-
-  private refreshPauseMenu(): void {
-    if (!this.pauseMenu) return;
-    const hasManualSave = this.hasManualSave();
-    const slotHelp = Array.from({ length: MANUAL_SAVE_SLOT_COUNT }, (_, index) => `${index + 1}`).join('/');
-    const currentObjective = this.missionText() || 'No active objective';
-    this.pauseMenu.setText(
-      [
-        'PAUSED',
-        '',
-        currentObjective,
-        '',
-        'Resume, save this run, load a chosen slot, or start over.',
-        `Press ${slotHelp} or tap Slot to choose a save slot.`,
-        'Press M or tap Sindicate Menu to return to the story launch page.',
-        ...(this.mode === 'story' ? ['Press C to cycle unlocked story chapters.'] : []),
-      ].join('\n'),
-    );
-    this.pauseSlotButton.setText(
-      `Slot ${this.selectedManualSlot}/${MANUAL_SAVE_SLOT_COUNT}${hasManualSave ? '  •  Occupied' : '  •  Empty'}\nTap to cycle · Keys ${slotHelp}`,
-    );
-    this.pauseSaveButton.setText(`Save Slot ${this.selectedManualSlot}  [S]`);
-    this.pauseLoadButton
-      .setText(
-        hasManualSave
-          ? `Load Slot ${this.selectedManualSlot}  [L]`
-          : `Load Slot ${this.selectedManualSlot}  [L]\nEmpty slot`,
-      )
-      .setAlpha(hasManualSave ? 1 : 0.6);
-    this.pauseExitButton.setText('Sindicate Menu  [M]\nReturn to launch options');
-    if (this.mode === 'story') {
-      const chapters = this.unlockedStoryChapters();
-      const chapterId = this.selectedStoryChapterId ?? this.storyProgress?.current?.chapterId ?? chapters[0]?.id ?? null;
-      this.selectedStoryChapterId = chapterId;
-      const selected = chapters.find((chapter) => chapter.id === chapterId) ?? chapters[0] ?? null;
-      this.pauseChapterButton
-        .setText(
-          selected
-            ? `Replay Chapter  [Tap]\n${selected.title}\nPress C to cycle`
-            : 'Replay Chapter  [Tap]\nNo unlocked chapters',
-        )
-        .setAlpha(selected ? 1 : 0.6);
-    }
-  }
-
-  private saveManualGame(): void {
-    this.persistGameState(this.currentManualSaveKey());
-    this.refreshPauseMenu();
-    this.showBanner(`SAVED SLOT ${this.selectedManualSlot}`);
-  }
-
-  private loadManualGame(): void {
-    if (!this.hasManualSave()) {
-      this.showBanner(`SLOT ${this.selectedManualSlot} EMPTY`);
-      this.refreshPauseMenu();
-      return;
-    }
-    this.paused = false;
-    this.skipPersistOnShutdown = true;
-    this.scene.restart({ loadSaveKey: this.currentManualSaveKey() });
   }
 
   /** Restart the scene, beginning a brand-new game (the high score persists). */

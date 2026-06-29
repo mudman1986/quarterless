@@ -293,7 +293,7 @@ test('story combat and chase missions keep NPC target markers on the minimap', a
     completedMissionIds: ['night-ferry-run', 'burned-locker'],
     branchOutcomes: {},
   });
-  expect(await eliminateMarkers.evaluate((markers) => markers.some((marker) => marker.kind === 'mission-target'))).toBe(true);
+  expect(await eliminateMarkers.evaluate((markers) => (markers ?? []).some((marker) => marker.kind === 'mission-target'))).toBe(true);
 
   const chaseMarkers = await restartAndReadMarkers({
     version: 1,
@@ -309,7 +309,7 @@ test('story combat and chase missions keep NPC target markers on the minimap', a
     completedMissionIds: ['night-ferry-run', 'burned-locker', 'wreck-before-dawn'],
     branchOutcomes: {},
   });
-  expect(await chaseMarkers.evaluate((markers) => markers.some((marker) => marker.kind === 'story-target'))).toBe(true);
+  expect(await chaseMarkers.evaluate((markers) => (markers ?? []).some((marker) => marker.kind === 'story-target'))).toBe(true);
 });
 
 test('grouped chapter leads show simultaneous mission markers and start the chosen mission in-world', async ({ page }) => {
@@ -356,7 +356,7 @@ test('grouped chapter leads show simultaneous mission markers and start the chos
     return targets.length >= 2 ? targets : null;
   });
 
-  expect(await choices.evaluate((targets) => targets.map((target) => target.mission.id))).toEqual([
+  expect(await choices.evaluate((targets) => (targets ?? []).map((target) => target.mission.id))).toEqual([
     'hook-chain',
     'the-empty-shell',
   ]);
@@ -498,7 +498,10 @@ test('story mode shows a prototype-complete panel when the current story slice f
     const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
     const scene = game?.scene.getScene('City') as {
       world: { campaign?: { missions: Array<unknown>; currentIndex: number } | null };
-      storyProgress?: { current: { missionId: string; chapterId: string; objectiveIndex: number } | null };
+      storyProgress?: {
+        current: { actId: string; missionId: string; chapterId: string; objectiveIndex: number } | null;
+        completedMissionIds: string[];
+      };
       prevMissionId?: string | null;
       prevMissionComplete?: boolean;
       handleEvents?: () => void;
@@ -596,7 +599,10 @@ test('story mode restarts into the next chapter after chapter completion', async
     const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
     const scene = game?.scene.getScene('City') as {
       world: { campaign?: { missions: Array<unknown>; currentIndex: number } | null };
-      storyProgress?: { current: { missionId: string; chapterId: string; objectiveIndex: number } | null };
+      storyProgress?: {
+        current: { actId: string; missionId: string; chapterId: string; objectiveIndex: number } | null;
+        completedMissionIds: string[];
+      };
       prevMissionId?: string | null;
       prevMissionComplete?: boolean;
       pendingStoryRestart?: unknown;
