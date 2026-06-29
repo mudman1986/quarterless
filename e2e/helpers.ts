@@ -11,7 +11,7 @@ export async function launchSindicate(page: Page): Promise<void> {
   });
   await page.getByRole('button', { name: 'Play Sindicate' }).click();
   await expect(page.getByRole('heading', { name: 'Story Mode' })).toBeVisible({ timeout: 10_000 });
-  await page.getByRole('button', { name: /Start Story|Continue Story/ }).click();
+  await page.getByRole('button', { name: /Start Story|Continue Story|Resume Current Run/ }).click();
   const canvas = page.locator('#game canvas');
   await expect(canvas).toBeVisible({ timeout: 15_000 });
   await canvas.click();

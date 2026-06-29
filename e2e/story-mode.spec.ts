@@ -18,7 +18,7 @@ async function launchStoryModeWithOptions(
   await expect(page.getByRole('heading', { name: 'Retro Arcade' })).toBeVisible({ timeout: 10_000 });
   await page.getByRole('button', { name: 'Play Sindicate' }).click();
   await expect(page.getByRole('heading', { name: 'Story Mode' })).toBeVisible({ timeout: 10_000 });
-  await page.getByRole('button', { name: /Start Story|Continue Story/ }).click();
+  await page.getByRole('button', { name: /Start Story|Continue Story|Resume Current Run/ }).click();
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
   await page.locator('#game canvas').click();
   if (options.acknowledgeBrief) {
@@ -50,6 +50,7 @@ test.afterEach(async ({ page }) => {
     localStorage.removeItem('sindicate.manualSave.2.storyProgress');
     localStorage.removeItem('sindicate.manualSave.3');
     localStorage.removeItem('sindicate.manualSave.3.storyProgress');
+    sessionStorage.removeItem('sindicate.storyLaunchRequest');
   });
 });
 
@@ -188,7 +189,7 @@ test('story mission briefing stays visible until Enter acknowledges it', async (
   expect(before.paused).toBe(true);
   expect(before.visible).toBe(true);
   expect(before.text).toContain('MISSION BRIEF');
-  expect(before.text).toContain('Press Enter or Resume to continue');
+  expect(before.text).toContain('Press Enter or tap to continue');
 
   await page.keyboard.press('Enter');
 
@@ -431,67 +432,63 @@ test('the empty shell uses staged scripted district-state beats after mission st
   expect(await stateLabel.jsonValue()).toContain('Decoy wrecks are dragging the chase east');
 });
 
-test('pause menu shows the current objective and can return to the Sindicate launch page', async ({ page }) => {
+test('pause routes into the integrated Sindicate launch page with the current objective visible', async ({ page }) => {
   await launchStoryMode(page);
 
   await page.keyboard.press('p');
-
-  const pauseText = await page.evaluate(() => {
-    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
-    const scene = game?.scene.getScene('City') as {
-      pauseMenu?: { text: string };
-    };
-    return scene?.pauseMenu?.text ?? '';
-  });
-
-  expect(pauseText).toContain('PAUSED');
-  expect(pauseText).toContain('Night Ferry Run');
-  expect(pauseText).toContain('Go to the mission marker');
-
-  await page.keyboard.press('m');
   await expect(page.getByRole('heading', { name: 'Story Mode' })).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByRole('button', { name: /Start Story|Continue Story/ })).toBeVisible();
+  await expect(page.getByLabel('Current run')).toContainText('Night Ferry Run');
+  await expect(page.getByLabel('Current run')).toContainText('Go to the mission marker');
+
+  await page.getByRole('button', { name: /Resume Current Run|Continue Story|Start Story/ }).click();
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
 });
 
 test('story mode persists manual save slots alongside story progress', async ({ page }) => {
   await launchStoryMode(page);
 
   await page.keyboard.press('p');
-  await page.keyboard.press('2');
-  await page.keyboard.press('s');
+  await page.locator('[data-story-slot-save="2"]').click();
 
   const slotTwo = await page.evaluate((key) => {
     const raw = localStorage.getItem(key);
     return raw ? JSON.parse(raw) : null;
   }, storyManualSaveKey(2));
+  const slotTwoGame = await page.evaluate(() => {
+    const raw = localStorage.getItem('sindicate.manualSave.2');
+    return raw ? JSON.parse(raw) : null;
+  });
 
   expect(slotTwo?.storyId).toBe('sindicate-story-mode');
   expect(slotTwo?.current?.chapterId).toBe('dead-drop-district');
 
-  await page.keyboard.press('p');
+  await page.getByRole('button', { name: /Resume Current Run|Continue Story|Start Story/ }).click();
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
   await page.evaluate(() => {
     const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
     const scene = game?.scene.getScene('City') as {
       world: { campaign?: { currentIndex: number; missions: Array<{ currentIndex: number }> } | null };
-      paused: boolean;
     };
     if (!scene?.world?.campaign) throw new Error('Missing story campaign');
     scene.world.campaign.currentIndex = 0;
     if (scene.world.campaign.missions[0]) scene.world.campaign.missions[0].currentIndex = 1;
-    scene.paused = false;
   });
 
   await page.keyboard.press('p');
-  await page.keyboard.press('1');
-  await page.keyboard.press('s');
+  await page.locator('[data-story-slot-save="1"]').click();
   const slotOne = await page.evaluate((key) => {
     const raw = localStorage.getItem(key);
     return raw ? JSON.parse(raw) : null;
   }, storyManualSaveKey(1));
+  const slotOneGame = await page.evaluate(() => {
+    const raw = localStorage.getItem('sindicate.manualSave');
+    return raw ? JSON.parse(raw) : null;
+  });
 
   expect(slotOne?.storyId).toBe('sindicate-story-mode');
   expect(slotOne?.current?.chapterId).toBe('dead-drop-district');
-  expect(slotOne).not.toEqual(slotTwo);
+  expect(slotOneGame?.world?.campaign?.missions?.[0]?.currentIndex).toBe(1);
+  expect(slotTwoGame?.world?.campaign?.missions?.[0]?.currentIndex).not.toBe(1);
 });
 
 test('story mode shows a prototype-complete panel when the current story slice finishes', async ({ page }) => {
@@ -585,7 +582,7 @@ test('story mode shows an authored mission transition panel between chapter miss
   });
 
   expect(result.visible).toBe(true);
-  expect(result.text).toContain('MISSION COMPLETE');
+  expect(result.text).toContain('MISSION SUMMARY');
   expect(result.text).toContain('Night Ferry Run');
   expect(result.text).toContain('Reward: $1500');
   expect(result.text).toContain('Burned Locker');
@@ -643,7 +640,7 @@ test('story mode restarts into the next chapter after chapter completion', async
   });
 });
 
-test('story mode pause menu can replay an unlocked chapter selection', async ({ page }) => {
+test('the integrated Sindicate launcher can replay an unlocked chapter selection after pausing', async ({ page }) => {
   await launchStoryMode(page);
 
   await page.evaluate(() => {
@@ -661,38 +658,8 @@ test('story mode pause menu can replay an unlocked chapter selection', async ({ 
   });
 
   await page.keyboard.press('p');
-  await page.keyboard.press('c');
-  await page.waitForFunction(() => {
-    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
-    const scene = game?.scene.getScene('City') as {
-      pauseChapterButton?: { text: string };
-    };
-    return scene?.pauseChapterButton?.text.includes('Spare Parts Gospel') ?? false;
-  });
-
-  await page.evaluate(() => {
-    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
-    const scene = game?.scene.getScene('City') as {
-      scene: { restart(data: unknown): void };
-    };
-    scene?.scene.restart({
-      skipResume: true,
-      mode: 'story',
-      storyProgress: {
-        version: 1,
-        storyId: 'sindicate-story-mode',
-        current: {
-          chapterId: 'spare-parts-gospel',
-          missionId: 'yard-talk',
-          objectiveIndex: 0,
-        },
-        unlockedChapterIds: ['dead-drop-district', 'spare-parts-gospel'],
-        completedChapterIds: ['dead-drop-district'],
-        completedMissionIds: [],
-        branchOutcomes: {},
-      },
-    });
-  });
+  await expect(page.getByRole('button', { name: /Spare Parts Gospel/i })).toBeVisible();
+  await page.getByRole('button', { name: /Spare Parts Gospel/i }).click();
 
   await page.waitForFunction(() => {
     const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;

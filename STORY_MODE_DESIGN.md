@@ -411,26 +411,31 @@ Implemented now:
 - The pause menu now shows the current objective and can return straight to the Sindicate story launch page.
 - Story chapters can now author grouped free-order mission sets, and the first live example is the `hook-chain` / `the-empty-shell` split inside Spare Parts Gospel.
 - The current slice now includes richer staged convoy scripting beyond a single linear route, including the multi-stage Empty Shell tail with a live decoy split and district-state beats.
+- Grouped free-order mission sets now extend beyond Spare Parts Gospel into later prototype chapters including Static On The Hospital Band, Meter Running, The Switchboard Name, Freight Union Morning, Neon Couriers, and Glass Towers, Empty Floors.
 - Focused Playwright coverage now covers story-mode entry, story-menu chapter selection across acts, recap archive presence, refresh-resume, manual save-slot persistence, authored mission transition panels, chapter restart into the next chapter, pause-menu chapter replay, and the current story-complete panel.
-- Focused Playwright coverage now also covers story mission-start markers, route markers, marked-target minimap dots, scripted chase-target minimap markers, grouped in-world mission selection, staged district-state labels, and the pause-menu return-to-launch flow.
+- Focused Playwright coverage now also covers story mission-start markers, route markers, marked-target minimap dots, scripted chase-target minimap markers, grouped in-world mission selection, staged district-state labels, and the integrated launcher-owned pause flow.
+- A dedicated authored-mission browser regression now walks every current runtime story mission and verifies that each mission shell boots with the expected mission title and scripted district-state surface.
+- The pause/menu UX is now fully integrated into the Sindicate launcher page: pausing returns to the launcher, which owns resume, checkpoint restart, manual save/load slots, current-objective presentation, and chapter replay.
+- Story mission transitions now use a richer summary card that surfaces reward, objective outcome, duration, collateral, and story unlock changes.
 
 Prototype limitations right now:
 
 - Chapter 1 through Chapter 9 missions are playable approximations, not fully scripted bespoke set pieces.
 - Tail, capture, escort, stealth, and district-state behavior are still represented by simpler linear objective chains where needed.
-- The mission-actor layer now covers route-driven vehicles, staged convoy handoffs, escorts, named mission-target squads, district-state labels, and simple fail rules, but it still lacks richer custom encounter scripting and persistent systemic choreography.
+- The mission-actor layer now covers route-driven vehicles, staged convoy handoffs, escorts, decoy splits, named mission-target squads, district-state labels, and simple fail rules, but it still lacks richer custom encounter scripting and persistent systemic choreography.
 - There is not yet a full chapter-map front end or a complete post-mission scorecard; the current act-grouped menu, recap archive, persistent mission brief, and reward callouts are functional rather than final.
-- Only one live chapter currently uses the new grouped free-order mission flow. Most of the authored slice is still linear inside each chapter, so the non-linear pacing model needs to be rolled out deliberately instead of assumed complete.
+- The grouped free-order model is now live across multiple chapters, but the branching is still shallow: it chooses order, not consequences.
+- The new mission summary card is more complete, but it still does not surface every systemic consequence the player might care about, such as vehicle-condition deltas or service-lane state.
 
 ## Next Steps From Here
 
 Priority after this pass:
 
-1. Expand grouped free-order mission authoring beyond Spare Parts Gospel so later chapters can branch into several simultaneous leads without custom scene logic.
-2. Keep deepening the current nine-chapter prototype with more bespoke staged encounters, multi-actor set pieces, and mission-specific fail states before adding more chapters.
-3. Add a proper post-mission summary card showing reward, objective outcome, damage/collateral, and story unlock changes.
-4. Expand e2e coverage from mission types into per-mission authored regression checks as the current runtime scripts become less approximate.
-5. Keep tightening pause/menu UX, especially chapter replay, current-objective presentation, and controller/touch parity.
+1. Add consequence-carrying branch outcomes on top of the new grouped mission order so chapter choices change later mission setup instead of only sequencing.
+2. Expand the mission runtime beyond route/tail/capture by implementing stronger bespoke systems such as vehicle-condition, defend, sabotage-order, and stealth-pressure objectives.
+3. Push district-state scripting further so blackout, checkpoint, and service-lane changes materially alter ambient city behavior instead of only updating story labels.
+4. Deepen the mission summary card with more systemic detail, especially vehicle-condition outcomes, service-lane state, and chapter-level faction effects.
+5. Build on the authored regression sweep with mission-outcome assertions, not just mission-shell boot checks, so scripted encounter behavior stays stable as the runtime grows.
 
 ## Grounded Implementation Plan
 

@@ -49,8 +49,10 @@ The repo has moved from a single-game page to a small retro arcade shell.
 - Animated gameplay-style card previews are drawn with canvas in [src/arcade/previews.ts](src/arcade/previews.ts).
 - The two new mini games live in [src/games](src/games) and use small vanilla canvas loops.
 - Sindicate remains the main Phaser game and now opens through a dedicated story launcher instead of a sandbox entry point.
-- Story missions now begin from in-world mission markers, keep location and chase targets visible on the minimap, support grouped free-order mission picks where authored chapters allow it, and return to the Sindicate story menu from pause.
-- Playwright smoke tests now verify both the landing page and the Sindicate launch flow, while story-mode browser tests cover the current mission types and menu/progress flows.
+- Story missions now begin from in-world mission markers, keep location and chase targets visible on the minimap, support grouped free-order mission picks across several chapters, and route pause back into the integrated Sindicate launcher instead of an in-game overlay.
+- The Sindicate launcher now owns resume, checkpoint restart, manual save/load slots, current-objective presentation, and chapter replay.
+- Story mission transitions now use a richer summary card with reward, outcome, duration, collateral, and unlock deltas.
+- Playwright smoke tests now verify both the landing page and the Sindicate launch flow, while story-mode browser tests cover current mission types, grouped chapter choices, launcher pause flow, and a full authored-mission regression sweep.
 
 Production bundle shape is intentionally split:
 
@@ -155,5 +157,5 @@ Near-term arcade work:
 
 Near-term Sindicate work:
 
-- Continue improving the current story slice with more multi-mission chapter groups, richer scripted encounters beyond route/tail set pieces, stronger mission scorecards, and broader browser regression coverage.
+- Continue improving the current story slice with more bespoke mission systems beyond route/tail/capture, stronger authored branch consequences, and deeper district-state simulation.
 - Keep gameplay logic in [src/core](src/core) where it can be tested quickly and deterministically.

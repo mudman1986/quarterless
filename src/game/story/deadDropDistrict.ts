@@ -447,6 +447,7 @@ export const STATIC_ON_THE_HOSPITAL_BAND: StoryChapter = {
     'Nia\'s final calls mention missing ambulance routes and patients who never reached intake.',
   combinedGoal:
     'Trace the falsified ambulance routes, recover the surviving witness trail, and extract the hospital insider who can map the next dispatcher handoff.',
+  missionGroups: [['cold-intake'], ['flatline-gap', 'clean-sheets'], ['crash-cart'], ['ward-6-exit']],
   missions: [
     {
       id: 'cold-intake',
@@ -501,6 +502,68 @@ export const STATIC_ON_THE_HOSPITAL_BAND: StoryChapter = {
           },
         ],
         reward: 3200,
+      },
+      prototypeScript: {
+        primaryActorId: 'relay-tech',
+        actors: [],
+        stages: [
+          {
+            id: 'relay-tech-route',
+            title: 'Protect the relay tech',
+            primaryActorId: 'relay-tech',
+            districtState: {
+              label: 'The blackout pockets are still narrow enough for a runner',
+              summary: 'A clinic runner is still threading the first dead zones before the jammer vans close them for good.',
+            },
+            actors: [
+              {
+                kind: 'pedestrianRoute',
+                actorId: 'relay-tech',
+                route: [
+                  { x: 1216, y: 3136 },
+                  { x: 1728, y: 3136 },
+                  { x: 2048, y: 3072 },
+                ],
+                speed: 44,
+                uniform: 'medic',
+                escortRadius: 180,
+              },
+            ],
+            failRules: [
+              {
+                kind: 'escortRadius',
+                actorId: 'relay-tech',
+                radius: 220,
+                maxSeconds: 3,
+                failureText: 'The relay tech was cut off before the dead zones were mapped.',
+              },
+            ],
+            nextWhen: { kind: 'routeComplete', actorId: 'relay-tech' },
+          },
+          {
+            id: 'jammer-van-window',
+            title: 'Beat the jammer van to the last relay sites',
+            primaryActorId: 'jammer-van',
+            districtState: {
+              label: 'A jammer van is trying to reseal the route behind you',
+              summary: 'The last relay sites will stay open only while the jammer van is still moving to close them.',
+            },
+            actors: [
+              {
+                kind: 'vehicleRoute',
+                actorId: 'jammer-van',
+                vehicleKind: 'van',
+                route: [
+                  { x: 2048, y: 3072 },
+                  { x: 2240, y: 2944 },
+                  { x: 2752, y: 2816 },
+                ],
+                speed: 102,
+                followRadius: 280,
+              },
+            ],
+          },
+        ],
       },
     },
     {
@@ -632,6 +695,7 @@ export const METER_RUNNING: StoryChapter = {
   storyRole: 'Taxi dispatch logs show Nia was using civilian rides to move informants under the radar.',
   combinedGoal:
     'Use the taxi network to trace Nia\'s informant routes, survive the retaliatory tail jobs, and secure the dying dispatcher who knows the next lead.',
+  missionGroups: [['ghost-fare'], ['double-booking', 'red-light-choir'], ['meter-burn'], ['farewell-signal']],
   missions: [
     {
       id: 'ghost-fare',
@@ -708,20 +772,70 @@ export const METER_RUNNING: StoryChapter = {
       },
       prototypeScript: {
         primaryActorId: 'radio-host-cab',
-        actors: [
+        actors: [],
+        stages: [
           {
-            kind: 'vehicleRoute',
-            actorId: 'radio-host-cab',
-            vehicleKind: 'taxi',
-            route: [
-              { x: 3008, y: 1216 },
-              { x: 3328, y: 960 },
-              { x: 3648, y: 1024 },
+            id: 'host-cab-route',
+            title: 'Stay on the host cab',
+            primaryActorId: 'radio-host-cab',
+            districtState: {
+              label: 'The host is still blending into the nightlife loop',
+              summary: 'The bodyguard car is close enough to mask the host cab if you drift too far back.',
+            },
+            actors: [
+              {
+                kind: 'vehicleRoute',
+                actorId: 'radio-host-cab',
+                vehicleKind: 'taxi',
+                route: [
+                  { x: 3008, y: 1216 },
+                  { x: 3328, y: 960 },
+                  { x: 3520, y: 960 },
+                ],
+                speed: 115,
+                followRadius: 320,
+                tailDrainPerSecond: 2,
+                loseGraceSeconds: 2.5,
+              },
+              {
+                kind: 'vehicleRoute',
+                actorId: 'bodyguard-coupe',
+                vehicleKind: 'coupe',
+                route: [
+                  { x: 2944, y: 1280 },
+                  { x: 3264, y: 1024 },
+                  { x: 3456, y: 1024 },
+                ],
+                speed: 112,
+                followRadius: 240,
+              },
             ],
-            speed: 115,
-            followRadius: 320,
-            tailDrainPerSecond: 2,
-            loseGraceSeconds: 2.5,
+            nextWhen: { kind: 'routeComplete', actorId: 'radio-host-cab' },
+          },
+          {
+            id: 'producer-handoff',
+            title: 'Track the producer car',
+            primaryActorId: 'producer-sedan',
+            districtState: {
+              label: 'The tape has changed cars in the alley merge',
+              summary: 'A producer sedan is trying to peel off with the recording before the club crowd thins out.',
+            },
+            actors: [
+              {
+                kind: 'vehicleRoute',
+                actorId: 'producer-sedan',
+                vehicleKind: 'sedan',
+                route: [
+                  { x: 3520, y: 960 },
+                  { x: 3776, y: 1088 },
+                  { x: 3968, y: 1344 },
+                ],
+                speed: 122,
+                followRadius: 320,
+                tailDrainPerSecond: 2,
+                loseGraceSeconds: 2.5,
+              },
+            ],
           },
         ],
       },
@@ -965,6 +1079,7 @@ export const THE_SWITCHBOARD_NAME: StoryChapter = {
   storyRole: 'The paper ledger finally reveals the hidden network\'s name and shows that multiple power blocs are feeding it.',
   combinedGoal:
     'Follow the first hard evidence trail into Switchboard infrastructure, survive the blackout response, and decrypt the first complete proof that the conspiracy is city-wide.',
+  missionGroups: [['dead-letter-branch'], ['relay-theft', 'blue-map-room'], ['four-minute-silence'], ['name-in-the-static']],
   missions: [
     {
       id: 'dead-letter-branch',
@@ -1145,6 +1260,7 @@ export const FREIGHT_UNION_MORNING: StoryChapter = {
   storyRole: 'Rook approaches the dock freight union, which hates the Switchboard because rerouted inspections are crushing independent shipping.',
   combinedGoal:
     'Win the freight union\'s trust, protect their routes long enough to expose the manipulated shipping manifests, and convert them into the first major ally bloc of Act II.',
+  missionGroups: [['union-test-run'], ['picket-line-breaker', 'harbor-echo'], ['crane-jam'], ['the-long-manifest']],
   missions: [
     {
       id: 'union-test-run',
@@ -1358,6 +1474,7 @@ export const NEON_COURIERS: StoryChapter = {
   storyRole: 'Street racers and courier crews know how to move through the city faster than official systems do.',
   combinedGoal:
     'Win over the courier crews, learn how the Switchboard routes around surveillance, and steal the tape that maps the fast lanes no official dispatcher admits exist.',
+  missionGroups: [['signal-sprint'], ['drop-stack', 'blind-corner'], ['rival-tape'], ['lamps-out']],
   missions: [
     {
       id: 'signal-sprint',
@@ -1563,6 +1680,7 @@ export const GLASS_TOWERS_EMPTY_FLOORS: StoryChapter = {
   storyRole: 'Corporate property managers are using staged accidents to depress district prices before buying them up.',
   combinedGoal:
     'Turn the courier evidence into a property-fraud case, expose the staged-collapse routes, and hit the transaction archive before the brokers can bury it.',
+  missionGroups: [['tenant-warning'], ['window-tax', 'lobby-flood'], ['fire-sale-run'], ['vacancy-notice']],
   missions: [
     {
       id: 'tenant-warning',
@@ -1607,20 +1725,70 @@ export const GLASS_TOWERS_EMPTY_FLOORS: StoryChapter = {
       },
       prototypeScript: {
         primaryActorId: 'maintenance-van',
-        actors: [
+        actors: [],
+        stages: [
           {
-            kind: 'vehicleRoute',
-            actorId: 'maintenance-van',
-            vehicleKind: 'van',
-            route: [
-              { x: 2240, y: 1216 },
-              { x: 2752, y: 1280 },
-              { x: 3264, y: 1344 },
+            id: 'maintenance-loop',
+            title: 'Stay on the maintenance van',
+            primaryActorId: 'maintenance-van',
+            districtState: {
+              label: 'The maintenance crew is still writing the outage order in motion',
+              summary: 'A second van is shadowing the route to scramble the order if you drift too far back.',
+            },
+            actors: [
+              {
+                kind: 'vehicleRoute',
+                actorId: 'maintenance-van',
+                vehicleKind: 'van',
+                route: [
+                  { x: 2240, y: 1216 },
+                  { x: 2624, y: 1280 },
+                  { x: 2944, y: 1280 },
+                ],
+                speed: 105,
+                followRadius: 320,
+                tailDrainPerSecond: 2,
+                loseGraceSeconds: 2.5,
+              },
+              {
+                kind: 'vehicleRoute',
+                actorId: 'decoy-maintenance-van',
+                vehicleKind: 'pickup',
+                route: [
+                  { x: 2176, y: 1152 },
+                  { x: 2496, y: 1216 },
+                  { x: 2880, y: 1216 },
+                ],
+                speed: 101,
+                followRadius: 220,
+              },
             ],
-            speed: 105,
-            followRadius: 320,
-            tailDrainPerSecond: 2,
-            loseGraceSeconds: 2.5,
+            nextWhen: { kind: 'routeComplete', actorId: 'maintenance-van' },
+          },
+          {
+            id: 'generator-order-exit',
+            title: 'Confirm the generator order',
+            primaryActorId: 'order-runner',
+            districtState: {
+              label: 'The order runner is carrying the final generator sequence',
+              summary: 'Stay close until the runner reaches the tower lane with the true outage order.',
+            },
+            actors: [
+              {
+                kind: 'vehicleRoute',
+                actorId: 'order-runner',
+                vehicleKind: 'sedan',
+                route: [
+                  { x: 2944, y: 1280 },
+                  { x: 3264, y: 1344 },
+                  { x: 3520, y: 1472 },
+                ],
+                speed: 118,
+                followRadius: 320,
+                tailDrainPerSecond: 2,
+                loseGraceSeconds: 2.5,
+              },
+            ],
           },
         ],
       },

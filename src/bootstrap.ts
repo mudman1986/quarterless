@@ -309,7 +309,7 @@ function gameCard(game: ArcadeGame): string {
 function renderLanding(): void {
   syncLaunchQuery();
   const launchStore = launchProgressStore();
-  if (launchStore) clearStoryProgress(launchStore, STORY_LAUNCH_PROGRESS_KEY);
+  if (launchStore) clearStoryLaunchRequest(launchStore);
   stopActiveGame();
   stopPreviews?.();
   setBodyMode('landing');
@@ -349,9 +349,9 @@ function renderStoryMenu(game: ArcadeGame): void {
   stopActiveGame();
   setBodyMode('landing');
   const progress = currentStoryProgress();
-  const currentChapter = STORY_MODE_PROTOTYPE.acts
-    .flatMap((act) => act.chapters)
-    .find((chapter) => chapter.id === progress.current?.chapterId);
+  const currentChapter = currentStoryChapter(STORY_MODE_PROTOTYPE, progress);
+  const run = currentStoryRunOverview();
+  const slots = Array.from({ length: MANUAL_SAVE_SLOT_COUNT }, (_, index) => slotOverview(index + 1));
   const root = appRoot();
   root.innerHTML = `
     <main class="arcade-page" aria-label="Story mode selection">
@@ -359,16 +359,19 @@ function renderStoryMenu(game: ArcadeGame): void {
         <header class="arcade-topbar">
           <div>
             <h1 class="arcade-title">Story Mode</h1>
-            <p class="story-menu-copy">Choose where Rook's investigation continues.</p>
+            <p class="story-menu-copy">Choose where Rook's investigation continues. Pause now routes here instead of opening a separate in-game overlay.</p>
           </div>
         </header>
-        <section class="story-menu-grid">
+        <section class="story-menu-grid story-menu-grid--integrated">
           <article class="story-menu-panel story-menu-panel--primary">
             <h2>Sindicate Story</h2>
             <p>${STORY_MODE_PROTOTYPE.premise}</p>
             <div class="play-actions play-actions--stacked">
-              <button class="play-button" type="button" data-story-action="continue">
-                ${progress.completedChapterIds.length === 0 && progress.current?.chapterId === 'dead-drop-district' ? 'Start Story' : 'Continue Story'}
+              <button class="play-button" type="button" data-story-action="resume">
+                ${run.hasAutosave ? 'Resume Current Run' : progress.completedChapterIds.length === 0 && progress.current?.chapterId === 'dead-drop-district' ? 'Start Story' : 'Continue Story'}
+              </button>
+              <button class="play-button play-button--secondary" type="button" data-story-action="checkpoint">
+                Restart From Story Checkpoint
               </button>
               <button class="play-button play-button--secondary" type="button" data-story-action="new">
                 New Story
@@ -380,6 +383,37 @@ function renderStoryMenu(game: ArcadeGame): void {
             <p class="story-menu-status">Current chapter: ${currentChapter?.title ?? 'Dead Drop District'}</p>
             <p class="story-menu-status">Unlocked chapters: ${progress.unlockedChapterIds.length}/${STORY_MODE_PROTOTYPE.acts.flatMap((act) => act.chapters).length}</p>
           </article>
+          <section class="story-menu-panel" aria-label="Current run">
+            <h2>Current Run</h2>
+            <div class="story-run-card">
+              <span class="story-run-kicker">${run.hasAutosave ? 'Live Autosave Ready' : 'Story Checkpoint Ready'}</span>
+              <strong class="story-run-title">${run.chapterTitle}</strong>
+              <span class="story-run-mission">${run.missionTitle}</span>
+              <span class="story-run-copy">${run.objectiveText}</span>
+              <span class="story-run-meta">Run score: ${run.scoreText}</span>
+              ${run.choiceTitles.length > 0 ? `<span class="story-run-meta">Open leads: ${run.choiceTitles.join(' / ')}</span>` : ''}
+            </div>
+            <div class="story-slot-grid" aria-label="Manual save slots">
+              ${slots
+                .map(
+                  (slot, index) => `
+                    <article class="story-slot-card${slot.occupied ? '' : ' story-slot-card--empty'}">
+                      <span class="story-slot-kicker">Slot ${index + 1}</span>
+                      <strong class="story-slot-title">${slot.chapterTitle}</strong>
+                      <span class="story-slot-copy">${slot.missionTitle}</span>
+                      <div class="play-actions play-actions--stacked">
+                        <button class="play-button play-button--secondary" type="button" data-story-slot-save="${index + 1}" ${run.hasAutosave ? '' : 'disabled'}>
+                          Save Current Run
+                        </button>
+                        <button class="play-button play-button--secondary" type="button" data-story-slot-load="${index + 1}" ${slot.occupied ? '' : 'disabled'}>
+                          Load Slot ${index + 1}
+                        </button>
+                      </div>
+                    </article>`,
+                )
+                .join('')}
+            </div>
+          </section>
           <section class="story-menu-panel" aria-label="Unlocked chapters">
             <h2>Chapter Select</h2>
             ${chapterCards(progress)}
@@ -394,13 +428,23 @@ function renderStoryMenu(game: ArcadeGame): void {
       </div>
     </main>`;
 
-  root.querySelector<HTMLButtonElement>('[data-story-action="continue"]')?.addEventListener('click', () => {
-    primeStoryLaunch(progress);
+  root.querySelector<HTMLButtonElement>('[data-story-action="resume"]')?.addEventListener('click', () => {
+    const launchStore = launchProgressStore();
+    if (launchStore) clearStoryLaunchRequest(launchStore);
+    void launchGame(game, 'story');
+  });
+  root.querySelector<HTMLButtonElement>('[data-story-action="checkpoint"]')?.addEventListener('click', () => {
+    primeStoryLaunch({ mode: 'story', skipResume: true, storyProgress: progress });
     void launchGame(game, 'story');
   });
   root.querySelector<HTMLButtonElement>('[data-story-action="new"]')?.addEventListener('click', () => {
     const fresh = createStoryProgress(STORY_MODE_PROTOTYPE);
-    primeStoryLaunch(fresh);
+    const store = currentGameStore();
+    if (store) {
+      clearGameState(store);
+      clearStoryProgress(store);
+    }
+    primeStoryLaunch({ mode: 'story', skipResume: true, storyProgress: fresh });
     void launchGame(game, 'story');
   });
   root.querySelector<HTMLButtonElement>('[data-story-action="back"]')?.addEventListener('click', renderLanding);
@@ -409,7 +453,23 @@ function renderStoryMenu(game: ArcadeGame): void {
       const chapterId = button.dataset.storyChapter;
       if (!chapterId) return;
       const selected = selectStoryChapter(STORY_MODE_PROTOTYPE, progress, chapterId);
-      primeStoryLaunch(selected);
+      primeStoryLaunch({ mode: 'story', skipResume: true, storyProgress: selected });
+      void launchGame(game, 'story');
+    });
+  }
+  for (const button of root.querySelectorAll<HTMLButtonElement>('[data-story-slot-save]')) {
+    button.addEventListener('click', () => {
+      const slot = Number(button.dataset.storySlotSave);
+      if (!copyCurrentRunToSlot(slot)) return;
+      renderStoryMenu(game);
+    });
+  }
+  for (const button of root.querySelectorAll<HTMLButtonElement>('[data-story-slot-load]')) {
+    button.addEventListener('click', () => {
+      const slot = Number(button.dataset.storySlotLoad);
+      const slotState = slotOverview(slot);
+      if (!slotState.occupied) return;
+      primeStoryLaunch({ mode: 'story', loadSaveKey: slotState.key });
       void launchGame(game, 'story');
     });
   }

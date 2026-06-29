@@ -66,6 +66,7 @@ import {
   storyProgressSaveKey,
   type StoryProgressSnapshot,
 } from '../story/storyProgress';
+import { clearStoryLaunchRequest, loadStoryLaunchRequest } from '../story/storyLaunchState';
 import {
   compileStoryChapterRuntimeCampaign,
   STORY_MISSION_GROUP_SELECTION_INDEX,
@@ -272,6 +273,27 @@ interface StoryScriptState {
   recapShown: boolean;
 }
 
+interface StoryMissionSummaryBaseline {
+  missionId: string;
+  kills: number;
+  targetKills: number;
+  explosionsTriggered: number;
+  elapsedSeconds: number;
+  unlockedChapterIds: string[];
+  completedChapterIds: string[];
+}
+
+interface StoryMissionSummaryCard {
+  title: string;
+  reward: number;
+  outcome: string;
+  durationSeconds: number;
+  collateralIncidents: number;
+  vehicleLosses: number;
+  unlockText: string;
+  nextText: string;
+}
+
 /**
  * Renders the core `World` simulation with Phaser. The scene owns no game
  * rules: it builds the city, feeds keyboard input into `world.tick`, and draws
@@ -407,6 +429,7 @@ export class CityScene extends Phaser.Scene {
   private storyProgress: StoryProgressSnapshot | null = null;
   private selectedStoryChapterId: string | null = null;
   private storyScript: StoryScriptState | null = null;
+  private storyMissionSummaryBaseline: StoryMissionSummaryBaseline | null = null;
 
   constructor() {
     super('City');
@@ -420,12 +443,16 @@ export class CityScene extends Phaser.Scene {
         return null;
       }
     })();
+    const launchRequest = launchStore ? loadStoryLaunchRequest(launchStore) : null;
     const launchProgress = launchStore ? loadStoryProgress(launchStore, STORY_LAUNCH_PROGRESS_KEY) : null;
-    if (launchStore) clearStoryProgress(launchStore, STORY_LAUNCH_PROGRESS_KEY);
-    this.requestedLoadKey = data.loadSaveKey ?? GAME_STATE_KEY;
-    this.skipResumeOnCreate = !!data.skipResume;
-    this.requestedMode = data.mode ?? this.queryRequestsStoryMode();
-    this.requestedStoryProgress = data.storyProgress ?? launchProgress ?? null;
+    if (launchStore) {
+      clearStoryProgress(launchStore, STORY_LAUNCH_PROGRESS_KEY);
+      clearStoryLaunchRequest(launchStore);
+    }
+    this.requestedLoadKey = data.loadSaveKey ?? launchRequest?.loadSaveKey ?? GAME_STATE_KEY;
+    this.skipResumeOnCreate = !!(data.skipResume ?? launchRequest?.skipResume);
+    this.requestedMode = data.mode ?? launchRequest?.mode ?? this.queryRequestsStoryMode();
+    this.requestedStoryProgress = data.storyProgress ?? launchRequest?.storyProgress ?? launchProgress ?? null;
   }
 
   private queryRequestsStoryMode(): 'sandbox' | 'story' {
@@ -474,6 +501,7 @@ export class CityScene extends Phaser.Scene {
     this.storyPanelPauseGame = false;
     this.pendingStoryRestart = null;
     this.storyScript = null;
+    this.storyMissionSummaryBaseline = null;
 
     this.city = buildCity(CITY_SPEC);
     createGameTextures(this);
@@ -517,6 +545,7 @@ export class CityScene extends Phaser.Scene {
     this.layoutHud();
     this.syncMinimap();
     this.syncStoryScript(0);
+    this.syncStoryMissionSummaryBaseline();
     this.showStoryBriefingIfNeeded();
 
     this.input_ = new KeyboardInput(this.input.keyboard!);
@@ -1146,7 +1175,7 @@ export class CityScene extends Phaser.Scene {
               ? COLORS.towBuilding
               : facility?.kind === 'taxiDepot'
                 ? COLORS.taxiBuilding
-              : shades[i % shades.length];
+                : shades[i % shades.length];
       const roofColor =
         facility?.kind === 'policeStation'
           ? COLORS.policeRoof
@@ -1156,7 +1185,7 @@ export class CityScene extends Phaser.Scene {
               ? COLORS.towRoof
               : facility?.kind === 'taxiDepot'
                 ? COLORS.taxiRoof
-              : COLORS.buildingRoof;
+                : COLORS.buildingRoof;
       g.fillStyle(bodyColor, 1);
       g.fillRect(b.x, b.y, b.w, b.h);
       g.fillStyle(roofColor, 1);
@@ -2105,19 +2134,16 @@ export class CityScene extends Phaser.Scene {
     }
     if (touchConfirmPressed && this.world.status === 'playing') {
       this.prevTouchConfirm = !!touchSnapshot?.confirmPressed;
-      this.togglePause();
+      this.returnToLaunchMenu();
       return;
     }
-    // Toggle pause; while paused the simulation is frozen.
-    if (Phaser.Input.Keyboard.JustDown(this.pauseKey)) this.togglePause();
+    // Story pause now lives in the Sindicate launcher rather than an in-scene overlay.
+    if (Phaser.Input.Keyboard.JustDown(this.pauseKey)) {
+      this.returnToLaunchMenu();
+      this.prevTouchConfirm = !!touchSnapshot?.confirmPressed;
+      return;
+    }
     if (this.paused) {
-      this.manualSlotKeys.forEach((key, index) => {
-        if (Phaser.Input.Keyboard.JustDown(key)) this.selectManualSlot(index + 1);
-      });
-      if (Phaser.Input.Keyboard.JustDown(this.saveGameKey)) this.saveManualGame();
-      if (Phaser.Input.Keyboard.JustDown(this.loadGameKey)) this.loadManualGame();
-      if (Phaser.Input.Keyboard.JustDown(this.chapterSelectKey)) this.cycleStoryChapterSelection();
-      if (Phaser.Input.Keyboard.JustDown(this.launchMenuKey)) this.returnToLaunchMenu();
       this.prevTouchConfirm = !!touchSnapshot?.confirmPressed;
       return;
     }
@@ -2212,19 +2238,13 @@ export class CityScene extends Phaser.Scene {
     }
   }
 
-  /** Freeze or resume the simulation and show/hide the pause menu. */
+  /** Story pause routes back to the launcher; only story briefings still freeze the sim in-scene. */
   private togglePause(): void {
     if (this.paused && this.storyPanelRequiresAcknowledge) {
       this.acknowledgeStoryPanel();
       return;
     }
-    this.paused = !this.paused;
-    this.setPauseUiVisible(this.paused);
-    if (this.paused) this.persistGameState();
-    this.refreshPauseMenu();
-    this.touchControlsDirty = true;
-    this.refreshPauseTouchButton();
-    this.syncTouchControls();
+    this.returnToLaunchMenu();
   }
 
   private setTouchEnabled(enabled: boolean): void {
@@ -2244,21 +2264,21 @@ export class CityScene extends Phaser.Scene {
 
   private refreshPauseTouchButton(): void {
     if (!this.pauseTouchButton) return;
-    const show = this.paused && (this.touchAvailable || this.touchEnabled || this.touchOptedOut);
+    const show = false;
     this.pauseTouchButton
       .setText(this.touchEnabled ? 'Touch Controls: ON\nTap to disable' : 'Touch Controls: OFF\nTap to enable')
       .setVisible(show);
   }
 
   private setPauseUiVisible(visible: boolean): void {
-    this.pauseMenu.setVisible(visible);
-    this.pauseResumeButton.setVisible(visible);
-    this.pauseSlotButton.setVisible(visible);
-    this.pauseSaveButton.setVisible(visible);
-    this.pauseLoadButton.setVisible(visible);
-    this.pauseChapterButton.setVisible(visible && this.mode === 'story');
-    this.pauseNewGameButton.setVisible(visible);
-    this.pauseExitButton.setVisible(visible);
+    this.pauseMenu.setVisible(false);
+    this.pauseResumeButton.setVisible(false);
+    this.pauseSlotButton.setVisible(false);
+    this.pauseSaveButton.setVisible(false);
+    this.pauseLoadButton.setVisible(false);
+    this.pauseChapterButton.setVisible(false);
+    this.pauseNewGameButton.setVisible(false);
+    this.pauseExitButton.setVisible(false);
   }
 
   private returnToLaunchMenu(): void {
@@ -2478,6 +2498,8 @@ export class CityScene extends Phaser.Scene {
       this.showBanner('TOW JOB\nReturn the wreck to the tow yard');
     }
 
+    this.syncStoryMissionSummaryBaseline();
+
     this.prevBullets = w.bullets.length;
     this.prevKills = w.kills;
     this.prevStatus = w.status;
@@ -2512,14 +2534,12 @@ export class CityScene extends Phaser.Scene {
   }
 
   private showPersistentStoryPanel(text: string, pauseGame = true): void {
-    this.storyPanel.setText(`${text}\n\nPress Enter or Resume to continue`).setVisible(true);
+    this.storyPanel.setText(`${text}\n\nPress Enter or tap to continue`).setVisible(true);
     this.storyPanelRemaining = 0;
     this.storyPanelRequiresAcknowledge = true;
     this.storyPanelPauseGame = pauseGame;
     if (pauseGame && !this.paused) {
       this.paused = true;
-      this.setPauseUiVisible(true);
-      this.refreshPauseMenu();
       this.touchControlsDirty = true;
       this.refreshPauseTouchButton();
       this.syncTouchControls();
@@ -2534,8 +2554,6 @@ export class CityScene extends Phaser.Scene {
     this.storyPanelPauseGame = false;
     if (shouldResume) {
       this.paused = false;
-      this.setPauseUiVisible(false);
-      this.refreshPauseMenu();
       this.touchControlsDirty = true;
       this.refreshPauseTouchButton();
       this.syncTouchControls();
@@ -2567,18 +2585,20 @@ export class CityScene extends Phaser.Scene {
 
   private showMissionTransitionPanel(previousMissionId: string): void {
     if (this.mode !== 'story' || !this.storyProgress) return;
-    if (this.selectingStoryMission()) {
-      this.showMissionChoicePanel(previousMissionId);
-      return;
-    }
     const chapter = currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress);
     const mission = currentStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress);
-    if (!chapter || !mission) return;
+    if (!chapter) return;
     const previousMission = chapter.missions.find((entry) => entry.id === previousMissionId);
     if (!previousMission) {
       this.showMissionBriefingPanel();
       return;
     }
+    const summary = this.buildStoryMissionSummaryCard(previousMission, this.storyProgress);
+    if (summary) {
+      this.showPersistentStoryPanel(this.storyMissionSummaryText(summary));
+      return;
+    }
+    if (!mission) return;
     const reward = previousMission.prototypeRuntime?.reward ?? 0;
     this.showStoryPanel(
       `MISSION COMPLETE\n${previousMission.title}\nReward: $${reward}\n\n${previousMission.payoff}\n\nNext: ${mission.title}\n${mission.primaryGoal}`,
@@ -2615,6 +2635,92 @@ export class CityScene extends Phaser.Scene {
       4.8,
     );
     this.syncStoryStateText();
+  }
+
+  private storyChapterTitle(chapterId: string): string {
+    return STORY_MODE_PROTOTYPE.acts.flatMap((act) => act.chapters).find((chapter) => chapter.id === chapterId)?.title ?? chapterId;
+  }
+
+  private syncStoryMissionSummaryBaseline(): void {
+    if (this.mode !== 'story' || !this.storyProgress || this.selectingStoryMission()) {
+      this.storyMissionSummaryBaseline = null;
+      return;
+    }
+    const mission = currentStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress);
+    if (!mission) {
+      this.storyMissionSummaryBaseline = null;
+      return;
+    }
+    if (this.storyMissionSummaryBaseline?.missionId === mission.id) return;
+    this.storyMissionSummaryBaseline = {
+      missionId: mission.id,
+      kills: this.world.kills,
+      targetKills: this.world.targetKills,
+      explosionsTriggered: this.world.explosionsTriggered,
+      elapsedSeconds: this.world.elapsedSeconds,
+      unlockedChapterIds: [...this.storyProgress.unlockedChapterIds],
+      completedChapterIds: [...this.storyProgress.completedChapterIds],
+    };
+  }
+
+  private buildStoryMissionSummaryCard(
+    previousMission: StoryMissionPlan,
+    nextProgress: StoryProgressSnapshot | null,
+  ): StoryMissionSummaryCard | null {
+    const baseline = this.storyMissionSummaryBaseline;
+    if (!baseline || baseline.missionId !== previousMission.id) return null;
+    const reward = previousMission.prototypeRuntime?.reward ?? 0;
+    const collateralIncidents = Math.max(
+      0,
+      this.world.kills - baseline.kills - (this.world.targetKills - baseline.targetKills),
+    );
+    const vehicleLosses = Math.max(0, this.world.explosionsTriggered - baseline.explosionsTriggered);
+    const durationSeconds = Math.max(1, Math.round(this.world.elapsedSeconds - baseline.elapsedSeconds));
+    const unlocked = nextProgress
+      ? nextProgress.unlockedChapterIds.filter((chapterId) => !baseline.unlockedChapterIds.includes(chapterId))
+      : [];
+    const completed = nextProgress
+      ? nextProgress.completedChapterIds.filter((chapterId) => !baseline.completedChapterIds.includes(chapterId))
+      : [];
+    const unlockLines = [
+      ...completed.map((chapterId) => `Chapter complete: ${this.storyChapterTitle(chapterId)}`),
+      ...unlocked.filter((chapterId) => !completed.includes(chapterId)).map((chapterId) => `Unlocked: ${this.storyChapterTitle(chapterId)}`),
+    ];
+    const nextChoices = nextProgress ? currentStoryMissionChoices(STORY_MODE_PROTOTYPE, nextProgress) : [];
+    const nextMission = nextProgress ? currentStoryMission(STORY_MODE_PROTOTYPE, nextProgress) : null;
+    const nextText = nextProgress?.current
+      ? nextChoices.length > 0
+        ? `Choose next lead: ${nextChoices.map((mission) => mission.title).join(' / ')}`
+        : `Next: ${nextMission?.title ?? 'Continue story'}`
+      : 'Story complete';
+    return {
+      title: previousMission.title,
+      reward,
+      outcome: previousMission.payoff,
+      durationSeconds,
+      collateralIncidents,
+      vehicleLosses,
+      unlockText: unlockLines.length > 0 ? unlockLines.join(' • ') : 'No new unlocks',
+      nextText,
+    };
+  }
+
+  private storyMissionSummaryText(card: StoryMissionSummaryCard): string {
+    const collateralText =
+      card.collateralIncidents === 0 && card.vehicleLosses === 0
+        ? 'Clean run'
+        : `${card.collateralIncidents} bystander incidents • ${card.vehicleLosses} vehicle losses`;
+    return [
+      'MISSION SUMMARY',
+      card.title,
+      '',
+      `Reward: $${card.reward}`,
+      `Objective Outcome: ${card.outcome}`,
+      `Duration: ${card.durationSeconds}s`,
+      `Damage / Collateral: ${collateralText}`,
+      `Story Changes: ${card.unlockText}`,
+      card.nextText,
+    ].join('\n');
   }
 
   private carTexture(index: number): string {

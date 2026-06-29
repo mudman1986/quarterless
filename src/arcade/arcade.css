@@ -246,6 +246,64 @@ button {
   line-height: 1.5;
 }
 
+.story-menu-grid--integrated {
+  grid-template-columns: minmax(280px, 340px) minmax(280px, 420px) minmax(0, 1fr);
+  align-items: start;
+}
+
+.story-run-card {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  border: 1px solid #293342;
+  border-radius: 8px;
+  padding: 14px;
+  background: rgba(9, 12, 18, 0.92);
+}
+
+.story-run-kicker,
+.story-slot-kicker {
+  color: #9fb0c4;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.story-run-title,
+.story-slot-title {
+  color: #eef7ff;
+  font-size: 1rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.story-run-mission,
+.story-slot-copy,
+.story-run-copy,
+.story-run-meta {
+  color: #b8c3d1;
+  line-height: 1.45;
+}
+
+.story-slot-grid {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.story-slot-card {
+  display: grid;
+  gap: 6px;
+  border: 1px solid #293342;
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(9, 12, 18, 0.92);
+}
+
+.story-slot-card--empty {
+  opacity: 0.72;
+}
+
 .story-menu-status {
   margin-top: 14px;
   font-size: 0.9rem;
