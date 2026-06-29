@@ -1,6 +1,14 @@
 import { GAME_STATE_KEY } from '../../core/gameState';
 import type { KeyValueStore } from '../../core/highScore';
-import type { StoryChapter, StoryMissionPlan, StoryMode } from './storyMode';
+import {
+  STORY_MISSION_GROUP_SELECTION_INDEX,
+  storyChapterPendingMissionGroup,
+  storyMissionGroupObjectiveIndex,
+  storyMissionInitialObjectiveIndex,
+  type StoryChapter,
+  type StoryMissionPlan,
+  type StoryMode,
+} from './storyMode';
 
 export const STORY_PROGRESS_KEY = 'sindicate.storyProgress';
 export const STORY_PROGRESS_VERSION = 1;
@@ -74,15 +82,22 @@ function cloneBranchOutcomes(branchOutcomes: Record<string, string>): Record<str
   return { ...branchOutcomes };
 }
 
-function initialCursor(story: StoryMode): StoryCursor {
-  const chapter = firstChapter(story);
-  const mission = firstMission(chapter);
+function cursorForPendingGroup(chapter: StoryChapter, pending: readonly StoryMissionPlan[]): StoryCursor {
+  const mission = pending[0];
+  if (!mission) throw new Error(`Chapter "${chapter.id}" has no pending missions`);
   return {
     actId: chapter.actId,
     chapterId: chapter.id,
     missionId: mission.id,
-    objectiveIndex: 0,
+    objectiveIndex: storyMissionGroupObjectiveIndex(mission, pending.length),
   };
+}
+
+function initialCursor(story: StoryMode): StoryCursor {
+  const chapter = firstChapter(story);
+  const pending = storyChapterPendingMissionGroup(chapter, []);
+  if (!pending) throw new Error(`Chapter "${chapter.id}" has no pending missions`);
+  return cursorForPendingGroup(chapter, pending);
 }
 
 export function createStoryProgress(story: StoryMode): StoryProgressSnapshot {
@@ -115,6 +130,16 @@ export function currentStoryMission(
   return storyMissionById(chapter, progress.current.missionId);
 }
 
+export function currentStoryMissionChoices(
+  story: StoryMode,
+  progress: Pick<StoryProgressSnapshot, 'storyId' | 'current' | 'completedMissionIds'>,
+): StoryMissionPlan[] {
+  if (!progress.current || progress.storyId !== story.id) return [];
+  const chapter = currentStoryChapter(story, progress);
+  if (!chapter || progress.current.objectiveIndex !== STORY_MISSION_GROUP_SELECTION_INDEX) return [];
+  return storyChapterPendingMissionGroup(chapter, progress.completedMissionIds) ?? [];
+}
+
 export function isChapterUnlocked(progress: StoryProgressSnapshot, chapterId: string): boolean {
   return progress.unlockedChapterIds.includes(chapterId);
 }
@@ -128,7 +153,7 @@ export function setStoryObjectiveIndex(
     ...progress,
     current: {
       ...progress.current,
-      objectiveIndex: Math.max(0, Math.floor(objectiveIndex) || 0),
+      objectiveIndex: Math.max(STORY_MISSION_GROUP_SELECTION_INDEX, Math.floor(objectiveIndex) || 0),
     },
   };
 }
@@ -152,14 +177,30 @@ export function selectStoryChapter(
   if (!isChapterUnlocked(progress, chapterId)) return progress;
   const chapter = storyChapterById(story, chapterId);
   if (!chapter) return progress;
-  const mission = firstMission(chapter);
+  return {
+    ...progress,
+    current: cursorForPendingGroup(chapter, storyChapterPendingMissionGroup(chapter, progress.completedMissionIds) ?? [firstMission(chapter)]),
+  };
+}
+
+export function selectStoryMission(
+  story: StoryMode,
+  progress: StoryProgressSnapshot,
+  missionId: string,
+): StoryProgressSnapshot {
+  if (!progress.current || progress.storyId !== story.id) return progress;
+  const chapter = currentStoryChapter(story, progress);
+  if (!chapter) return progress;
+  const pending = storyChapterPendingMissionGroup(chapter, progress.completedMissionIds) ?? [];
+  const mission = pending.find((candidate) => candidate.id === missionId);
+  if (!mission) return progress;
   return {
     ...progress,
     current: {
       actId: chapter.actId,
       chapterId: chapter.id,
       missionId: mission.id,
-      objectiveIndex: 0,
+      objectiveIndex: storyMissionInitialObjectiveIndex(mission),
     },
   };
 }
@@ -180,17 +221,12 @@ export function completeStoryMission(
   if (missionIndex === -1) return progress;
 
   const completedMissionIds = unique([...progress.completedMissionIds, missionId]);
-  const nextMission = chapter.missions[missionIndex + 1];
-  if (nextMission) {
+  const pendingGroup = storyChapterPendingMissionGroup(chapter, completedMissionIds);
+  if (pendingGroup) {
     return {
       ...progress,
       completedMissionIds,
-      current: {
-        actId: chapter.actId,
-        chapterId: chapter.id,
-        missionId: nextMission.id,
-        objectiveIndex: 0,
-      },
+      current: cursorForPendingGroup(chapter, pendingGroup),
     };
   }
 
@@ -206,17 +242,13 @@ export function completeStoryMission(
   }
 
   const firstNextMission = firstMission(nextChapter);
+  const nextPendingGroup = storyChapterPendingMissionGroup(nextChapter, completedMissionIds) ?? [firstNextMission];
   return {
     ...progress,
     completedMissionIds,
     completedChapterIds,
     unlockedChapterIds: unique([...progress.unlockedChapterIds, nextChapter.id]),
-    current: {
-      actId: nextChapter.actId,
-      chapterId: nextChapter.id,
-      missionId: firstNextMission.id,
-      objectiveIndex: 0,
-    },
+    current: cursorForPendingGroup(nextChapter, nextPendingGroup),
   };
 }
 
@@ -247,7 +279,7 @@ function parseStoryCursor(value: unknown): StoryCursor | null {
   const missionId = typeof value.missionId === 'string' ? value.missionId : null;
   const objectiveIndex = Number(value.objectiveIndex);
   if (!actId || !chapterId || !missionId) return null;
-  if (!Number.isFinite(objectiveIndex) || objectiveIndex < 0) return null;
+  if (!Number.isFinite(objectiveIndex) || objectiveIndex < STORY_MISSION_GROUP_SELECTION_INDEX) return null;
   return {
     actId,
     chapterId,

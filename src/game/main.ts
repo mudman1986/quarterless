@@ -22,9 +22,10 @@ let game: Phaser.Game | null = null;
 
 // Entry point: only constructed in a browser. Unit tests import from src/core
 // and never touch this file, so Phaser is never loaded in the Node test runner.
-export function startGame(parent: HTMLElement): GameRuntime {
+export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime {
   if (game) game.destroy(true);
   game = new Phaser.Game(config(parent));
+  game.registry.set('exitToLaunchMenu', onExit);
 
   // Dev/e2e inspection hook: exposes the running game so tooling (screenshots,
   // smoke tests) can read scene state. Has no effect on gameplay.

@@ -16,13 +16,19 @@ async function launchStoryModeWithOptions(
 ): Promise<void> {
   await page.goto('/quarterless/');
   await expect(page.getByRole('heading', { name: 'Retro Arcade' })).toBeVisible({ timeout: 10_000 });
-  await page.getByRole('button', { name: 'Story Mode' }).click();
+  await page.getByRole('button', { name: 'Play Sindicate' }).click();
   await expect(page.getByRole('heading', { name: 'Story Mode' })).toBeVisible({ timeout: 10_000 });
   await page.getByRole('button', { name: /Start Story|Continue Story/ }).click();
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
   await page.locator('#game canvas').click();
   if (options.acknowledgeBrief) {
-    await page.keyboard.press('Enter');
+    await page.evaluate(() => {
+      const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+      const scene = game?.scene.getScene('City') as {
+        acknowledgeStoryPanel?: () => void;
+      };
+      scene?.acknowledgeStoryPanel?.();
+    });
     await page.waitForFunction(() => {
       const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
       const scene = game?.scene.getScene('City') as {
@@ -47,14 +53,14 @@ test.afterEach(async ({ page }) => {
   });
 });
 
-test('landing page exposes a story-mode entry point for Sindicate', async ({ page }) => {
+test('landing page exposes a single Sindicate story entry point', async ({ page }) => {
   await page.goto('/quarterless/');
-  await expect(page.getByRole('button', { name: 'Story Mode' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Play Sindicate' })).toBeVisible();
 });
 
 test('story mode opens a dedicated story menu with chapter select', async ({ page }) => {
   await page.goto('/quarterless/');
-  await page.getByRole('button', { name: 'Story Mode' }).click();
+  await page.getByRole('button', { name: 'Play Sindicate' }).click();
   await expect(page.getByRole('heading', { name: 'Story Mode' })).toBeVisible();
   await expect(page.getByRole('button', { name: /Dead Drop District/i })).toBeVisible();
   await expect(page.getByLabel('Recap archive')).toBeVisible();
@@ -98,7 +104,7 @@ test('story menu can launch a later unlocked chapter from a different act', asyn
       }),
     );
   });
-  await page.getByRole('button', { name: 'Story Mode' }).click();
+  await page.getByRole('button', { name: 'Play Sindicate' }).click();
   await page.getByRole('button', { name: /Freight Union Morning/i }).click();
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
   await page.waitForFunction(() => {
@@ -196,6 +202,257 @@ test('story mission briefing stays visible until Enter acknowledges it', async (
   });
 });
 
+test('location-based story missions keep their start and route targets on the minimap', async ({ page }) => {
+  await launchStoryMode(page);
+
+  const missionMarkers = async (storyProgress: unknown) => {
+    await page.evaluate((progress) => {
+      const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+      const scene = game?.scene.getScene('City') as {
+        scene: { restart(data: unknown): void };
+      };
+      scene?.scene.restart({ skipResume: true, mode: 'story', storyProgress: progress });
+    }, storyProgress);
+
+    return page.waitForFunction(() => {
+      const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+      const scene = game?.scene.getScene('City') as {
+        debugMinimapMarkers?: () => Array<{ kind: string; x: number; y: number }>;
+      };
+      return scene?.debugMinimapMarkers?.() ?? [];
+    });
+  };
+
+  const startMarkers = await missionMarkers({
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'dead-drop-district',
+      missionId: 'night-ferry-run',
+      objectiveIndex: -1,
+    },
+    unlockedChapterIds: ['dead-drop-district'],
+    completedChapterIds: [],
+    completedMissionIds: [],
+    branchOutcomes: {},
+  });
+  expect(await startMarkers.evaluate((markers) => markers.some((marker) => marker.kind === 'objective'))).toBe(true);
+
+  const routeMarkers = await missionMarkers({
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'dead-drop-district',
+      missionId: 'burned-locker',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: ['dead-drop-district'],
+    completedChapterIds: [],
+    completedMissionIds: ['night-ferry-run'],
+    branchOutcomes: {},
+  });
+  expect(await routeMarkers.evaluate((markers) => markers.some((marker) => marker.kind === 'objective'))).toBe(true);
+});
+
+test('story combat and chase missions keep NPC target markers on the minimap', async ({ page }) => {
+  await launchStoryMode(page);
+
+  const restartAndReadMarkers = async (storyProgress: unknown) => {
+    await page.evaluate((progress) => {
+      const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+      const scene = game?.scene.getScene('City') as {
+        scene: { restart(data: unknown): void };
+      };
+      scene?.scene.restart({ skipResume: true, mode: 'story', storyProgress: progress });
+    }, storyProgress);
+
+    return page.waitForFunction(() => {
+      const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+      const scene = game?.scene.getScene('City') as {
+        debugMinimapMarkers?: () => Array<{ kind: string; x: number; y: number }>;
+      };
+      const markers = scene?.debugMinimapMarkers?.() ?? [];
+      return markers.length > 0 ? markers : null;
+    });
+  };
+
+  const eliminateMarkers = await restartAndReadMarkers({
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'dead-drop-district',
+      missionId: 'wreck-before-dawn',
+      objectiveIndex: 1,
+    },
+    unlockedChapterIds: ['dead-drop-district'],
+    completedChapterIds: [],
+    completedMissionIds: ['night-ferry-run', 'burned-locker'],
+    branchOutcomes: {},
+  });
+  expect(await eliminateMarkers.evaluate((markers) => markers.some((marker) => marker.kind === 'mission-target'))).toBe(true);
+
+  const chaseMarkers = await restartAndReadMarkers({
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'dead-drop-district',
+      missionId: 'false-ambulance',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: ['dead-drop-district'],
+    completedChapterIds: [],
+    completedMissionIds: ['night-ferry-run', 'burned-locker', 'wreck-before-dawn'],
+    branchOutcomes: {},
+  });
+  expect(await chaseMarkers.evaluate((markers) => markers.some((marker) => marker.kind === 'story-target'))).toBe(true);
+});
+
+test('grouped chapter leads show simultaneous mission markers and start the chosen mission in-world', async ({ page }) => {
+  await launchStoryMode(page);
+
+  await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      scene: { restart(data: unknown): void };
+    };
+    scene?.scene.restart({
+      skipResume: true,
+      mode: 'story',
+      storyProgress: {
+        version: 1,
+        storyId: 'sindicate-story-mode',
+        current: {
+          actId: 'find-the-missing-dispatcher',
+          chapterId: 'spare-parts-gospel',
+          missionId: 'hook-chain',
+          objectiveIndex: -2,
+        },
+        unlockedChapterIds: ['dead-drop-district', 'spare-parts-gospel'],
+        completedChapterIds: ['dead-drop-district'],
+        completedMissionIds: [
+          'night-ferry-run',
+          'burned-locker',
+          'wreck-before-dawn',
+          'false-ambulance',
+          'last-call-at-pier-9',
+          'yard-talk',
+        ],
+        branchOutcomes: {},
+      },
+    });
+  });
+
+  const choices = await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      storyMissionChoiceTargets?: () => Array<{ mission: { id: string; title: string }; target: { x: number; y: number } }>;
+    };
+    const targets = scene?.storyMissionChoiceTargets?.() ?? [];
+    return targets.length >= 2 ? targets : null;
+  });
+
+  expect(await choices.evaluate((targets) => targets.map((target) => target.mission.id))).toEqual([
+    'hook-chain',
+    'the-empty-shell',
+  ]);
+
+  await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: { player: { pos: { x: number; y: number } } };
+      storyMissionChoiceTargets?: () => Array<{ mission: { id: string }; target: { x: number; y: number } }>;
+    };
+    const target = scene?.storyMissionChoiceTargets?.().find((choice) => choice.mission.id === 'the-empty-shell');
+    if (!scene || !target) throw new Error('Missing grouped mission choice target');
+    scene.world.player = { ...scene.world.player, pos: target.target };
+  });
+
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      storyProgress?: { current: { missionId: string; objectiveIndex: number } | null };
+      world: { mission?: { id: string } | null };
+    };
+    return (
+      scene?.storyProgress?.current?.missionId === 'the-empty-shell' &&
+      scene?.storyProgress?.current?.objectiveIndex === -1 &&
+      scene?.world.mission?.id === 'the-empty-shell'
+    );
+  });
+});
+
+test('the empty shell uses staged scripted district-state beats after mission start', async ({ page }) => {
+  await launchStoryMode(page);
+
+  await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      scene: { restart(data: unknown): void };
+    };
+    scene?.scene.restart({
+      skipResume: true,
+      mode: 'story',
+      storyProgress: {
+        version: 1,
+        storyId: 'sindicate-story-mode',
+        current: {
+          actId: 'find-the-missing-dispatcher',
+          chapterId: 'spare-parts-gospel',
+          missionId: 'the-empty-shell',
+          objectiveIndex: 0,
+        },
+        unlockedChapterIds: ['dead-drop-district', 'spare-parts-gospel'],
+        completedChapterIds: ['dead-drop-district'],
+        completedMissionIds: [
+          'night-ferry-run',
+          'burned-locker',
+          'wreck-before-dawn',
+          'false-ambulance',
+          'last-call-at-pier-9',
+          'yard-talk',
+        ],
+        branchOutcomes: {},
+      },
+    });
+  });
+
+  const stateLabel = await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      storyStateText?: { visible: boolean; text: string };
+    };
+    return scene?.storyStateText?.visible ? scene.storyStateText.text : null;
+  });
+
+  expect(await stateLabel.jsonValue()).toContain('Decoy wrecks are dragging the chase east');
+});
+
+test('pause menu shows the current objective and can return to the Sindicate launch page', async ({ page }) => {
+  await launchStoryMode(page);
+
+  await page.keyboard.press('p');
+
+  const pauseText = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      pauseMenu?: { text: string };
+    };
+    return scene?.pauseMenu?.text ?? '';
+  });
+
+  expect(pauseText).toContain('PAUSED');
+  expect(pauseText).toContain('Night Ferry Run');
+  expect(pauseText).toContain('Go to the mission marker');
+
+  await page.keyboard.press('m');
+  await expect(page.getByRole('heading', { name: 'Story Mode' })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole('button', { name: /Start Story|Continue Story/ })).toBeVisible();
+});
+
 test('story mode persists manual save slots alongside story progress', async ({ page }) => {
   await launchStoryMode(page);
 
@@ -255,10 +512,27 @@ test('story mode shows a prototype-complete panel when the current story slice f
     }
 
     scene.storyProgress.current = {
+      actId: 'court-the-citys-middle-powers',
       chapterId: 'glass-towers-empty-floors',
       missionId: 'vacancy-notice',
       objectiveIndex: 0,
     };
+    scene.storyProgress.completedMissionIds = [
+      'union-test-run',
+      'picket-line-breaker',
+      'harbor-echo',
+      'crane-jam',
+      'the-long-manifest',
+      'signal-sprint',
+      'drop-stack',
+      'blind-corner',
+      'rival-tape',
+      'lamps-out',
+      'tenant-warning',
+      'window-tax',
+      'lobby-flood',
+      'fire-sale-run',
+    ];
     scene.prevMissionId = 'vacancy-notice';
     scene.prevMissionComplete = false;
     scene.world.campaign.currentIndex = scene.world.campaign.missions.length;
@@ -338,10 +612,17 @@ test('story mode restarts into the next chapter after chapter completion', async
     }
 
     scene.storyProgress.current = {
+      actId: 'find-the-missing-dispatcher',
       chapterId: 'dead-drop-district',
       missionId: 'last-call-at-pier-9',
       objectiveIndex: 0,
     };
+    scene.storyProgress.completedMissionIds = [
+      'night-ferry-run',
+      'burned-locker',
+      'wreck-before-dawn',
+      'false-ambulance',
+    ];
     scene.prevMissionId = 'last-call-at-pier-9';
     scene.prevMissionComplete = false;
     scene.world.campaign.currentIndex = scene.world.campaign.missions.length;

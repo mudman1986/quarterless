@@ -405,7 +405,14 @@ Implemented now:
 - Story mission briefs now pause play and remain on screen until the player acknowledges them with Enter, touch confirm, or Resume.
 - The dedicated story menu now includes an act-grouped chapter map, chapter selection, progress totals, and a recap archive for completed chapters.
 - Story mode now supports replaying unlocked chapters from both the dedicated story menu and the in-game pause menu.
+- Story missions now start at explicit in-world mission markers instead of auto-starting as soon as the chapter boots.
+- Missions that hinge on a fixed location, a checkpoint route, marked NPCs, or a scripted chase target now keep those targets visible on the minimap.
+- The Sindicate landing flow no longer exposes the old sandbox button; `Play Sindicate` now opens the story launcher directly.
+- The pause menu now shows the current objective and can return straight to the Sindicate story launch page.
+- Story chapters can now author grouped free-order mission sets, and the first live example is the `hook-chain` / `the-empty-shell` split inside Spare Parts Gospel.
+- The current slice now includes richer staged convoy scripting beyond a single linear route, including the multi-stage Empty Shell tail with a live decoy split and district-state beats.
 - Focused Playwright coverage now covers story-mode entry, story-menu chapter selection across acts, recap archive presence, refresh-resume, manual save-slot persistence, authored mission transition panels, chapter restart into the next chapter, pause-menu chapter replay, and the current story-complete panel.
+- Focused Playwright coverage now also covers story mission-start markers, route markers, marked-target minimap dots, scripted chase-target minimap markers, grouped in-world mission selection, staged district-state labels, and the pause-menu return-to-launch flow.
 
 Prototype limitations right now:
 
@@ -413,6 +420,17 @@ Prototype limitations right now:
 - Tail, capture, escort, stealth, and district-state behavior are still represented by simpler linear objective chains where needed.
 - The mission-actor layer now covers route-driven vehicles, staged convoy handoffs, escorts, named mission-target squads, district-state labels, and simple fail rules, but it still lacks richer custom encounter scripting and persistent systemic choreography.
 - There is not yet a full chapter-map front end or a complete post-mission scorecard; the current act-grouped menu, recap archive, persistent mission brief, and reward callouts are functional rather than final.
+- Only one live chapter currently uses the new grouped free-order mission flow. Most of the authored slice is still linear inside each chapter, so the non-linear pacing model needs to be rolled out deliberately instead of assumed complete.
+
+## Next Steps From Here
+
+Priority after this pass:
+
+1. Expand grouped free-order mission authoring beyond Spare Parts Gospel so later chapters can branch into several simultaneous leads without custom scene logic.
+2. Keep deepening the current nine-chapter prototype with more bespoke staged encounters, multi-actor set pieces, and mission-specific fail states before adding more chapters.
+3. Add a proper post-mission summary card showing reward, objective outcome, damage/collateral, and story unlock changes.
+4. Expand e2e coverage from mission types into per-mission authored regression checks as the current runtime scripts become less approximate.
+5. Keep tightening pause/menu UX, especially chapter replay, current-objective presentation, and controller/touch parity.
 
 ## Grounded Implementation Plan
 
@@ -471,7 +489,7 @@ Likely code touch points:
 
 Goal: let authored missions spawn and control story-specific entities.
 
-Status: Started. A prototype mission-actor layer now exists for route vehicles, staged convoy handoffs, escort actors, named squads, district-state labels, and simple fail rules, but richer NPC, raid, and persistent systemic scripting is still missing.
+Status: Started. A prototype mission-actor layer now exists for route vehicles, staged convoy handoffs, escorts, decoy splits, named squads, district-state labels, and simple fail rules, but richer NPC, raid, and persistent systemic scripting is still missing.
 
 Tasks:
 
@@ -489,7 +507,7 @@ Why this matters:
 
 Goal: make long-form progress reliable.
 
-Status: Partially implemented.
+Status: Partially implemented. Ordered chapter progression, mission-start markers, chapter replay, and grouped free-order mission selection now exist in prototype form.
 
 Tasks:
 

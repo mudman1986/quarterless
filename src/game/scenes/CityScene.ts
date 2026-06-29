@@ -33,7 +33,7 @@ import type { Car } from '../../core/vehicle';
 import type { Pedestrian } from '../../core/pedestrianAI';
 import { type TrafficAI, openDirections, tileCoord } from '../../core/trafficAI';
 import type { AmmoPickup } from '../../core/weapon';
-import { vec2, type Vec2 } from '../../core/vector';
+import { distance, vec2, type Vec2 } from '../../core/vector';
 import { uiScreenToWorld, uiCounterScale, uiAnchorOnScreen } from '../../core/hudLayout';
 import { greenAxis } from '../../core/trafficLight';
 import { KeyboardInput } from '../input/KeyboardInput';
@@ -55,19 +55,27 @@ import {
   completeStoryMission,
   createStoryProgress,
   currentStoryChapter,
+  currentStoryMissionChoices,
   currentStoryMission,
   loadStoryProgress,
   saveStoryProgress,
+  selectStoryMission,
   selectStoryChapter,
   setStoryObjectiveIndex,
   STORY_LAUNCH_PROGRESS_KEY,
   storyProgressSaveKey,
   type StoryProgressSnapshot,
 } from '../story/storyProgress';
-import { compileStoryChapterRuntimeCampaign } from '../story/storyMode';
+import {
+  compileStoryChapterRuntimeCampaign,
+  STORY_MISSION_GROUP_SELECTION_INDEX,
+  storyMissionStartPosition,
+  storyObjectiveIndexFromRuntime,
+} from '../story/storyMode';
 import type {
   PedestrianRouteActorScript,
   PedestrianSquadActorScript,
+  StoryMissionPlan,
   StoryRuntimeScript,
   StoryRuntimeStage,
   VehicleRouteActorScript,
@@ -287,6 +295,7 @@ export class CityScene extends Phaser.Scene {
   private policeBulletSprites: Phaser.GameObjects.Rectangle[] = [];
   private ammoSprites: { sprite: Phaser.GameObjects.Image; pickup: AmmoPickup }[] = [];
   private missionMarker!: Phaser.GameObjects.Arc;
+  private storyChoiceMarkersGfx!: Phaser.GameObjects.Graphics;
   private taxiMarker!: Phaser.GameObjects.Arc;
   private serviceMarker!: Phaser.GameObjects.Arc;
   private explosionGfx!: Phaser.GameObjects.Graphics;
@@ -341,7 +350,9 @@ export class CityScene extends Phaser.Scene {
   private pauseLoadButton!: Phaser.GameObjects.Text;
   private pauseChapterButton!: Phaser.GameObjects.Text;
   private pauseNewGameButton!: Phaser.GameObjects.Text;
+  private pauseExitButton!: Phaser.GameObjects.Text;
   private pauseTouchButton!: Phaser.GameObjects.Text;
+  private launchMenuKey!: Phaser.Input.Keyboard.Key;
 
   /** High-score persistence. */
   private store: KeyValueStore = safeStorage();
@@ -521,6 +532,7 @@ export class CityScene extends Phaser.Scene {
     this.saveGameKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.S);
     this.loadGameKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.L);
     this.chapterSelectKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.C);
+    this.launchMenuKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.M);
     this.manualSlotKeys = [
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.ONE),
       kb.addKey(Phaser.Input.Keyboard.KeyCodes.TWO),
@@ -570,12 +582,13 @@ export class CityScene extends Phaser.Scene {
       water: this.city.water,
       sidewalks: this.city.sidewalks,
       bestScore,
-      ...(storyMissions ? { missions: storyMissions } : { campaigns: this.buildCampaigns() }),
+      ...(this.mode === 'story' ? (storyMissions ? { missions: storyMissions } : {}) : { campaigns: this.buildCampaigns() }),
     };
   }
 
   private buildStoryCampaign(): Mission[] | null {
     if (this.mode !== 'story' || !this.storyProgress?.current) return null;
+    if (this.storyProgress.current.objectiveIndex === STORY_MISSION_GROUP_SELECTION_INDEX) return null;
     const chapter = currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress);
     if (!chapter) return null;
     return compileStoryChapterRuntimeCampaign(
@@ -585,10 +598,31 @@ export class CityScene extends Phaser.Scene {
     );
   }
 
+  private selectingStoryMission(): boolean {
+    return this.storyProgress?.current?.objectiveIndex === STORY_MISSION_GROUP_SELECTION_INDEX;
+  }
+
+  private storyMissionChoices(): StoryMissionPlan[] {
+    if (this.mode !== 'story' || !this.storyProgress) return [];
+    return currentStoryMissionChoices(STORY_MODE_PROTOTYPE, this.storyProgress);
+  }
+
+  private storyMissionChoiceTargets(): Array<{ mission: StoryMissionPlan; target: Vec2 }> {
+    return this.storyMissionChoices()
+      .map((mission) => ({ mission, target: storyMissionStartPosition(mission) }))
+      .filter((choice): choice is { mission: StoryMissionPlan; target: Vec2 } => !!choice.target);
+  }
+
   private syncStoryScript(dt = 0): void {
     if (this.mode !== 'story' || !this.storyProgress?.current) {
       this.storyScript = null;
       this.world.setStoryObjectiveProgress(null);
+      return;
+    }
+    if (this.storyProgress.current.objectiveIndex < 0) {
+      this.storyScript = null;
+      this.world.setStoryObjectiveProgress(null);
+      this.syncStoryStateText();
       return;
     }
 
@@ -1319,6 +1353,7 @@ export class CityScene extends Phaser.Scene {
       .setStrokeStyle(3, COLORS.marker)
       .setDepth(3)
       .setVisible(false);
+    this.storyChoiceMarkersGfx = this.add.graphics().setDepth(3);
     this.taxiMarker = this.add
       .circle(0, 0, 46, COLORS.taxiMarker, 0.12)
       .setStrokeStyle(3, COLORS.taxiMarker)
@@ -1711,7 +1746,8 @@ export class CityScene extends Phaser.Scene {
     place(this.pauseLoadButton, width / 2, height / 2 + 96);
     place(this.pauseChapterButton, width / 2, height / 2 + 142);
     place(this.pauseNewGameButton, width / 2, height / 2 + 188);
-    place(this.pauseTouchButton, width / 2, height / 2 + 260);
+    place(this.pauseExitButton, width / 2, height / 2 + 234);
+    place(this.pauseTouchButton, width / 2, height / 2 + 306);
 
     if (this.minimapBg) {
       // Clamp the top-right anchor so the whole map stays on screen even on a
@@ -1827,6 +1863,7 @@ export class CityScene extends Phaser.Scene {
     this.pauseLoadButton = this.createPauseActionButton('Load Saved Game  [L]', () => this.loadManualGame());
     this.pauseChapterButton = this.createPauseActionButton('', () => this.loadSelectedStoryChapter());
     this.pauseNewGameButton = this.createPauseActionButton('New Game  [N]', () => this.startNewGame());
+    this.pauseExitButton = this.createPauseActionButton('Sindicate Menu  [M]', () => this.returnToLaunchMenu());
 
     this.pauseTouchButton = this.add
       .text(this.scale.width / 2, this.scale.height / 2 + 214, '', {
@@ -1935,27 +1972,14 @@ export class CityScene extends Phaser.Scene {
     const g = this.minimapDots;
     g.clear();
 
-    const objective = this.world.missionObjective;
-    if (objective && objective.kind === 'reach') {
-      g.lineStyle(2, COLORS.mmTarget, 1);
-      g.strokeCircle(objective.target.x * scale, objective.target.y * scale, 4);
-    }
-    const taxiTarget = this.world.taxiTarget;
-    if (taxiTarget) {
-      g.lineStyle(2, COLORS.mmTaxiTarget, 1);
-      g.strokeCircle(taxiTarget.x * scale, taxiTarget.y * scale, 4);
-    }
-    const serviceMission = this.world.serviceMission;
-    const serviceTarget = this.world.serviceTarget;
-    if (serviceMission && serviceTarget) {
-      g.lineStyle(2, this.serviceMarkerColor(serviceMission.kind, true), 1);
-      g.strokeCircle(serviceTarget.x * scale, serviceTarget.y * scale, 4);
-    }
-
-    g.fillStyle(COLORS.mmTarget, 1);
-    for (const ped of this.world.pedestrians) {
-      if (!ped.missionTarget) continue;
-      g.fillCircle(ped.pos.x * scale, ped.pos.y * scale, 2);
+    for (const marker of this.debugMinimapMarkers()) {
+      if (marker.style === 'stroke') {
+        g.lineStyle(2, marker.color, 1);
+        g.strokeCircle(marker.x * scale, marker.y * scale, 4);
+        continue;
+      }
+      g.fillStyle(marker.color, 1);
+      g.fillCircle(marker.x * scale, marker.y * scale, marker.radius ?? 2);
     }
 
     g.fillStyle(COLORS.mmPolice, 1);
@@ -1965,6 +1989,99 @@ export class CityScene extends Phaser.Scene {
 
     g.fillStyle(COLORS.mmPlayer, 1);
     g.fillCircle(this.world.focus.x * scale, this.world.focus.y * scale, 3);
+  }
+
+  private storyMissionTargetPosition(): Vec2 | null {
+    const objective = this.world.missionObjective;
+    if (!objective || (objective.kind !== 'tail' && objective.kind !== 'capture')) return null;
+    if (!this.storyScript || !this.storyProgress) return null;
+    const mission = currentStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress);
+    const runtime = mission?.prototypeScript;
+    if (!runtime) return null;
+    const stage = this.activeStoryStage(runtime);
+    if (!stage) return null;
+    const primaryActorId = stage.primaryActorId ?? runtime.primaryActorId;
+    const actor = stage.actors.find((candidate) => candidate.actorId === primaryActorId);
+    if (!actor) return null;
+    if (actor.kind === 'vehicleRoute') {
+      const carIndex = this.storyScript.actorCarIndices[actor.actorId];
+      return carIndex !== undefined ? this.world.cars[carIndex]?.pos ?? null : null;
+    }
+    const pedIndex = this.storyScript.actorPedIndices[actor.actorId]?.[0];
+    return pedIndex !== undefined ? this.world.pedestrians[pedIndex]?.pos ?? null : null;
+  }
+
+  private debugMinimapMarkers(): Array<{
+    kind: string;
+    x: number;
+    y: number;
+    color: number;
+    style: 'stroke' | 'fill';
+    radius?: number;
+  }> {
+    const markers: Array<{
+      kind: string;
+      x: number;
+      y: number;
+      color: number;
+      style: 'stroke' | 'fill';
+      radius?: number;
+    }> = [];
+    if (this.selectingStoryMission()) {
+      for (const choice of this.storyMissionChoiceTargets()) {
+        markers.push({ kind: 'choice', x: choice.target.x, y: choice.target.y, color: COLORS.mmTarget, style: 'stroke' });
+      }
+    }
+    const objective = this.world.missionObjective;
+    if (!this.selectingStoryMission() && objective?.kind === 'reach') {
+      markers.push({ kind: 'objective', x: objective.target.x, y: objective.target.y, color: COLORS.mmTarget, style: 'stroke' });
+    } else if (!this.selectingStoryMission() && objective?.kind === 'route') {
+      const completed = this.world.mission?.objectiveState?.kind === 'route' ? this.world.mission.objectiveState.completed : 0;
+      const target = objective.targets[completed];
+      if (target) {
+        markers.push({ kind: 'objective', x: target.x, y: target.y, color: COLORS.mmTarget, style: 'stroke' });
+      }
+    } else if (!this.selectingStoryMission()) {
+      const storyTarget = this.storyMissionTargetPosition();
+      if (storyTarget) {
+        markers.push({ kind: 'story-target', x: storyTarget.x, y: storyTarget.y, color: COLORS.mmTarget, style: 'stroke' });
+      }
+    }
+
+    const taxiTarget = this.world.taxiTarget;
+    if (taxiTarget) {
+      markers.push({ kind: 'taxi', x: taxiTarget.x, y: taxiTarget.y, color: COLORS.mmTaxiTarget, style: 'stroke' });
+    }
+
+    const serviceMission = this.world.serviceMission;
+    const serviceTarget = this.world.serviceTarget;
+    if (serviceMission && serviceTarget) {
+      markers.push({
+        kind: 'service',
+        x: serviceTarget.x,
+        y: serviceTarget.y,
+        color: this.serviceMarkerColor(serviceMission.kind, true),
+        style: 'stroke',
+      });
+    }
+
+    for (const ped of this.world.pedestrians) {
+      if (!ped.missionTarget) continue;
+      markers.push({ kind: 'mission-target', x: ped.pos.x, y: ped.pos.y, color: COLORS.mmTarget, style: 'fill', radius: 2 });
+    }
+    return markers;
+  }
+
+  private maybeStartSelectedStoryMission(): boolean {
+    if (!this.selectingStoryMission() || !this.storyProgress) return false;
+    const choice = this.storyMissionChoiceTargets().find((entry) => distance(this.world.focus, entry.target) <= 24);
+    if (!choice) return false;
+    const selected = selectStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress, choice.mission.id);
+    if (selected === this.storyProgress) return false;
+    this.storyProgress = selected;
+    this.skipPersistOnShutdown = true;
+    this.scene.restart({ skipResume: true, mode: 'story', storyProgress: selected });
+    return true;
   }
 
   update(_time: number, deltaMs: number): void {
@@ -2000,6 +2117,7 @@ export class CityScene extends Phaser.Scene {
       if (Phaser.Input.Keyboard.JustDown(this.saveGameKey)) this.saveManualGame();
       if (Phaser.Input.Keyboard.JustDown(this.loadGameKey)) this.loadManualGame();
       if (Phaser.Input.Keyboard.JustDown(this.chapterSelectKey)) this.cycleStoryChapterSelection();
+      if (Phaser.Input.Keyboard.JustDown(this.launchMenuKey)) this.returnToLaunchMenu();
       this.prevTouchConfirm = !!touchSnapshot?.confirmPressed;
       return;
     }
@@ -2033,6 +2151,11 @@ export class CityScene extends Phaser.Scene {
       this.world.tick(controls, FIXED_STEP);
       this.accumulator -= FIXED_STEP;
       steps += 1;
+    }
+
+    if (this.maybeStartSelectedStoryMission()) {
+      this.prevTouchConfirm = !!touchSnapshot?.confirmPressed;
+      return;
     }
 
     this.syncSprites();
@@ -2135,6 +2258,13 @@ export class CityScene extends Phaser.Scene {
     this.pauseLoadButton.setVisible(visible);
     this.pauseChapterButton.setVisible(visible && this.mode === 'story');
     this.pauseNewGameButton.setVisible(visible);
+    this.pauseExitButton.setVisible(visible);
+  }
+
+  private returnToLaunchMenu(): void {
+    this.persistGameState();
+    const onExit = this.game.registry.get('exitToLaunchMenu') as (() => void) | undefined;
+    onExit?.();
   }
 
   private currentManualSaveKey(): string {
@@ -2190,12 +2320,16 @@ export class CityScene extends Phaser.Scene {
     if (!this.pauseMenu) return;
     const hasManualSave = this.hasManualSave();
     const slotHelp = Array.from({ length: MANUAL_SAVE_SLOT_COUNT }, (_, index) => `${index + 1}`).join('/');
+    const currentObjective = this.missionText() || 'No active objective';
     this.pauseMenu.setText(
       [
         'PAUSED',
         '',
+        currentObjective,
+        '',
         'Resume, save this run, load a chosen slot, or start over.',
         `Press ${slotHelp} or tap Slot to choose a save slot.`,
+        'Press M or tap Sindicate Menu to return to the story launch page.',
         ...(this.mode === 'story' ? ['Press C to cycle unlocked story chapters.'] : []),
       ].join('\n'),
     );
@@ -2210,6 +2344,7 @@ export class CityScene extends Phaser.Scene {
           : `Load Slot ${this.selectedManualSlot}  [L]\nEmpty slot`,
       )
       .setAlpha(hasManualSave ? 1 : 0.6);
+    this.pauseExitButton.setText('Sindicate Menu  [M]\nReturn to launch options');
     if (this.mode === 'story') {
       const chapters = this.unlockedStoryChapters();
       const chapterId = this.selectedStoryChapterId ?? this.storyProgress?.current?.chapterId ?? chapters[0]?.id ?? null;
@@ -2273,7 +2408,11 @@ export class CityScene extends Phaser.Scene {
         this.storyProgress = completeStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress, this.prevMissionId);
       }
       if (w.mission && this.storyProgress.current) {
-        this.storyProgress = setStoryObjectiveIndex(this.storyProgress, w.mission.currentIndex);
+        const authoredMission = currentStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress);
+        this.storyProgress = setStoryObjectiveIndex(
+          this.storyProgress,
+          authoredMission ? storyObjectiveIndexFromRuntime(authoredMission, w.mission.currentIndex) : w.mission.currentIndex,
+        );
       }
     }
     if (this.prevDrivingCarIndex === null && w.drivingCarIndex !== null) {
@@ -2414,6 +2553,10 @@ export class CityScene extends Phaser.Scene {
 
   private showMissionBriefingPanel(): void {
     if (this.mode !== 'story' || !this.storyProgress) return;
+    if (this.selectingStoryMission()) {
+      this.showMissionChoicePanel();
+      return;
+    }
     const chapter = currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress);
     const mission = currentStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress);
     if (!chapter || !mission) return;
@@ -2424,6 +2567,10 @@ export class CityScene extends Phaser.Scene {
 
   private showMissionTransitionPanel(previousMissionId: string): void {
     if (this.mode !== 'story' || !this.storyProgress) return;
+    if (this.selectingStoryMission()) {
+      this.showMissionChoicePanel(previousMissionId);
+      return;
+    }
     const chapter = currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress);
     const mission = currentStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress);
     if (!chapter || !mission) return;
@@ -2439,12 +2586,29 @@ export class CityScene extends Phaser.Scene {
     );
   }
 
+  private showMissionChoicePanel(previousMissionId: string | null = null): void {
+    if (this.mode !== 'story' || !this.storyProgress) return;
+    const chapter = currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress);
+    const choices = this.storyMissionChoices();
+    if (!chapter || choices.length === 0) return;
+    const previousMission = previousMissionId ? chapter.missions.find((entry) => entry.id === previousMissionId) ?? null : null;
+    const leads = choices.map((mission, index) => `${index + 1}. ${mission.title}\n${mission.primaryGoal}`).join('\n\n');
+    const header = previousMission
+      ? `MISSION COMPLETE\n${previousMission.title}\n\n${previousMission.payoff}`
+      : `CHAPTER ${chapter.order}\n${chapter.title}`;
+    this.showStoryPanel(`${header}\n\nChoose the next lead by driving into a mission marker.\n\n${leads}`, 6.2);
+  }
+
   private showStoryBriefingIfNeeded(): void {
     if (this.mode !== 'story' || !this.storyProgress?.current) return;
+    if (this.selectingStoryMission()) {
+      this.showMissionChoicePanel();
+      return;
+    }
     const chapter = currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress);
     const mission = currentStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress);
     if (!chapter || !mission) return;
-    if (this.storyProgress.current.objectiveIndex !== 0) return;
+    if (this.storyProgress.current.objectiveIndex >= 0) return;
     if (mission.id !== chapter.missions[0]?.id) return;
     this.showStoryPanel(
       `CHAPTER ${chapter.order}\n${chapter.title}\n\n${chapter.storyRole}\n\nGoal: ${chapter.combinedGoal}`,
@@ -2584,9 +2748,20 @@ export class CityScene extends Phaser.Scene {
     this.syncAmbulance();
     this.syncTow();
 
+    this.storyChoiceMarkersGfx.clear();
+    if (this.selectingStoryMission()) {
+      this.storyChoiceMarkersGfx.lineStyle(3, COLORS.marker, 1).fillStyle(COLORS.marker, 0.12);
+      for (const choice of this.storyMissionChoiceTargets()) {
+        this.storyChoiceMarkersGfx.strokeCircle(choice.target.x, choice.target.y, 52);
+        this.storyChoiceMarkersGfx.fillCircle(choice.target.x, choice.target.y, 52);
+      }
+    }
+
     // Mission marker: show the ring only while a 'reach' objective is active.
     const objective = this.world.missionObjective;
-    if (objective && objective.kind === 'reach') {
+    if (this.selectingStoryMission()) {
+      this.missionMarker.setVisible(false);
+    } else if (objective && objective.kind === 'reach') {
       this.missionMarker.setVisible(true).setPosition(objective.target.x, objective.target.y);
     } else if (objective && objective.kind === 'route') {
       const completed = this.world.mission?.objectiveState?.kind === 'route' ? this.world.mission.objectiveState.completed : 0;
@@ -2594,7 +2769,9 @@ export class CityScene extends Phaser.Scene {
       if (target) this.missionMarker.setVisible(true).setPosition(target.x, target.y);
       else this.missionMarker.setVisible(false);
     } else {
-      this.missionMarker.setVisible(false);
+      const storyTarget = this.storyMissionTargetPosition();
+      if (storyTarget) this.missionMarker.setVisible(true).setPosition(storyTarget.x, storyTarget.y);
+      else this.missionMarker.setVisible(false);
     }
     const taxiTarget = this.world.taxiTarget;
     if (taxiTarget) {
@@ -2653,6 +2830,10 @@ export class CityScene extends Phaser.Scene {
   private missionText(): string {
     const w = this.world;
     if (w.missionComplete) return 'ALL MISSIONS COMPLETE';
+    if (this.selectingStoryMission()) {
+      const choices = this.storyMissionChoices();
+      if (choices.length > 0) return `▶ Choose a lead: ${choices.map((mission) => mission.title).join(' / ')}`;
+    }
     if (!w.mission || !w.missionObjective) return '';
     const objective = w.missionObjective;
     const detail =

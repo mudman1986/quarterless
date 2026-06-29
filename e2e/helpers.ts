@@ -10,9 +10,26 @@ export async function launchSindicate(page: Page): Promise<void> {
     timeout: 10_000,
   });
   await page.getByRole('button', { name: 'Play Sindicate' }).click();
+  await expect(page.getByRole('heading', { name: 'Story Mode' })).toBeVisible({ timeout: 10_000 });
+  await page.getByRole('button', { name: /Start Story|Continue Story/ }).click();
   const canvas = page.locator('#game canvas');
   await expect(canvas).toBeVisible({ timeout: 15_000 });
   await canvas.click();
+  await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      acknowledgeStoryPanel?: () => void;
+    };
+    scene?.acknowledgeStoryPanel?.();
+  });
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      paused: boolean;
+      storyPanel?: { visible: boolean };
+    };
+    return scene?.paused === false && !scene?.storyPanel?.visible;
+  });
 }
 
 export async function launchArcadeGame(page: Page, title: 'Pixel Sprint' | 'Void Sweep'): Promise<void> {

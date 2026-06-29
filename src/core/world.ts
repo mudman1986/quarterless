@@ -972,6 +972,11 @@ export class World {
     return objectiveProgress(obj, this.missionCtx(), this.objectiveBaseline, this.mission);
   }
 
+  /** Seconds elapsed in the current run. */
+  get elapsedSeconds(): number {
+    return this.elapsed;
+  }
+
   /** The player's active taxi fare, if they are currently driving a cab. */
   get taxiMission(): TaxiMission | null {
     return this.playerTaxiMission;

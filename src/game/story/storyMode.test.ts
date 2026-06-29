@@ -5,12 +5,17 @@ import { CITY_SPEC } from '../citySpec';
 import { DEAD_DROP_DISTRICT, STORY_MODE_PROTOTYPE } from './deadDropDistrict';
 import { buildSandboxCampaigns } from './sandboxCampaigns';
 import {
+  STORY_MISSION_GROUP_SELECTION_INDEX,
+  compileStoryMissionRuntime,
   compileStoryChapterRuntimeCampaign,
   chapterMissingSystems,
   compileCampaignTemplate,
   countStoryChapters,
   countStoryMissions,
   isChapterRuntimeReady,
+  storyChapterPendingMissionGroup,
+  storyMissionInitialObjectiveIndex,
+  storyObjectiveIndexFromRuntime,
   validateStoryMode,
 } from './storyMode';
 
@@ -59,14 +64,32 @@ describe('chapter runtime readiness', () => {
       expect.arrayContaining(['scriptedEncounter', 'timedMultiStop', 'districtState', 'sabotage', 'tail', 'capture']),
     );
   });
+
+  it('supports grouped free-order story missions inside a chapter', () => {
+    const pending = storyChapterPendingMissionGroup(STORY_MODE_PROTOTYPE.acts[0]!.chapters[1]!, ['yard-talk']);
+
+    expect(pending?.map((mission) => mission.id)).toEqual(['hook-chain', 'the-empty-shell']);
+    expect(STORY_MISSION_GROUP_SELECTION_INDEX).toBe(-2);
+  });
 });
 
 describe('compileStoryChapterRuntimeCampaign', () => {
+  it('prepends a mission-start marker before the authored objectives', () => {
+    const runtime = compileStoryMissionRuntime(DEAD_DROP_DISTRICT.missions[0]!);
+
+    expect(runtime?.objectives[0]).toMatchObject({
+      kind: 'reach',
+      description: 'Go to the mission marker to start Night Ferry Run',
+    });
+    expect(storyMissionInitialObjectiveIndex(DEAD_DROP_DISTRICT.missions[0]!)).toBe(-1);
+  });
+
   it('builds a playable runtime campaign from the current chapter and can resume mid-chapter', () => {
     const missions = compileStoryChapterRuntimeCampaign(DEAD_DROP_DISTRICT, 'burned-locker', 1);
 
     expect(missions).toHaveLength(4);
-    expect(missions?.[0]).toMatchObject({ id: 'burned-locker', currentIndex: 1 });
+    expect(missions?.[0]).toMatchObject({ id: 'burned-locker', currentIndex: 2 });
+    expect(storyObjectiveIndexFromRuntime(DEAD_DROP_DISTRICT.missions[1]!, missions?.[0]?.currentIndex ?? -1)).toBe(1);
     expect(missions?.[1]).toMatchObject({ id: 'wreck-before-dawn' });
   });
 });

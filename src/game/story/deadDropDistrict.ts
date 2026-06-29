@@ -199,6 +199,7 @@ export const SPARE_PARTS_GOSPEL: StoryChapter = {
     'The trail points toward independent tow operators who know where the city hides inconvenient wrecks and bodies.',
   combinedGoal:
     'Infiltrate the tow-yard network, trace where sensitive wrecks are being hidden, and earn a route to the dispatcher behind the cleanup crews.',
+  missionGroups: [['yard-talk'], ['hook-chain', 'the-empty-shell'], ['crusher-feed'], ['towline-oath']],
   missions: [
     {
       id: 'yard-talk',
@@ -276,20 +277,68 @@ export const SPARE_PARTS_GOSPEL: StoryChapter = {
       },
       prototypeScript: {
         primaryActorId: 'empty-shell-sedan',
-        actors: [
+        actors: [],
+        stages: [
           {
-            kind: 'vehicleRoute',
-            actorId: 'empty-shell-sedan',
-            vehicleKind: 'sedan',
-            route: [
-              { x: 1984, y: 2176 },
-              { x: 2496, y: 2112 },
-              { x: 3008, y: 2112 },
+            id: 'shell-breakaway',
+            title: 'Stay on the shell convoy',
+            districtState: {
+              label: 'Decoy wrecks are dragging the chase east',
+              summary: 'A decoy sedan peels away while the real shell heads toward the salvage lane.',
+            },
+            actors: [
+              {
+                kind: 'vehicleRoute',
+                actorId: 'empty-shell-sedan',
+                vehicleKind: 'sedan',
+                route: [
+                  { x: 1984, y: 2176 },
+                  { x: 2304, y: 2176 },
+                  { x: 2496, y: 2112 },
+                ],
+                speed: 108,
+                followRadius: 320,
+                tailDrainPerSecond: 2,
+                loseGraceSeconds: 2.5,
+              },
+              {
+                kind: 'vehicleRoute',
+                actorId: 'empty-shell-decoy',
+                vehicleKind: 'coupe',
+                route: [
+                  { x: 1984, y: 2176 },
+                  { x: 2048, y: 2496 },
+                  { x: 2240, y: 2752 },
+                ],
+                speed: 104,
+                followRadius: 240,
+              },
             ],
-            speed: 110,
-            followRadius: 320,
-            tailDrainPerSecond: 2,
-            loseGraceSeconds: 2.5,
+            nextWhen: { kind: 'routeComplete', actorId: 'empty-shell-sedan' },
+          },
+          {
+            id: 'shell-yard-handoff',
+            title: 'Confirm the receiving yard',
+            districtState: {
+              label: 'The real shell is slipping through the salvage gate',
+              summary: 'Hold the tail until the receiving yard is unmistakable.',
+            },
+            actors: [
+              {
+                kind: 'vehicleRoute',
+                actorId: 'empty-shell-sedan',
+                vehicleKind: 'sedan',
+                route: [
+                  { x: 2496, y: 2112 },
+                  { x: 2816, y: 2112 },
+                  { x: 3008, y: 2112 },
+                ],
+                speed: 112,
+                followRadius: 320,
+                tailDrainPerSecond: 2,
+                loseGraceSeconds: 2.5,
+              },
+            ],
           },
         ],
       },

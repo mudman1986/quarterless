@@ -1,4 +1,4 @@
-import { createMission, type Mission, type MissionSpec } from '../../core/mission';
+import { createMission, type Mission, type MissionSpec, type Objective } from '../../core/mission';
 import type { VehicleKind } from '../../core/world';
 import type { Vec2 } from '../../core/vector';
 import type { Pedestrian } from '../../core/pedestrianAI';
@@ -141,6 +141,7 @@ export interface StoryChapter {
   storyRole: string;
   combinedGoal: string;
   missions: readonly StoryMissionPlan[];
+  missionGroups?: readonly (readonly string[])[];
 }
 
 export interface StoryAct {
@@ -163,6 +164,113 @@ export interface StoryValidationIssue {
   message: string;
 }
 
+export const STORY_MISSION_GROUP_SELECTION_INDEX = -2;
+
+function rawStoryChapterMissionGroups(chapter: StoryChapter): readonly (readonly string[])[] {
+  return chapter.missionGroups && chapter.missionGroups.length > 0
+    ? chapter.missionGroups
+    : chapter.missions.map((mission) => [mission.id]);
+}
+
+export function storyChapterMissionGroups(chapter: StoryChapter): StoryMissionPlan[][] {
+  const missionById = new Map(chapter.missions.map((mission) => [mission.id, mission]));
+  return rawStoryChapterMissionGroups(chapter)
+    .map((group) => group.map((missionId) => missionById.get(missionId)).filter((mission): mission is StoryMissionPlan => !!mission))
+    .filter((group) => group.length > 0);
+}
+
+export function storyChapterPendingMissionGroup(
+  chapter: StoryChapter,
+  completedMissionIds: readonly string[],
+): StoryMissionPlan[] | null {
+  const completed = new Set(completedMissionIds);
+  for (const group of storyChapterMissionGroups(chapter)) {
+    const pending = group.filter((mission) => !completed.has(mission.id));
+    if (pending.length > 0) return pending;
+  }
+  return null;
+}
+
+function storyActorStartPosition(actor: StoryActorScript | undefined): Vec2 | null {
+  if (!actor) return null;
+  if (actor.kind === 'vehicleRoute' || actor.kind === 'pedestrianRoute') {
+    return actor.route[0] ?? null;
+  }
+  return actor.center;
+}
+
+function storyPrimaryActor(runtime: StoryRuntimeScript): StoryActorScript | undefined {
+  const firstStage = runtime.stages?.[0];
+  const actors = firstStage?.actors ?? runtime.actors;
+  const primaryActorId = firstStage?.primaryActorId ?? runtime.primaryActorId;
+  return actors.find((actor) => actor.actorId === primaryActorId) ?? actors[0];
+}
+
+function storyMissionEntryObjective(plan: StoryMissionPlan): Objective | null {
+  const start = storyMissionStartPosition(plan);
+  if (!start) return null;
+  return {
+    kind: 'reach',
+    description: `Go to the mission marker to start ${plan.title}`,
+    target: start,
+    radius: 24,
+  };
+}
+
+export function storyMissionStartPosition(plan: Pick<StoryMissionPlan, 'prototypeRuntime' | 'prototypeScript'>): Vec2 | null {
+  const firstObjective = plan.prototypeRuntime?.objectives[0];
+  if (firstObjective?.kind === 'reach') return firstObjective.target;
+  if (firstObjective?.kind === 'route') return firstObjective.targets[0] ?? null;
+  return plan.prototypeScript ? storyActorStartPosition(storyPrimaryActor(plan.prototypeScript)) : null;
+}
+
+export function storyMissionInitialObjectiveIndex(
+  plan: Pick<StoryMissionPlan, 'prototypeRuntime' | 'prototypeScript'>,
+): number {
+  return storyMissionStartPosition(plan) ? -1 : 0;
+}
+
+export function storyMissionGroupObjectiveIndex(
+  plan: Pick<StoryMissionPlan, 'prototypeRuntime' | 'prototypeScript'>,
+  pendingInGroup: number,
+): number {
+  return pendingInGroup > 1 ? STORY_MISSION_GROUP_SELECTION_INDEX : storyMissionInitialObjectiveIndex(plan);
+}
+
+export function runtimeObjectiveIndexFromStory(
+  plan: Pick<StoryMissionPlan, 'prototypeRuntime' | 'prototypeScript'>,
+  storyObjectiveIndex: number,
+): number {
+  const authoredObjectiveCount = plan.prototypeRuntime?.objectives.length ?? 0;
+  if (authoredObjectiveCount <= 0) return 0;
+  const hasEntryMarker = storyMissionInitialObjectiveIndex(plan) < 0;
+  const minStoryIndex = hasEntryMarker ? -1 : 0;
+  const normalized = Math.floor(storyObjectiveIndex);
+  const clamped = Math.max(minStoryIndex, Math.min(authoredObjectiveCount - 1, Number.isFinite(normalized) ? normalized : 0));
+  return hasEntryMarker ? clamped + 1 : clamped;
+}
+
+export function storyObjectiveIndexFromRuntime(
+  plan: Pick<StoryMissionPlan, 'prototypeRuntime' | 'prototypeScript'>,
+  runtimeObjectiveIndex: number,
+): number {
+  const authoredObjectiveCount = plan.prototypeRuntime?.objectives.length ?? 0;
+  if (authoredObjectiveCount <= 0) return 0;
+  const hasEntryMarker = storyMissionInitialObjectiveIndex(plan) < 0;
+  const normalized = Math.floor(runtimeObjectiveIndex);
+  const clamped = Math.max(0, Math.min(authoredObjectiveCount - 1 + (hasEntryMarker ? 1 : 0), Number.isFinite(normalized) ? normalized : 0));
+  return hasEntryMarker ? clamped - 1 : clamped;
+}
+
+export function compileStoryMissionRuntime(plan: StoryMissionPlan): Mission | null {
+  if (!plan.prototypeRuntime) return null;
+  const entryObjective = storyMissionEntryObjective(plan);
+  return createMission({
+    ...plan.prototypeRuntime,
+    objectives: entryObjective ? [entryObjective, ...plan.prototypeRuntime.objectives] : plan.prototypeRuntime.objectives,
+  });
+}
+
 export function compileCampaignTemplate(template: RuntimeCampaignTemplate): Mission[] {
   return template.missions.map(createMission);
 }
@@ -170,7 +278,7 @@ export function compileCampaignTemplate(template: RuntimeCampaignTemplate): Miss
 export function compileStoryChapterRuntimeCampaign(
   chapter: StoryChapter,
   startMissionId = chapter.missions[0]?.id,
-  startObjectiveIndex = 0,
+  startObjectiveIndex?: number,
 ): Mission[] | null {
   const startIndex = chapter.missions.findIndex((mission) => mission.id === startMissionId);
   if (startIndex === -1) return null;
@@ -178,11 +286,13 @@ export function compileStoryChapterRuntimeCampaign(
   if (plans.some((mission) => !mission.prototypeRuntime)) return null;
 
   return plans.map((plan, index) => {
-    const mission = createMission(plan.prototypeRuntime!);
+    const mission = compileStoryMissionRuntime(plan);
+    if (!mission) return createMission(plan.prototypeRuntime!);
     if (index > 0) return mission;
+    const resumeObjectiveIndex = startObjectiveIndex ?? storyMissionInitialObjectiveIndex(plan);
     return {
       ...mission,
-      currentIndex: Math.max(0, Math.min(mission.objectives.length - 1, Math.floor(startObjectiveIndex) || 0)),
+      currentIndex: Math.max(0, Math.min(mission.objectives.length - 1, runtimeObjectiveIndexFromStory(plan, resumeObjectiveIndex))),
       status: mission.objectives.length === 0 ? 'completed' : 'active',
       objectiveState: null,
     };
@@ -269,6 +379,46 @@ export function validateStoryMode(story: StoryMode): StoryValidationIssue[] {
         }
         if (!mission.failureState.trim()) {
           issues.push({ path: `${missionPath}.failureState`, message: 'Mission failureState must not be empty' });
+        }
+      }
+
+      const groupedIds = rawStoryChapterMissionGroups(chapter).flat();
+      const missionIdList = chapter.missions.map((mission) => mission.id);
+      if (groupedIds.length !== missionIdList.length) {
+        issues.push({
+          path: `${chapterPath}.missionGroups`,
+          message: 'Mission groups must cover every mission exactly once',
+        });
+      }
+      const groupedIdSet = new Set<string>();
+      for (const [groupIndex, group] of rawStoryChapterMissionGroups(chapter).entries()) {
+        if (group.length === 0) {
+          issues.push({ path: `${chapterPath}.missionGroups[${groupIndex}]`, message: 'Mission group must not be empty' });
+        }
+        for (const missionId of group) {
+          if (!missionIds.has(missionId)) {
+            issues.push({
+              path: `${chapterPath}.missionGroups[${groupIndex}]`,
+              message: `Mission group references unknown mission id "${missionId}"`,
+            });
+            continue;
+          }
+          if (groupedIdSet.has(missionId)) {
+            issues.push({
+              path: `${chapterPath}.missionGroups[${groupIndex}]`,
+              message: `Mission id "${missionId}" appears in more than one mission group`,
+            });
+            continue;
+          }
+          groupedIdSet.add(missionId);
+        }
+      }
+      for (const missionId of missionIdList) {
+        if (!groupedIdSet.has(missionId)) {
+          issues.push({
+            path: `${chapterPath}.missionGroups`,
+            message: `Mission groups do not include mission id "${missionId}"`,
+          });
         }
       }
     }

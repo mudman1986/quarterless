@@ -1,15 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import type { KeyValueStore } from '../../core/highScore';
-import { DEAD_DROP_DISTRICT } from './deadDropDistrict';
+import { DEAD_DROP_DISTRICT, SPARE_PARTS_GOSPEL } from './deadDropDistrict';
 import {
   clearStoryProgress,
   completeStoryMission,
   createStoryProgress,
+  currentStoryMissionChoices,
   currentStoryMission,
   loadStoryProgress,
   recordBranchOutcome,
   saveStoryProgress,
   selectStoryChapter,
+  selectStoryMission,
   setStoryObjectiveIndex,
   STORY_PROGRESS_KEY,
   storyProgressSaveKey,
@@ -82,6 +84,7 @@ describe('completeStoryMission', () => {
     const progress = completeStoryMission(TWO_CHAPTER_STORY, createStoryProgress(TWO_CHAPTER_STORY));
 
     expect(progress.current?.missionId).toBe('chapter-1-m2');
+    expect(progress.current?.objectiveIndex).toBe(0);
     expect(progress.completedMissionIds).toEqual(['chapter-1-m1']);
   });
 
@@ -138,7 +141,40 @@ describe('story progress helpers', () => {
       ...TWO_CHAPTER_STORY,
       acts: [{ ...TWO_CHAPTER_STORY.acts[0], chapters: [DEAD_DROP_DISTRICT, fiveMissionChapter('chapter-2', 'act-1', 2)] }],
     }, progress)?.id).toBe('night-ferry-run');
+    expect(progress.current?.objectiveIndex).toBe(-1);
     expect(storyChapterById(TWO_CHAPTER_STORY, 'chapter-1')?.id).toBe('chapter-1');
+  });
+
+  it('parks the player at a mission-choice state when a chapter group has several pending leads', () => {
+    const story = {
+      ...TWO_CHAPTER_STORY,
+      acts: [{ ...TWO_CHAPTER_STORY.acts[0], chapters: [DEAD_DROP_DISTRICT, { ...SPARE_PARTS_GOSPEL, actId: 'act-1' }] }],
+    };
+    let progress = createStoryProgress(story);
+    for (let i = 0; i < 5; i++) progress = completeStoryMission(story, progress);
+
+    expect(progress.current?.chapterId).toBe('spare-parts-gospel');
+    expect(progress.current?.missionId).toBe('yard-talk');
+
+    progress = completeStoryMission(story, {
+      ...progress,
+      current: {
+        ...progress.current!,
+        missionId: 'yard-talk',
+        objectiveIndex: 0,
+      },
+    });
+
+    expect(progress.current?.missionId).toBe('hook-chain');
+    expect(progress.current?.objectiveIndex).toBe(-2);
+    expect(currentStoryMissionChoices(story, progress).map((mission) => mission.id)).toEqual([
+      'hook-chain',
+      'the-empty-shell',
+    ]);
+
+    const selected = selectStoryMission(story, progress, 'the-empty-shell');
+    expect(selected.current?.missionId).toBe('the-empty-shell');
+    expect(selected.current?.objectiveIndex).toBe(-1);
   });
 });
 

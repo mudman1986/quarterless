@@ -3,13 +3,30 @@ import { startPreviews } from './arcade/previews';
 import type { GameRuntime, GameStarter } from './arcade/types';
 import { STORY_MODE_PROTOTYPE } from './game/story/deadDropDistrict';
 import {
+  clearGameState,
+  GAME_STATE_KEY,
+  loadGameState,
+  MANUAL_SAVE_SLOT_COUNT,
+  manualSaveKey,
+  saveGameState,
+} from './core/gameState';
+import {
   clearStoryProgress,
   createStoryProgress,
+  currentStoryChapter,
+  currentStoryMissionChoices,
+  currentStoryMission,
   loadStoryProgress,
   saveStoryProgress,
   selectStoryChapter,
-  STORY_LAUNCH_PROGRESS_KEY,
+  storyProgressSaveKey,
 } from './game/story/storyProgress';
+import {
+  clearStoryLaunchRequest,
+  loadStoryLaunchRequest,
+  saveStoryLaunchRequest,
+  type StoryLaunchRequest,
+} from './game/story/storyLaunchState';
 
 type LaunchMode = 'sandbox' | 'story';
 
@@ -36,10 +53,6 @@ const games: readonly ArcadeGame[] = [
     description:
       'Top-down city chaos with traffic, wanted heat, service vehicles, taxis, and missions.',
     accent: '#47d7ff',
-    launchOptions: [
-      { label: 'Play Sindicate', mode: 'sandbox' },
-      { label: 'Story Mode', mode: 'story' },
-    ],
     load: () => import('./game/main'),
   },
   {
@@ -131,26 +144,97 @@ function launchProgressStore(): Storage | null {
   }
 }
 
+function currentGameStore(): Storage | null {
+  try {
+    return typeof window !== 'undefined' ? window.localStorage : null;
+  } catch {
+    return null;
+  }
+}
+
 function currentStoryProgress() {
   const store = storyProgressStore();
   return store ? loadStoryProgress(store) ?? createStoryProgress(STORY_MODE_PROTOTYPE) : createStoryProgress(STORY_MODE_PROTOTYPE);
 }
 
-function primeStoryLaunch(progress: ReturnType<typeof createStoryProgress>): void {
+function primeStoryLaunch(request: StoryLaunchRequest): void {
   const store = launchProgressStore();
   if (!store) return;
+  saveStoryLaunchRequest(store, request);
+}
+
+type StoryRunOverview = {
+  hasAutosave: boolean;
+  chapterTitle: string;
+  missionTitle: string;
+  objectiveText: string;
+  scoreText: string;
+  choiceTitles: string[];
+};
+
+function currentStoryRunOverview(): StoryRunOverview {
+  const progress = currentStoryProgress();
+  const store = currentGameStore();
+  const gameState = store ? loadGameState(store) : null;
+  const chapter = currentStoryChapter(STORY_MODE_PROTOTYPE, progress);
+  const mission = currentStoryMission(STORY_MODE_PROTOTYPE, progress);
+  const choices = currentStoryMissionChoices(STORY_MODE_PROTOTYPE, progress);
+  const objectiveText =
+    progress.current === null
+      ? 'Current slice complete.'
+      : choices.length > 0
+        ? `Choose a lead: ${choices.map((entry) => entry.title).join(' / ')}`
+        : progress.current.objectiveIndex < 0
+          ? `Go to the mission marker to start ${mission?.title ?? 'the next mission'}`
+          : mission?.prototypeRuntime?.objectives[progress.current.objectiveIndex]?.description ?? mission?.primaryGoal ?? 'Resume the investigation.';
+  const score = gameState?.world.score.current ?? 0;
+  return {
+    hasAutosave: !!gameState,
+    chapterTitle: chapter?.title ?? 'Story Complete',
+    missionTitle: mission?.title ?? (choices.length > 0 ? 'Mission Choice' : 'No Active Mission'),
+    objectiveText,
+    scoreText: `$${score}`,
+    choiceTitles: choices.map((entry) => entry.title),
+  };
+}
+
+function slotOverview(slot: number): { key: string; occupied: boolean; chapterTitle: string; missionTitle: string } {
+  const store = currentGameStore();
+  const key = manualSaveKey(slot);
+  if (!store) return { key, occupied: false, chapterTitle: 'Empty', missionTitle: 'No save present' };
+  const save = loadGameState(store, key);
+  const progress = loadStoryProgress(store, storyProgressSaveKey(key));
+  const chapter = progress ? currentStoryChapter(STORY_MODE_PROTOTYPE, progress) : null;
+  const mission = progress ? currentStoryMission(STORY_MODE_PROTOTYPE, progress) : null;
+  return {
+    key,
+    occupied: !!save,
+    chapterTitle: chapter?.title ?? (save ? 'Unknown Chapter' : 'Empty'),
+    missionTitle: mission?.title ?? (save ? 'Resume from this slot' : 'No save present'),
+  };
+}
+
+function copyCurrentRunToSlot(slot: number): boolean {
+  const store = currentGameStore();
+  if (!store) return false;
+  const autosave = loadGameState(store, GAME_STATE_KEY);
+  const story = loadStoryProgress(store);
+  if (!autosave || !story) return false;
+  const key = manualSaveKey(slot);
+  saveGameState(store, { world: autosave.world, timeOfDay: autosave.timeOfDay }, key);
   saveStoryProgress(
     store,
     {
-      storyId: progress.storyId,
-      current: progress.current,
-      unlockedChapterIds: progress.unlockedChapterIds,
-      completedChapterIds: progress.completedChapterIds,
-      completedMissionIds: progress.completedMissionIds,
-      branchOutcomes: progress.branchOutcomes,
+      storyId: story.storyId,
+      current: story.current,
+      unlockedChapterIds: story.unlockedChapterIds,
+      completedChapterIds: story.completedChapterIds,
+      completedMissionIds: story.completedMissionIds,
+      branchOutcomes: story.branchOutcomes,
     },
-    STORY_LAUNCH_PROGRESS_KEY,
+    storyProgressSaveKey(key),
   );
+  return true;
 }
 
 function appRoot(): HTMLElement {
@@ -184,7 +268,9 @@ function syncLaunchQuery(mode?: LaunchMode): void {
 }
 
 function launchButtons(game: ArcadeGame): string {
-  const options = game.launchOptions ?? [{ label: `Play ${game.title}`, mode: 'sandbox' as const }];
+  const options = game.launchOptions ?? [
+    { label: `Play ${game.title}`, mode: (game.id === 'sindicate' ? 'story' : 'sandbox') as LaunchMode },
+  ];
   const stacked = options.length > 1 ? ' play-actions--stacked' : '';
   return `
     <div class="play-actions${stacked}">
@@ -248,7 +334,7 @@ function renderLanding(): void {
       const selected = games.find((game) => game.id === button.dataset.play);
       const mode = button.dataset.mode === 'story' ? 'story' : 'sandbox';
       if (!selected) return;
-      if (selected.id === 'sindicate' && mode === 'story') {
+      if (selected.id === 'sindicate') {
         renderStoryMenu(selected);
         return;
       }
@@ -364,16 +450,17 @@ async function launchGame(game: ArcadeGame, mode: LaunchMode = 'sandbox'): Promi
   try {
     const module = await game.load();
     setBodyMode('playing');
+    const returnToMenu = game.id === 'sindicate' ? () => renderStoryMenu(game) : renderLanding;
     const root = appRoot();
     root.innerHTML = `
       <main class="game-shell" style="--accent: ${game.accent}">
-        <button class="arcade-back" type="button" aria-label="Back to arcade">Arcade</button>
+        <button class="arcade-back" type="button" aria-label="${game.id === 'sindicate' ? 'Back to Sindicate menu' : 'Back to arcade'}">${game.id === 'sindicate' ? 'Sindicate Menu' : 'Arcade'}</button>
         <div id="game" class="game-stage"></div>
       </main>`;
-    root.querySelector<HTMLButtonElement>('.arcade-back')?.addEventListener('click', renderLanding);
+    root.querySelector<HTMLButtonElement>('.arcade-back')?.addEventListener('click', returnToMenu);
     const stage = root.querySelector<HTMLElement>('#game');
     if (!stage) throw new Error('Missing game stage');
-    activeGame = module.startGame(stage, renderLanding);
+    activeGame = module.startGame(stage, returnToMenu);
   } catch (error) {
     renderError(error instanceof Error ? error.message : 'Unknown error');
   }
