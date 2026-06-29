@@ -112,6 +112,72 @@ describe('updateMission — collect objective', () => {
   });
 });
 
+describe('updateMission — route objective', () => {
+  const routeMission = () =>
+    createMission({
+      id: 'route',
+      title: 'Locker Run',
+      objectives: [
+        {
+          kind: 'route',
+          description: 'Hit 3 lockers in sequence',
+          targets: [vec2(10, 0), vec2(20, 0), vec2(30, 0)],
+          radius: 5,
+          timeLimitSeconds: 60,
+        },
+      ],
+    });
+
+  it('tracks sequential checkpoint progress before completing', () => {
+    let m = updateMission(routeMission(), ctx({ playerPos: vec2(10, 0) }), base());
+    expect(isComplete(m)).toBe(false);
+    expect(m.objectiveState).toEqual({ kind: 'route', completed: 1 });
+
+    m = updateMission(m, ctx({ playerPos: vec2(30, 0) }), base());
+    expect(m.objectiveState).toEqual({ kind: 'route', completed: 1 });
+
+    m = updateMission(m, ctx({ playerPos: vec2(20, 0) }), base());
+    expect(m.objectiveState).toEqual({ kind: 'route', completed: 2 });
+    m = updateMission(m, ctx({ playerPos: vec2(30, 0) }), base());
+    expect(isComplete(m)).toBe(true);
+  });
+
+  it('stops advancing after the time limit expires', () => {
+    const m = updateMission(routeMission(), ctx({ playerPos: vec2(10, 0), elapsed: 61 }), base());
+    expect(m).toEqual(routeMission());
+  });
+});
+
+describe('updateMission — tail objective', () => {
+  const tailMission = () =>
+    createMission({
+      id: 'tail',
+      title: 'Follow',
+      objectives: [{ kind: 'tail', description: 'Tail the target for 12s', seconds: 12 }],
+    });
+
+  it('completes once enough tail progress accumulates after the objective began', () => {
+    const started = base({ tailSeconds: 4 });
+    expect(isComplete(updateMission(tailMission(), ctx({ tailSeconds: 15 }), started))).toBe(false);
+    expect(isComplete(updateMission(tailMission(), ctx({ tailSeconds: 16 }), started))).toBe(true);
+  });
+});
+
+describe('updateMission — capture objective', () => {
+  const captureMission = () =>
+    createMission({
+      id: 'capture',
+      title: 'Box In',
+      objectives: [{ kind: 'capture', description: 'Hold the target for 3s', seconds: 3 }],
+    });
+
+  it('completes once enough capture progress accumulates after the objective began', () => {
+    const started = base({ captureSeconds: 1 });
+    expect(isComplete(updateMission(captureMission(), ctx({ captureSeconds: 3 }), started))).toBe(false);
+    expect(isComplete(updateMission(captureMission(), ctx({ captureSeconds: 4 }), started))).toBe(true);
+  });
+});
+
 describe('updateMission — survive objective', () => {
   const surviveMission = () =>
     createMission({
@@ -197,6 +263,16 @@ describe('objectiveProgress', () => {
     expect(objectiveProgress(obj, ctx({ collected: 99 }), base())).toEqual({ current: 3, goal: 3 });
   });
 
+  it('reports sequential route progress from mission state', () => {
+    const route = createMission({
+      id: 'route',
+      title: 'Route',
+      objectives: [{ kind: 'route', description: 'Visit 2 stops', targets: [vec2(1, 0), vec2(2, 0)], radius: 5 }],
+    });
+    const started = updateMission(route, ctx({ playerPos: vec2(1, 0) }), base());
+    expect(objectiveProgress(started.objectives[0]!, ctx(), base(), started)).toEqual({ current: 1, goal: 2 });
+  });
+
   it('reports survive progress in whole seconds and wanted progress in stars', () => {
     const survive: Objective = { kind: 'survive', description: 'Last 30s', seconds: 30 };
     expect(objectiveProgress(survive, ctx({ elapsed: 12.7 }), base())).toEqual({ current: 12, goal: 30 });
@@ -213,6 +289,13 @@ describe('objectiveProgress', () => {
         base({ serviceCompleted: { police: 0, ambulance: 0, tow: 2, taxi: 0 } }),
       ),
     ).toEqual({ current: 2, goal: 3 });
+  });
+
+  it('reports tail and capture progress in whole seconds', () => {
+    const tail: Objective = { kind: 'tail', description: 'Tail for 10s', seconds: 10 };
+    const capture: Objective = { kind: 'capture', description: 'Hold for 4s', seconds: 4 };
+    expect(objectiveProgress(tail, ctx({ tailSeconds: 8.7 }), base({ tailSeconds: 2 }))).toEqual({ current: 6, goal: 10 });
+    expect(objectiveProgress(capture, ctx({ captureSeconds: 5.2 }), base({ captureSeconds: 3 }))).toEqual({ current: 2, goal: 4 });
   });
 });
 

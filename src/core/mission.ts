@@ -25,6 +25,29 @@ export interface CollectObjective {
   count: number;
 }
 
+/** Reach several positions in sequence, optionally before a soft deadline. */
+export interface RouteObjective {
+  kind: 'route';
+  description: string;
+  targets: readonly Vec2[];
+  radius: number;
+  timeLimitSeconds?: number;
+}
+
+/** Follow a scripted target for a number of seconds without losing it. */
+export interface TailObjective {
+  kind: 'tail';
+  description: string;
+  seconds: number;
+}
+
+/** Hold a scripted target in a capture zone for a number of seconds. */
+export interface CaptureObjective {
+  kind: 'capture';
+  description: string;
+  seconds: number;
+}
+
 /** Stay alive for a number of seconds. */
 export interface SurviveObjective {
   kind: 'survive';
@@ -56,10 +79,20 @@ export interface ServiceObjective {
   count: number;
 }
 
+export interface RouteObjectiveState {
+  kind: 'route';
+  completed: number;
+}
+
+export type ObjectiveState = RouteObjectiveState;
+
 export type Objective =
   | ReachObjective
   | EliminateObjective
   | CollectObjective
+  | RouteObjective
+  | TailObjective
+  | CaptureObjective
   | SurviveObjective
   | WantedObjective
   | ServiceObjective;
@@ -73,6 +106,8 @@ export interface Mission {
   objectives: readonly Objective[];
   /** Index of the objective currently in progress. */
   currentIndex: number;
+  /** Transient state for the active objective, when that objective needs it. */
+  objectiveState?: ObjectiveState | null;
   status: MissionStatus;
   /** Score awarded when the final objective is completed. */
   reward: number;
@@ -93,6 +128,10 @@ export interface MissionContext {
   wantedStars: number;
   /** Completed player service runs so far this run. */
   serviceCompleted?: ServiceCompletionCounts;
+  /** Seconds of valid tail progress accumulated by the scene. */
+  tailSeconds?: number;
+  /** Seconds of valid capture progress accumulated by the scene. */
+  captureSeconds?: number;
 }
 
 /**
@@ -105,6 +144,8 @@ export interface MissionBaseline {
   collected: number;
   elapsed: number;
   serviceCompleted?: ServiceCompletionCounts;
+  tailSeconds?: number;
+  captureSeconds?: number;
 }
 
 function eliminateProgress(
@@ -121,6 +162,18 @@ function serviceProgress(obj: ServiceObjective, ctx: MissionContext, base: Missi
   return now - then;
 }
 
+function routeProgress(m?: Pick<Mission, 'objectiveState'> | null): number {
+  return m?.objectiveState?.kind === 'route' ? m.objectiveState.completed : 0;
+}
+
+function tailProgress(ctx: MissionContext, base: MissionBaseline): number {
+  return (ctx.tailSeconds ?? 0) - (base.tailSeconds ?? 0);
+}
+
+function captureProgress(ctx: MissionContext, base: MissionBaseline): number {
+  return (ctx.captureSeconds ?? 0) - (base.captureSeconds ?? 0);
+}
+
 export interface MissionSpec {
   id: string;
   title: string;
@@ -134,6 +187,7 @@ export function createMission(spec: MissionSpec): Mission {
     title: spec.title,
     objectives: spec.objectives,
     currentIndex: 0,
+    objectiveState: null,
     status: spec.objectives.length === 0 ? 'completed' : 'active',
     reward: spec.reward ?? 0,
   };
@@ -152,6 +206,12 @@ function isObjectiveMet(obj: Objective, ctx: MissionContext, base: MissionBaseli
       return eliminateProgress(obj, ctx, base) >= obj.count;
     case 'collect':
       return ctx.collected - base.collected >= obj.count;
+    case 'route':
+      return false;
+    case 'tail':
+      return tailProgress(ctx, base) >= obj.seconds;
+    case 'capture':
+      return captureProgress(ctx, base) >= obj.seconds;
     case 'survive':
       return ctx.elapsed - base.elapsed >= obj.seconds;
     case 'wanted':
@@ -159,6 +219,33 @@ function isObjectiveMet(obj: Objective, ctx: MissionContext, base: MissionBaseli
     case 'service':
       return serviceProgress(obj, ctx, base) >= obj.count;
   }
+}
+
+function advanceRouteObjective(m: Mission, obj: RouteObjective, ctx: MissionContext, base: MissionBaseline): Mission {
+  const completed = routeProgress(m);
+  if (obj.timeLimitSeconds !== undefined && ctx.elapsed - base.elapsed > obj.timeLimitSeconds) return m;
+
+  const target = obj.targets[completed];
+  if (!target || distance(ctx.playerPos, target) > obj.radius) return m;
+
+  const nextCompleted = completed + 1;
+  if (nextCompleted < obj.targets.length) {
+    return {
+      ...m,
+      objectiveState: { kind: 'route', completed: nextCompleted },
+    };
+  }
+
+  const nextIndex = m.currentIndex + 1;
+  if (nextIndex >= m.objectives.length) {
+    return {
+      ...m,
+      currentIndex: m.objectives.length,
+      objectiveState: null,
+      status: 'completed',
+    };
+  }
+  return { ...m, currentIndex: nextIndex, objectiveState: null };
 }
 
 /**
@@ -170,13 +257,14 @@ function isObjectiveMet(obj: Objective, ctx: MissionContext, base: MissionBaseli
 export function updateMission(m: Mission, ctx: MissionContext, baseline: MissionBaseline): Mission {
   const obj = currentObjective(m);
   if (!obj) return m;
+  if (obj.kind === 'route') return advanceRouteObjective(m, obj, ctx, baseline);
   if (!isObjectiveMet(obj, ctx, baseline)) return m;
 
   const nextIndex = m.currentIndex + 1;
   if (nextIndex >= m.objectives.length) {
-    return { ...m, currentIndex: m.objectives.length, status: 'completed' };
+    return { ...m, currentIndex: m.objectives.length, objectiveState: null, status: 'completed' };
   }
-  return { ...m, currentIndex: nextIndex };
+  return { ...m, currentIndex: nextIndex, objectiveState: null };
 }
 
 export function isComplete(m: Mission): boolean {
@@ -198,6 +286,7 @@ export function objectiveProgress(
   obj: Objective,
   ctx: MissionContext,
   base: MissionBaseline,
+  mission?: Pick<Mission, 'objectiveState'> | null,
 ): ObjectiveProgress | null {
   switch (obj.kind) {
     case 'reach':
@@ -206,6 +295,21 @@ export function objectiveProgress(
       return { current: clamp(eliminateProgress(obj, ctx, base), 0, obj.count), goal: obj.count };
     case 'collect':
       return { current: clamp(ctx.collected - base.collected, 0, obj.count), goal: obj.count };
+    case 'route':
+      return {
+        current: clamp(routeProgress(mission), 0, obj.targets.length),
+        goal: obj.targets.length,
+      };
+    case 'tail':
+      return {
+        current: clamp(Math.floor(tailProgress(ctx, base)), 0, obj.seconds),
+        goal: obj.seconds,
+      };
+    case 'capture':
+      return {
+        current: clamp(Math.floor(captureProgress(ctx, base)), 0, obj.seconds),
+        goal: obj.seconds,
+      };
     case 'survive':
       return {
         current: clamp(Math.floor(ctx.elapsed - base.elapsed), 0, obj.seconds),
@@ -223,6 +327,7 @@ export function resetMission(m: Mission): Mission {
   return {
     ...m,
     currentIndex: 0,
+    objectiveState: null,
     status: m.objectives.length === 0 ? 'completed' : 'active',
   };
 }

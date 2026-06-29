@@ -696,7 +696,16 @@ export class World {
   /** Per-pair cooldown so one stuck overlap is not treated as dozens of fresh crashes. */
   private vehicleImpactCooldowns = new Map<string, number>();
   /** The counters captured when the current mission objective began. */
-  private objectiveBaseline: MissionBaseline = { kills: 0, targetKills: 0, collected: 0, elapsed: 0 };
+  private objectiveBaseline: MissionBaseline = {
+    kills: 0,
+    targetKills: 0,
+    collected: 0,
+    elapsed: 0,
+    tailSeconds: 0,
+    captureSeconds: 0,
+  };
+  /** Scene-owned scripted mission progress fed into tail/capture objectives. */
+  private storyObjectiveProgress: { tailSeconds: number; captureSeconds: number } = { tailSeconds: 0, captureSeconds: 0 };
   /** Seconds elapsed in the current run (drives survive objectives). */
   private elapsed = 0;
   /** The currently active player taxi fare, if the player is driving a cab. */
@@ -960,7 +969,12 @@ export class World {
   get missionProgress(): ObjectiveProgress | null {
     const obj = this.missionObjective;
     if (!obj) return null;
-    return objectiveProgress(obj, this.missionCtx(), this.objectiveBaseline);
+    return objectiveProgress(obj, this.missionCtx(), this.objectiveBaseline, this.mission);
+  }
+
+  /** Seconds elapsed in the current run. */
+  get elapsedSeconds(): number {
+    return this.elapsed;
   }
 
   /** The player's active taxi fare, if they are currently driving a cab. */
@@ -993,6 +1007,14 @@ export class World {
     }
     if (mission.stage === 'return') return mission.returnTo;
     return this.playerTowTargetAvailable(mission.targetCar) ? this.cars[mission.targetCar]?.pos ?? null : null;
+  }
+
+  /** Scene-owned scripted progress for story-only tail/capture objectives. */
+  setStoryObjectiveProgress(progress: { tailSeconds?: number; captureSeconds?: number } | null): void {
+    this.storyObjectiveProgress = {
+      tailSeconds: Math.max(0, progress?.tailSeconds ?? 0),
+      captureSeconds: Math.max(0, progress?.captureSeconds ?? 0),
+    };
   }
 
   /** Advance the simulation by `dt` seconds. */
@@ -3574,6 +3596,8 @@ export class World {
       elapsed: this.elapsed,
       wantedStars: this.wantedStars,
       serviceCompleted: { ...this.completedServiceJobs },
+      tailSeconds: this.storyObjectiveProgress.tailSeconds,
+      captureSeconds: this.storyObjectiveProgress.captureSeconds,
     };
   }
 
@@ -3595,6 +3619,8 @@ export class World {
       collected: this.collected,
       elapsed: this.elapsed,
       serviceCompleted: { ...this.completedServiceJobs },
+      tailSeconds: this.storyObjectiveProgress.tailSeconds,
+      captureSeconds: this.storyObjectiveProgress.captureSeconds,
     };
   }
 
