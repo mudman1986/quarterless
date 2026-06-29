@@ -278,8 +278,113 @@ export interface Corpse {
 /** The stage a dispatched service vehicle is at in its pickup sequence. */
 export type ServicePhase = 'approach' | 'collect' | 'return' | 'depart';
 
+/** Civilian traffic classes used for ordinary parked and roaming road cars. */
+export const TRAFFIC_CAR_KINDS = [
+  'car',
+  'sedan',
+  'coupe',
+  'muscle',
+  'sports',
+  'pickup',
+  'van',
+  'limo',
+] as const;
+
+export type TrafficCarKind = (typeof TRAFFIC_CAR_KINDS)[number];
 /** Vehicle body rendered for a drivable world car slot. */
-export type VehicleKind = 'car' | 'ambulance' | 'tow' | 'police' | 'taxi';
+export type VehicleKind = TrafficCarKind | 'ambulance' | 'tow' | 'police' | 'taxi';
+
+type CivilianProfileKind = TrafficCarKind | 'taxi';
+type CivilianCarProfile = {
+  trafficSpeed: number;
+  tuning: Partial<CarTuning>;
+};
+type VehicleBodySpec = {
+  radius: number;
+  spriteWidth: number;
+  spriteHeight: number;
+};
+
+const CIVILIAN_CAR_PROFILES: Record<CivilianProfileKind, CivilianCarProfile> = {
+  car: { trafficSpeed: TRAFFIC_SPEED, tuning: {} },
+  sedan: {
+    trafficSpeed: 134,
+    tuning: { enginePower: 230, maxSpeed: 330, turnRate: 2.55, gripSpeed: 82 },
+  },
+  coupe: {
+    trafficSpeed: 142,
+    tuning: { enginePower: 240, maxSpeed: 342, turnRate: 2.8, gripSpeed: 76 },
+  },
+  muscle: {
+    trafficSpeed: 146,
+    tuning: { enginePower: 255, maxSpeed: 356, drag: 105, turnRate: 2.35, gripSpeed: 92 },
+  },
+  sports: {
+    trafficSpeed: 160,
+    tuning: { enginePower: 292, brakePower: 350, drag: 96, maxSpeed: 392, turnRate: 3.2, gripSpeed: 60 },
+  },
+  pickup: {
+    trafficSpeed: 114,
+    tuning: { enginePower: 188, maxSpeed: 248, reversePower: 132, drag: 150, turnRate: 1.95, gripSpeed: 112 },
+  },
+  van: {
+    trafficSpeed: 114,
+    tuning: { enginePower: 190, maxSpeed: 248, reversePower: 140, drag: 140, turnRate: 2.05, gripSpeed: 102 },
+  },
+  limo: {
+    trafficSpeed: 126,
+    tuning: { enginePower: 210, maxSpeed: 288, drag: 128, turnRate: 2.15, gripSpeed: 98 },
+  },
+  taxi: {
+    trafficSpeed: 140,
+    tuning: { enginePower: 235, maxSpeed: 326, turnRate: 2.65, gripSpeed: 78 },
+  },
+};
+
+const VEHICLE_BODY_SPECS: Record<VehicleKind, VehicleBodySpec> = {
+  car: { radius: 14, spriteWidth: 34, spriteHeight: 18 },
+  sedan: { radius: 14, spriteWidth: 35, spriteHeight: 18 },
+  coupe: { radius: 13, spriteWidth: 33, spriteHeight: 17 },
+  muscle: { radius: 15, spriteWidth: 38, spriteHeight: 19 },
+  sports: { radius: 12, spriteWidth: 30, spriteHeight: 15 },
+  pickup: { radius: 15, spriteWidth: 39, spriteHeight: 20 },
+  van: { radius: 16, spriteWidth: 40, spriteHeight: 22 },
+  limo: { radius: 17, spriteWidth: 46, spriteHeight: 18 },
+  taxi: { radius: 14, spriteWidth: 35, spriteHeight: 18 },
+  police: { radius: 14, spriteWidth: 35, spriteHeight: 18 },
+  ambulance: { radius: 16, spriteWidth: 42, spriteHeight: 22 },
+  tow: { radius: 16, spriteWidth: 42, spriteHeight: 22 },
+};
+
+export function isCivilianRoadVehicleKind(kind: VehicleKind): boolean {
+  switch (kind) {
+    case 'car':
+    case 'sedan':
+    case 'coupe':
+    case 'muscle':
+    case 'sports':
+    case 'pickup':
+    case 'van':
+    case 'limo':
+    case 'taxi':
+      return true;
+    default:
+      return false;
+  }
+}
+
+export function vehicleBodySpecForKind(kind: VehicleKind): Readonly<VehicleBodySpec> {
+  return VEHICLE_BODY_SPECS[kind];
+}
+
+export function carTuningForKind(kind: VehicleKind, base: CarTuning = DEFAULT_CAR_TUNING): CarTuning {
+  const profile = CIVILIAN_CAR_PROFILES[kind as CivilianProfileKind];
+  return profile ? { ...base, ...profile.tuning } : base;
+}
+
+export function trafficCruiseSpeedForKind(kind: VehicleKind): number {
+  return CIVILIAN_CAR_PROFILES[kind as CivilianProfileKind]?.trafficSpeed ?? TRAFFIC_SPEED;
+}
 
 /** Common state for a dispatched service vehicle that follows the roads. */
 export interface ServiceVehicle {
@@ -591,7 +696,16 @@ export class World {
   /** Per-pair cooldown so one stuck overlap is not treated as dozens of fresh crashes. */
   private vehicleImpactCooldowns = new Map<string, number>();
   /** The counters captured when the current mission objective began. */
-  private objectiveBaseline: MissionBaseline = { kills: 0, targetKills: 0, collected: 0, elapsed: 0 };
+  private objectiveBaseline: MissionBaseline = {
+    kills: 0,
+    targetKills: 0,
+    collected: 0,
+    elapsed: 0,
+    tailSeconds: 0,
+    captureSeconds: 0,
+  };
+  /** Scene-owned scripted mission progress fed into tail/capture objectives. */
+  private storyObjectiveProgress: { tailSeconds: number; captureSeconds: number } = { tailSeconds: 0, captureSeconds: 0 };
   /** Seconds elapsed in the current run (drives survive objectives). */
   private elapsed = 0;
   /** The currently active player taxi fare, if the player is driving a cab. */
@@ -855,7 +969,12 @@ export class World {
   get missionProgress(): ObjectiveProgress | null {
     const obj = this.missionObjective;
     if (!obj) return null;
-    return objectiveProgress(obj, this.missionCtx(), this.objectiveBaseline);
+    return objectiveProgress(obj, this.missionCtx(), this.objectiveBaseline, this.mission);
+  }
+
+  /** Seconds elapsed in the current run. */
+  get elapsedSeconds(): number {
+    return this.elapsed;
   }
 
   /** The player's active taxi fare, if they are currently driving a cab. */
@@ -888,6 +1007,14 @@ export class World {
     }
     if (mission.stage === 'return') return mission.returnTo;
     return this.playerTowTargetAvailable(mission.targetCar) ? this.cars[mission.targetCar]?.pos ?? null : null;
+  }
+
+  /** Scene-owned scripted progress for story-only tail/capture objectives. */
+  setStoryObjectiveProgress(progress: { tailSeconds?: number; captureSeconds?: number } | null): void {
+    this.storyObjectiveProgress = {
+      tailSeconds: Math.max(0, progress?.tailSeconds ?? 0),
+      captureSeconds: Math.max(0, progress?.captureSeconds ?? 0),
+    };
   }
 
   /** Advance the simulation by `dt` seconds. */
@@ -1268,10 +1395,11 @@ export class World {
       const ai = this.carDrivers[i];
       if (!ai || i === this.drivingCarIndex || this.wreckedCars[i] || this.carIsBurning(i)) continue;
       const car = this.cars[i];
+      const cruiseSpeed = trafficCruiseSpeedForKind(this.carKind(i));
 
       let dir = ai.dir;
       let blocked = ai.blocked ?? 0;
-      let speed = TRAFFIC_SPEED;
+      let speed = cruiseSpeed;
       let escapeTarget = ai.escapeTarget;
       let routeTarget = ai.routeTarget;
       if (escapeTarget && distance(car.pos, escapeTarget) <= this.city.spec.tile) {
@@ -1303,7 +1431,7 @@ export class World {
           if (lane) laneTarget = laneCross(lane, ai.dir);
         }
         if (laneTarget !== undefined) {
-          speed = TRAFFIC_SPEED * LANE_CHANGE_SPEED_FACTOR; // roll forward while easing across
+          speed = cruiseSpeed * LANE_CHANGE_SPEED_FACTOR; // roll forward while easing across
           blocked = 0;
         } else {
           // Nowhere to go around them: wait, then U-turn to find another route.
@@ -1999,10 +2127,11 @@ export class World {
   ): ServiceVehicle {
     const pos = this.serviceSpawnPoint(facilityKind, target, slot) ?? this.nearestCornerTile(target);
     const approach = this.nearestRoadPoint(target) ?? target;
+    const kind = facilityKind === 'hospital' ? 'ambulance' : 'tow';
     return {
       pos,
       heading: 0,
-      radius: 14,
+      radius: vehicleBodySpecForKind(kind).radius,
       dir: nearestCardinal(angle(sub(approach, pos))),
       target: approach,
       depot: pos,
@@ -2463,8 +2592,7 @@ export class World {
   }
 
   private isCivilianRoadCar(index: number): boolean {
-    const kind = this.carKind(index);
-    return kind === 'car' || kind === 'taxi';
+    return isCivilianRoadVehicleKind(this.carKind(index));
   }
 
   private taxiPassengerName(): string {
@@ -2964,7 +3092,7 @@ export class World {
       return;
     }
 
-    const stepped = stepCar(car, c, dt, this.tuning);
+    const stepped = stepCar(car, c, dt, carTuningForKind(this.carKind(idx), this.tuning));
     const collided = collideCarWithWalls(stepped, this.walls);
     this.cars[idx] = { ...collided, pos: this.wrapPos(collided.pos) };
   }
@@ -3468,6 +3596,8 @@ export class World {
       elapsed: this.elapsed,
       wantedStars: this.wantedStars,
       serviceCompleted: { ...this.completedServiceJobs },
+      tailSeconds: this.storyObjectiveProgress.tailSeconds,
+      captureSeconds: this.storyObjectiveProgress.captureSeconds,
     };
   }
 
@@ -3489,6 +3619,8 @@ export class World {
       collected: this.collected,
       elapsed: this.elapsed,
       serviceCompleted: { ...this.completedServiceJobs },
+      tailSeconds: this.storyObjectiveProgress.tailSeconds,
+      captureSeconds: this.storyObjectiveProgress.captureSeconds,
     };
   }
 

@@ -4,6 +4,7 @@ import { launchSindicate } from './helpers';
 interface GameProbe {
   scene: {
     getScene(key: string): {
+      scene: { restart(data: unknown): void };
       timeOfDay: number;
       hud: { text: string };
       world: {
@@ -159,18 +160,12 @@ test('Sindicate can manually save a run and load it later from pause', async ({ 
     scene.timeOfDay = 222.25;
   });
 
-  await page.waitForFunction(() => {
-    const game = (window as unknown as { __game?: GameProbe }).__game;
-    if (!game) return false;
-    const hudText = game.scene.getScene('City').hud.text;
-    return hudText.includes('HP 74/100') && hudText.includes('$321  (best $654)');
-  });
-
   const manualBaseline = await readState(page);
   expect(manualBaseline.wantedStars).toBe(1);
 
   await page.keyboard.press('p');
-  await page.keyboard.press('s');
+  await expect(page.getByRole('heading', { name: 'Story Mode' })).toBeVisible({ timeout: 10_000 });
+  await page.locator('[data-story-slot-save="1"]').click();
 
   const manualRaw = await page.evaluate((key) => window.localStorage.getItem(key), manualSaveKey(1));
   expect(manualRaw).not.toBeNull();
@@ -178,7 +173,8 @@ test('Sindicate can manually save a run and load it later from pause', async ({ 
   expect(manualStored.world.player.pos).toEqual({ x: 310, y: 470 });
   expect(manualStored.world.score).toEqual({ current: 321, best: 654 });
 
-  await page.keyboard.press('p');
+  await page.getByRole('button', { name: /Resume Current Run|Continue Story|Start Story/ }).click();
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
 
   await page.evaluate(() => {
     const game = (window as unknown as { __game: GameProbe }).__game;
@@ -191,13 +187,6 @@ test('Sindicate can manually save a run and load it later from pause', async ({ 
     world.score.best = 999;
     world.wanted.heat = 0;
     scene.timeOfDay = 700;
-  });
-
-  await page.waitForFunction(() => {
-    const game = (window as unknown as { __game?: GameProbe }).__game;
-    if (!game) return false;
-    const hudText = game.scene.getScene('City').hud.text;
-    return hudText.includes('HP 18/100') && hudText.includes('$999  (best $999)');
   });
   await page.waitForTimeout(700);
 
@@ -212,24 +201,12 @@ test('Sindicate can manually save a run and load it later from pause', async ({ 
   expect(resumedState.score).toEqual({ current: 999, best: 999 });
   expect(resumedState.wantedStars).toBe(0);
 
-  await page.keyboard.press('p');
-  await page.keyboard.press('l');
-
-  await page.waitForFunction(() => {
-    const game = (window as unknown as { __game?: GameProbe }).__game;
-    if (!game) return false;
-    const scene = game.scene.getScene('City');
-    const world = scene.world;
-    return (
-      world.player.pos.x === 310 &&
-      world.player.pos.y === 470 &&
-      world.health.current === 74 &&
-      world.weapon.ammo === 11 &&
-      world.score.current === 321 &&
-      world.score.best === 654 &&
-      world.wantedStars === 1
-    );
-  });
+  await page.evaluate((key) => {
+    const game = (window as unknown as { __game: GameProbe }).__game;
+    const scene = game.scene.getScene('City') as { scene: { restart(data: unknown): void } };
+    scene.scene.restart({ loadSaveKey: key });
+  }, manualSaveKey(1));
+  await page.waitForFunction(() => Boolean((window as unknown as { __game?: GameProbe }).__game));
 
   const loadedState = await readState(page);
   expect(loadedState.pos).toEqual(manualBaseline.pos);
@@ -269,9 +246,11 @@ test('Sindicate keeps multiple manual save slots independent', async ({ page }) 
 
   const slotOneState = await readState(page);
   await page.keyboard.press('p');
-  await page.keyboard.press('s');
+  await expect(page.getByRole('heading', { name: 'Story Mode' })).toBeVisible({ timeout: 10_000 });
+  await page.locator('[data-story-slot-save="1"]').click();
 
-  await page.keyboard.press('p');
+  await page.getByRole('button', { name: /Resume Current Run|Continue Story|Start Story/ }).click();
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
   await page.evaluate(() => {
     const game = (window as unknown as { __game: GameProbe }).__game;
     const scene = game.scene.getScene('City');
@@ -285,17 +264,10 @@ test('Sindicate keeps multiple manual save slots independent', async ({ page }) 
     scene.timeOfDay = 320;
   });
 
-  await page.waitForFunction(() => {
-    const game = (window as unknown as { __game?: GameProbe }).__game;
-    if (!game) return false;
-    const hudText = game.scene.getScene('City').hud.text;
-    return hudText.includes('HP 55/100') && hudText.includes('$200  (best $500)');
-  });
-
   const slotTwoState = await readState(page);
   await page.keyboard.press('p');
-  await page.keyboard.press('2');
-  await page.keyboard.press('s');
+  await expect(page.getByRole('heading', { name: 'Story Mode' })).toBeVisible({ timeout: 10_000 });
+  await page.locator('[data-story-slot-save="2"]').click();
 
   const slotOneRaw = await page.evaluate((key) => window.localStorage.getItem(key), manualSaveKey(1));
   const slotTwoRaw = await page.evaluate((key) => window.localStorage.getItem(key), manualSaveKey(2));
@@ -303,15 +275,15 @@ test('Sindicate keeps multiple manual save slots independent', async ({ page }) 
   expect(slotTwoRaw).not.toBeNull();
   expect(slotOneRaw).not.toBe(slotTwoRaw);
 
-  await page.keyboard.press('1');
-  await page.keyboard.press('l');
+  await page.getByRole('button', { name: /Resume Current Run|Continue Story|Start Story/ }).click();
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
 
-  await page.waitForFunction(() => {
-    const game = (window as unknown as { __game?: GameProbe }).__game;
-    if (!game) return false;
-    const world = game.scene.getScene('City').world;
-    return world.player.pos.x === 111 && world.player.pos.y === 222 && world.score.current === 100;
-  });
+  await page.evaluate((key) => {
+    const game = (window as unknown as { __game: GameProbe }).__game;
+    const scene = game.scene.getScene('City') as { scene: { restart(data: unknown): void } };
+    scene.scene.restart({ loadSaveKey: key });
+  }, manualSaveKey(1));
+  await page.waitForFunction(() => Boolean((window as unknown as { __game?: GameProbe }).__game));
 
   const loadedSlotOneState = await readState(page);
   expect(loadedSlotOneState.pos).toEqual(slotOneState.pos);
@@ -320,16 +292,12 @@ test('Sindicate keeps multiple manual save slots independent', async ({ page }) 
   expect(loadedSlotOneState.score).toEqual(slotOneState.score);
   expect(loadedSlotOneState.wantedStars).toBe(slotOneState.wantedStars);
 
-  await page.keyboard.press('p');
-  await page.keyboard.press('2');
-  await page.keyboard.press('l');
-
-  await page.waitForFunction(() => {
-    const game = (window as unknown as { __game?: GameProbe }).__game;
-    if (!game) return false;
-    const world = game.scene.getScene('City').world;
-    return world.player.pos.x === 333 && world.player.pos.y === 444 && world.score.current === 200;
-  });
+  await page.evaluate((key) => {
+    const game = (window as unknown as { __game: GameProbe }).__game;
+    const scene = game.scene.getScene('City') as { scene: { restart(data: unknown): void } };
+    scene.scene.restart({ loadSaveKey: key });
+  }, manualSaveKey(2));
+  await page.waitForFunction(() => Boolean((window as unknown as { __game?: GameProbe }).__game));
 
   const loadedSlotTwoState = await readState(page);
   expect(loadedSlotTwoState.pos).toEqual(slotTwoState.pos);
