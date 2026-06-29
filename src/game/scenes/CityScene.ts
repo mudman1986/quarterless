@@ -224,6 +224,7 @@ const TOUCH_STICK_STROKE = 0xe2e8f0;
 const TOUCH_ACTION = 0xf59e0b;
 const TOUCH_FIRE = 0xef4444;
 const TOUCH_CONFIRM = 0x22d3ee;
+const TOUCH_PREF_KEY = 'sindicate.touchEnabled';
 const PARKED_TRAFFIC_MIX: readonly VehicleKind[] = [
   'sedan',
   'car',
@@ -532,7 +533,9 @@ export class CityScene extends Phaser.Scene {
     this.input_ = new KeyboardInput(this.input.keyboard!);
     this.touchInput_ = new TouchInput(this.input);
     this.touchAvailable = touchDeviceLikely();
-    this.setTouchEnabled(this.touchAvailable);
+    const storedTouchPreference = this.store.getItem(TOUCH_PREF_KEY);
+    const preferredTouchEnabled = storedTouchPreference === null ? this.touchAvailable : storedTouchPreference === '1';
+    this.setTouchEnabled(preferredTouchEnabled);
     if (this.touchLayout) this.touchInput_.setLayout(this.touchLayout);
     // Menu keys: P pauses/resumes, N starts a fresh game.
     const kb = this.input.keyboard!;
@@ -2156,6 +2159,7 @@ export class CityScene extends Phaser.Scene {
     this.touchOptedOut = this.touchAvailable && !enabled;
     this.touchInput_?.setEnabled(enabled);
     if (!enabled) this.prevTouchConfirm = false;
+    this.store.setItem(TOUCH_PREF_KEY, enabled ? '1' : '0');
     this.touchControlsDirty = true;
     this.refreshPauseTouchButton();
     this.syncTouchControls();

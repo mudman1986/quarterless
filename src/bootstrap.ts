@@ -171,6 +171,23 @@ type StoryRunOverview = {
   choiceTitles: string[];
 };
 
+const STORY_TOUCH_PREF_KEY = 'sindicate.touchEnabled';
+
+function readTouchPreference(): boolean | null {
+  const store = currentGameStore();
+  if (!store) return null;
+  const raw = store.getItem(STORY_TOUCH_PREF_KEY);
+  if (raw === '1') return true;
+  if (raw === '0') return false;
+  return null;
+}
+
+function writeTouchPreference(enabled: boolean): void {
+  const store = currentGameStore();
+  if (!store) return;
+  store.setItem(STORY_TOUCH_PREF_KEY, enabled ? '1' : '0');
+}
+
 function currentStoryRunOverview(): StoryRunOverview {
   const progress = currentStoryProgress();
   const store = currentGameStore();
@@ -351,6 +368,7 @@ function renderStoryMenu(game: ArcadeGame): void {
   const currentChapter = currentStoryChapter(STORY_MODE_PROTOTYPE, progress);
   const run = currentStoryRunOverview();
   const slots = Array.from({ length: MANUAL_SAVE_SLOT_COUNT }, (_, index) => slotOverview(index + 1));
+  const touchEnabled = readTouchPreference() !== false;
   const root = appRoot();
   root.innerHTML = `
     <main class="arcade-page" aria-label="Story mode selection">
@@ -374,6 +392,9 @@ function renderStoryMenu(game: ArcadeGame): void {
               </button>
               <button class="play-button play-button--secondary" type="button" data-story-action="new">
                 New Story
+              </button>
+              <button class="play-button play-button--secondary" type="button" data-story-touch>
+                Touch Controls: ${touchEnabled ? 'ON' : 'OFF'}
               </button>
               <button class="play-button play-button--secondary" type="button" data-story-action="back">
                 Back to Arcade
@@ -447,6 +468,10 @@ function renderStoryMenu(game: ArcadeGame): void {
     void launchGame(game, 'story');
   });
   root.querySelector<HTMLButtonElement>('[data-story-action="back"]')?.addEventListener('click', renderLanding);
+  root.querySelector<HTMLButtonElement>('[data-story-touch]')?.addEventListener('click', () => {
+    writeTouchPreference(!touchEnabled);
+    renderStoryMenu(game);
+  });
   for (const button of root.querySelectorAll<HTMLButtonElement>('[data-story-chapter]')) {
     button.addEventListener('click', () => {
       const chapterId = button.dataset.storyChapter;

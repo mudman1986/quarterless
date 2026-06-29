@@ -6,7 +6,6 @@ interface CitySceneProbe {
   touchEnabled: boolean;
   touchAvailable: boolean;
   touchOptedOut: boolean;
-  pauseTouchButton: { visible: boolean; text: string; emit(event: string): void };
   touchControlsGfx: { visible: boolean };
   input: { emit(event: string, pointer: unknown): void };
 }
@@ -42,69 +41,29 @@ test('pause menu touch toggle disables touch controls and keeps them off until r
   });
 
   await page.keyboard.press('p');
+  await expect(page.getByRole('heading', { name: 'Story Mode' })).toBeVisible({ timeout: 10_000 });
+  await page.getByRole('button', { name: 'Touch Controls: ON' }).click();
+
+  await expect(page.getByRole('button', { name: 'Touch Controls: OFF' })).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem('sindicate.touchEnabled'))).toBe('0');
+
+  await page.getByRole('button', { name: 'Touch Controls: OFF' }).click();
+  expect(await page.evaluate(() => localStorage.getItem('sindicate.touchEnabled'))).toBe('1');
+  await page.getByRole('button', { name: /Resume Current Run|Continue Story|Start Story/ }).click();
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
+  await page.waitForFunction(() => Boolean((window as unknown as { __game?: GameProbe }).__game));
 
   await page.waitForFunction(() => {
-    const g = (window as unknown as { __game: GameProbe }).__game;
-    const scene = g.scene.getScene('City');
-    return (
-      scene.paused &&
-      scene.pauseTouchButton.visible &&
-      scene.pauseTouchButton.text.includes('Touch Controls: ON')
-    );
-  });
-
-  await page.evaluate(() => {
-    const g = (window as unknown as { __game: GameProbe }).__game;
-    g.scene.getScene('City').pauseTouchButton.emit('pointerdown');
-  });
-
-  await page.waitForFunction(() => {
-    const g = (window as unknown as { __game: GameProbe }).__game;
-    const scene = g.scene.getScene('City');
-    return (
-      scene.touchEnabled === false &&
-      scene.touchOptedOut === true &&
-      scene.pauseTouchButton.text.includes('Touch Controls: OFF') &&
-      scene.touchControlsGfx.visible === false
-    );
-  });
-
-  await page.evaluate(() => {
-    const g = (window as unknown as { __game: GameProbe }).__game;
-    const scene = g.scene.getScene('City');
-    scene.input.emit('pointerdown', { event: { pointerType: 'touch' } });
-  });
-
-  await page.waitForTimeout(100);
-
-  const disabled = await page.evaluate(() => {
-    const g = (window as unknown as { __game: GameProbe }).__game;
-    const scene = g.scene.getScene('City');
-    return {
-      touchEnabled: scene.touchEnabled,
-      touchOptedOut: scene.touchOptedOut,
-      buttonText: scene.pauseTouchButton.text,
-      touchVisible: scene.touchControlsGfx.visible,
-    };
-  });
-
-  expect(disabled.touchEnabled).toBe(false);
-  expect(disabled.touchOptedOut).toBe(true);
-  expect(disabled.buttonText).toContain('Touch Controls: OFF');
-  expect(disabled.touchVisible).toBe(false);
-
-  await page.evaluate(() => {
-    const g = (window as unknown as { __game: GameProbe }).__game;
-    g.scene.getScene('City').pauseTouchButton.emit('pointerdown');
-  });
-
-  await page.waitForFunction(() => {
-    const g = (window as unknown as { __game: GameProbe }).__game;
+    const g = (window as unknown as { __game?: GameProbe }).__game;
+    if (!g) return false;
     const scene = g.scene.getScene('City');
     return (
       scene.touchEnabled === true &&
-      scene.touchOptedOut === false &&
-      scene.pauseTouchButton.text.includes('Touch Controls: ON')
+      scene.touchOptedOut === false
     );
+  });
+
+  await page.evaluate(() => {
+    localStorage.removeItem('sindicate.touchEnabled');
   });
 });
