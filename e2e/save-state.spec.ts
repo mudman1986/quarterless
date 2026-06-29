@@ -4,6 +4,7 @@ import { launchSindicate } from './helpers';
 interface GameProbe {
   scene: {
     getScene(key: string): {
+      scene: { restart(data: unknown): void };
       timeOfDay: number;
       hud: { text: string };
       world: {
