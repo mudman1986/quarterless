@@ -26,6 +26,7 @@ import {
   saveStoryLaunchRequest,
   type StoryLaunchRequest,
 } from './game/story/storyLaunchState';
+import { loadStoryMissionScorecards } from './game/story/storyMissionScorecards';
 
 type LaunchMode = 'sandbox' | 'story';
 
@@ -78,23 +79,34 @@ let activeGame: GameRuntime | null = null;
 let stopPreviews: (() => void) | null = null;
 
 function chapterCards(progress = createStoryProgress(STORY_MODE_PROTOTYPE)): string {
+  const currentChapterId = progress.current?.chapterId ?? null;
   return STORY_MODE_PROTOTYPE.acts
     .map((act) => {
       const cards = act.chapters
         .map((chapter) => {
           const unlocked = progress.unlockedChapterIds.includes(chapter.id);
           const completed = progress.completedChapterIds.includes(chapter.id);
+          const current = currentChapterId === chapter.id;
+          const status = completed
+            ? 'Completed'
+            : current
+              ? 'Current lead'
+              : unlocked
+                ? 'Unlocked'
+                : 'Locked';
           return `
             <button
-              class="story-chapter-card${unlocked ? '' : ' story-chapter-card--locked'}"
+              class="story-chapter-card${unlocked ? '' : ' story-chapter-card--locked'}${current ? ' story-chapter-card--current' : ''}${completed ? ' story-chapter-card--completed' : ''}"
               type="button"
               data-story-chapter="${chapter.id}"
               ${unlocked ? '' : 'disabled'}
               aria-label="${chapter.title}${unlocked ? '' : ' locked'}"
             >
+              <span class="story-chapter-node" aria-hidden="true"></span>
               <span class="story-chapter-kicker">Chapter ${chapter.order}</span>
               <span class="story-chapter-title">${chapter.title}</span>
-              <span class="story-chapter-meta">${completed ? 'Completed' : unlocked ? 'Unlocked' : 'Locked'}</span>
+              <span class="story-chapter-copy">${chapter.combinedGoal}</span>
+              <span class="story-chapter-meta">${status} • ${chapter.missions.length} missions</span>
             </button>`;
         })
         .join('');
@@ -102,7 +114,7 @@ function chapterCards(progress = createStoryProgress(STORY_MODE_PROTOTYPE)): str
         <section class="story-act-section" aria-label="${act.title}">
           <h3 class="story-act-title">${act.title}</h3>
           <p class="story-act-summary">${act.summary}</p>
-          <div class="story-chapter-grid">
+          <div class="story-chapter-grid story-chapter-grid--map">
             ${cards}
           </div>
         </section>`;
@@ -124,6 +136,31 @@ function recapItems(progress = createStoryProgress(STORY_MODE_PROTOTYPE)): strin
           <span class="story-archive-copy">${chapter.combinedGoal}</span>
         </li>`,
     )
+    .join('');
+}
+
+function missionScorecardItems(): string {
+  const store = currentGameStore();
+  const cards = store ? loadStoryMissionScorecards(store) : [];
+  if (cards.length === 0) {
+    return '<li class="story-scorecard-empty">No mission scorecards yet.</li>';
+  }
+  return cards
+    .map((card) => {
+      const stamp = new Date(card.recordedAt);
+      const when = Number.isNaN(stamp.getTime())
+        ? ''
+        : stamp.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      return `
+        <li class="story-scorecard-item">
+          <span class="story-scorecard-kicker">${card.chapterTitle}${when ? ` • ${when}` : ''}</span>
+          <strong class="story-scorecard-title">${card.missionTitle}</strong>
+          <span class="story-scorecard-copy">Reward: $${card.reward} • ${card.durationSeconds}s</span>
+          <span class="story-scorecard-copy">${card.vehicleConditionText}</span>
+          <span class="story-scorecard-copy">${card.serviceLaneText}</span>
+          <span class="story-scorecard-copy">${card.factionEffectText}</span>
+        </li>`;
+    })
     .join('');
 }
 
@@ -153,7 +190,9 @@ function currentGameStore(): Storage | null {
 
 function currentStoryProgress() {
   const store = storyProgressStore();
-  return store ? loadStoryProgress(store) ?? createStoryProgress(STORY_MODE_PROTOTYPE) : createStoryProgress(STORY_MODE_PROTOTYPE);
+  return store
+    ? (loadStoryProgress(store) ?? createStoryProgress(STORY_MODE_PROTOTYPE))
+    : createStoryProgress(STORY_MODE_PROTOTYPE);
 }
 
 function primeStoryLaunch(request: StoryLaunchRequest): void {
@@ -202,7 +241,9 @@ function currentStoryRunOverview(): StoryRunOverview {
         ? `Choose a lead: ${choices.map((entry) => entry.title).join(' / ')}`
         : progress.current.objectiveIndex < 0
           ? `Go to the mission marker to start ${mission?.title ?? 'the next mission'}`
-          : mission?.prototypeRuntime?.objectives[progress.current.objectiveIndex]?.description ?? mission?.primaryGoal ?? 'Resume the investigation.';
+          : (mission?.prototypeRuntime?.objectives[progress.current.objectiveIndex]?.description ??
+            mission?.primaryGoal ??
+            'Resume the investigation.');
   const score = gameState?.world.score.current ?? 0;
   return {
     hasAutosave: !!gameState,
@@ -214,10 +255,16 @@ function currentStoryRunOverview(): StoryRunOverview {
   };
 }
 
-function slotOverview(slot: number): { key: string; occupied: boolean; chapterTitle: string; missionTitle: string } {
+function slotOverview(slot: number): {
+  key: string;
+  occupied: boolean;
+  chapterTitle: string;
+  missionTitle: string;
+} {
   const store = currentGameStore();
   const key = manualSaveKey(slot);
-  if (!store) return { key, occupied: false, chapterTitle: 'Empty', missionTitle: 'No save present' };
+  if (!store)
+    return { key, occupied: false, chapterTitle: 'Empty', missionTitle: 'No save present' };
   const save = loadGameState(store, key);
   const progress = loadStoryProgress(store, storyProgressSaveKey(key));
   const chapter = progress ? currentStoryChapter(STORY_MODE_PROTOTYPE, progress) : null;
@@ -285,7 +332,10 @@ function syncLaunchQuery(mode?: LaunchMode): void {
 
 function launchButtons(game: ArcadeGame): string {
   const options = game.launchOptions ?? [
-    { label: `Play ${game.title}`, mode: (game.id === 'sindicate' ? 'story' : 'sandbox') as LaunchMode },
+    {
+      label: `Play ${game.title}`,
+      mode: (game.id === 'sindicate' ? 'story' : 'sandbox') as LaunchMode,
+    },
   ];
   const stacked = options.length > 1 ? ' play-actions--stacked' : '';
   return `
@@ -367,7 +417,9 @@ function renderStoryMenu(game: ArcadeGame): void {
   const progress = currentStoryProgress();
   const currentChapter = currentStoryChapter(STORY_MODE_PROTOTYPE, progress);
   const run = currentStoryRunOverview();
-  const slots = Array.from({ length: MANUAL_SAVE_SLOT_COUNT }, (_, index) => slotOverview(index + 1));
+  const slots = Array.from({ length: MANUAL_SAVE_SLOT_COUNT }, (_, index) =>
+    slotOverview(index + 1),
+  );
   const touchEnabled = readTouchPreference() !== false;
   const root = appRoot();
   root.innerHTML = `
@@ -433,9 +485,15 @@ function renderStoryMenu(game: ArcadeGame): void {
                 )
                 .join('')}
             </div>
+            <div class="story-scorecard-block" aria-label="Recent mission scorecards">
+              <h3>Recent Scorecards</h3>
+              <ul class="story-scorecard-list">
+                ${missionScorecardItems()}
+              </ul>
+            </div>
           </section>
           <section class="story-menu-panel" aria-label="Unlocked chapters">
-            <h2>Chapter Select</h2>
+            <h2>Chapter Map</h2>
             ${chapterCards(progress)}
           </section>
           <section class="story-menu-panel" aria-label="Recap archive">
@@ -448,26 +506,34 @@ function renderStoryMenu(game: ArcadeGame): void {
       </div>
     </main>`;
 
-  root.querySelector<HTMLButtonElement>('[data-story-action="resume"]')?.addEventListener('click', () => {
-    const launchStore = launchProgressStore();
-    if (launchStore) clearStoryLaunchRequest(launchStore);
-    void launchGame(game, 'story');
-  });
-  root.querySelector<HTMLButtonElement>('[data-story-action="checkpoint"]')?.addEventListener('click', () => {
-    primeStoryLaunch({ mode: 'story', skipResume: true, storyProgress: progress });
-    void launchGame(game, 'story');
-  });
-  root.querySelector<HTMLButtonElement>('[data-story-action="new"]')?.addEventListener('click', () => {
-    const fresh = createStoryProgress(STORY_MODE_PROTOTYPE);
-    const store = currentGameStore();
-    if (store) {
-      clearGameState(store);
-      clearStoryProgress(store);
-    }
-    primeStoryLaunch({ mode: 'story', skipResume: true, storyProgress: fresh });
-    void launchGame(game, 'story');
-  });
-  root.querySelector<HTMLButtonElement>('[data-story-action="back"]')?.addEventListener('click', renderLanding);
+  root
+    .querySelector<HTMLButtonElement>('[data-story-action="resume"]')
+    ?.addEventListener('click', () => {
+      const launchStore = launchProgressStore();
+      if (launchStore) clearStoryLaunchRequest(launchStore);
+      void launchGame(game, 'story');
+    });
+  root
+    .querySelector<HTMLButtonElement>('[data-story-action="checkpoint"]')
+    ?.addEventListener('click', () => {
+      primeStoryLaunch({ mode: 'story', skipResume: true, storyProgress: progress });
+      void launchGame(game, 'story');
+    });
+  root
+    .querySelector<HTMLButtonElement>('[data-story-action="new"]')
+    ?.addEventListener('click', () => {
+      const fresh = createStoryProgress(STORY_MODE_PROTOTYPE);
+      const store = currentGameStore();
+      if (store) {
+        clearGameState(store);
+        clearStoryProgress(store);
+      }
+      primeStoryLaunch({ mode: 'story', skipResume: true, storyProgress: fresh });
+      void launchGame(game, 'story');
+    });
+  root
+    .querySelector<HTMLButtonElement>('[data-story-action="back"]')
+    ?.addEventListener('click', renderLanding);
   root.querySelector<HTMLButtonElement>('[data-story-touch]')?.addEventListener('click', () => {
     writeTouchPreference(!touchEnabled);
     renderStoryMenu(game);

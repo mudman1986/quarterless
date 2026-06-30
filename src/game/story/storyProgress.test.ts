@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { KeyValueStore } from '../../core/highScore';
-import { DEAD_DROP_DISTRICT, SPARE_PARTS_GOSPEL } from './deadDropDistrict';
+import { DEAD_DROP_DISTRICT, SPARE_PARTS_GOSPEL, STORY_MODE_PROTOTYPE } from './deadDropDistrict';
 import {
   clearStoryProgress,
   completeStoryMission,
@@ -143,6 +143,73 @@ describe('story progress helpers', () => {
     }, progress)?.id).toBe('night-ferry-run');
     expect(progress.current?.objectiveIndex).toBe(-1);
     expect(storyChapterById(TWO_CHAPTER_STORY, 'chapter-1')?.id).toBe('chapter-1');
+  });
+
+  it('resolves branch-dependent mission variants from recorded outcomes', () => {
+    const progress = {
+      ...createStoryProgress(STORY_MODE_PROTOTYPE),
+      current: {
+        actId: 'find-the-missing-dispatcher',
+        chapterId: 'meter-running',
+        missionId: 'red-light-choir',
+        objectiveIndex: 0,
+      },
+      branchOutcomes: { 'double-booking': 'save-passenger-b' },
+    };
+
+    const mission = currentStoryMission(STORY_MODE_PROTOTYPE, progress);
+
+    expect(mission?.title).toBe('Red Light Choir: River Lead');
+    expect(mission?.primaryGoal).toContain('riverfront cab route');
+    expect(mission?.prototypeScript?.stages?.[0]?.districtState?.label).toBe('The host is sweeping the riverfront lanes');
+  });
+
+  it('records a branch outcome when the player picks a grouped lead', () => {
+    const selected = selectStoryMission(
+      STORY_MODE_PROTOTYPE,
+      {
+        ...createStoryProgress(STORY_MODE_PROTOTYPE),
+        current: {
+          actId: 'find-the-missing-dispatcher',
+          chapterId: 'meter-running',
+          missionId: 'double-booking',
+          objectiveIndex: -2,
+        },
+        unlockedChapterIds: [
+          'dead-drop-district',
+          'spare-parts-gospel',
+          'static-on-the-hospital-band',
+          'meter-running',
+        ],
+        completedChapterIds: [
+          'dead-drop-district',
+          'spare-parts-gospel',
+          'static-on-the-hospital-band',
+        ],
+        completedMissionIds: [
+          'night-ferry-run',
+          'burned-locker',
+          'wreck-before-dawn',
+          'false-ambulance',
+          'last-call-at-pier-9',
+          'yard-talk',
+          'hook-chain',
+          'the-empty-shell',
+          'crusher-feed',
+          'towline-oath',
+          'cold-intake',
+          'flatline-gap',
+          'clean-sheets',
+          'crash-cart',
+          'ward-6-exit',
+          'ghost-fare',
+        ],
+      },
+      'red-light-choir',
+    );
+
+    expect(selected.branchOutcomes).toEqual({ 'double-booking': 'save-passenger-b' });
+    expect(currentStoryMission(STORY_MODE_PROTOTYPE, selected)?.title).toBe('Red Light Choir: River Lead');
   });
 
   it('parks the player at a mission-choice state when a chapter group has several pending leads', () => {

@@ -34,6 +34,15 @@ export interface RouteObjective {
   timeLimitSeconds?: number;
 }
 
+/** Hit several sabotage points in sequence, optionally before a soft deadline. */
+export interface SabotageObjective {
+  kind: 'sabotage';
+  description: string;
+  targets: readonly Vec2[];
+  radius: number;
+  timeLimitSeconds?: number;
+}
+
 /** Follow a scripted target for a number of seconds without losing it. */
 export interface TailObjective {
   kind: 'tail';
@@ -52,6 +61,15 @@ export interface CaptureObjective {
 export interface SurviveObjective {
   kind: 'survive';
   description: string;
+  seconds: number;
+}
+
+/** Hold a fixed area continuously for a number of seconds. */
+export interface DefendObjective {
+  kind: 'defend';
+  description: string;
+  target: Vec2;
+  radius: number;
   seconds: number;
 }
 
@@ -84,16 +102,24 @@ export interface RouteObjectiveState {
   completed: number;
 }
 
-export type ObjectiveState = RouteObjectiveState;
+export interface DefendObjectiveState {
+  kind: 'defend';
+  heldSeconds: number;
+  lastElapsed: number;
+}
+
+export type ObjectiveState = RouteObjectiveState | DefendObjectiveState;
 
 export type Objective =
   | ReachObjective
   | EliminateObjective
   | CollectObjective
   | RouteObjective
+  | SabotageObjective
   | TailObjective
   | CaptureObjective
   | SurviveObjective
+  | DefendObjective
   | WantedObjective
   | ServiceObjective;
 
@@ -174,6 +200,10 @@ function captureProgress(ctx: MissionContext, base: MissionBaseline): number {
   return (ctx.captureSeconds ?? 0) - (base.captureSeconds ?? 0);
 }
 
+function defendProgress(m?: Pick<Mission, 'objectiveState'> | null): number {
+  return m?.objectiveState?.kind === 'defend' ? m.objectiveState.heldSeconds : 0;
+}
+
 export interface MissionSpec {
   id: string;
   title: string;
@@ -207,6 +237,7 @@ function isObjectiveMet(obj: Objective, ctx: MissionContext, base: MissionBaseli
     case 'collect':
       return ctx.collected - base.collected >= obj.count;
     case 'route':
+    case 'sabotage':
       return false;
     case 'tail':
       return tailProgress(ctx, base) >= obj.seconds;
@@ -214,6 +245,8 @@ function isObjectiveMet(obj: Objective, ctx: MissionContext, base: MissionBaseli
       return captureProgress(ctx, base) >= obj.seconds;
     case 'survive':
       return ctx.elapsed - base.elapsed >= obj.seconds;
+    case 'defend':
+      return false;
     case 'wanted':
       return ctx.wantedStars >= obj.stars;
     case 'service':
@@ -221,7 +254,12 @@ function isObjectiveMet(obj: Objective, ctx: MissionContext, base: MissionBaseli
   }
 }
 
-function advanceRouteObjective(m: Mission, obj: RouteObjective, ctx: MissionContext, base: MissionBaseline): Mission {
+function advanceOrderedTargetObjective(
+  m: Mission,
+  obj: RouteObjective | SabotageObjective,
+  ctx: MissionContext,
+  base: MissionBaseline,
+): Mission {
   const completed = routeProgress(m);
   if (obj.timeLimitSeconds !== undefined && ctx.elapsed - base.elapsed > obj.timeLimitSeconds) return m;
 
@@ -248,6 +286,30 @@ function advanceRouteObjective(m: Mission, obj: RouteObjective, ctx: MissionCont
   return { ...m, currentIndex: nextIndex, objectiveState: null };
 }
 
+function advanceDefendObjective(
+  m: Mission,
+  obj: DefendObjective,
+  ctx: MissionContext,
+  base: MissionBaseline,
+): Mission {
+  const holding = distance(ctx.playerPos, obj.target) <= obj.radius;
+  const previousElapsed = m.objectiveState?.kind === 'defend' ? m.objectiveState.lastElapsed : base.elapsed;
+  const dt = Math.max(0, ctx.elapsed - previousElapsed);
+  const nextHeldSeconds = holding ? defendProgress(m) + dt : 0;
+  if (nextHeldSeconds < obj.seconds) {
+    return {
+      ...m,
+      objectiveState: { kind: 'defend', heldSeconds: nextHeldSeconds, lastElapsed: ctx.elapsed },
+    };
+  }
+
+  const nextIndex = m.currentIndex + 1;
+  if (nextIndex >= m.objectives.length) {
+    return { ...m, currentIndex: m.objectives.length, objectiveState: null, status: 'completed' };
+  }
+  return { ...m, currentIndex: nextIndex, objectiveState: null };
+}
+
 /**
  * Advance the mission against the current context. Completes the active
  * objective when met and moves to the next; marks the mission completed after
@@ -257,7 +319,9 @@ function advanceRouteObjective(m: Mission, obj: RouteObjective, ctx: MissionCont
 export function updateMission(m: Mission, ctx: MissionContext, baseline: MissionBaseline): Mission {
   const obj = currentObjective(m);
   if (!obj) return m;
-  if (obj.kind === 'route') return advanceRouteObjective(m, obj, ctx, baseline);
+  if (obj.kind === 'route' || obj.kind === 'sabotage')
+    return advanceOrderedTargetObjective(m, obj, ctx, baseline);
+  if (obj.kind === 'defend') return advanceDefendObjective(m, obj, ctx, baseline);
   if (!isObjectiveMet(obj, ctx, baseline)) return m;
 
   const nextIndex = m.currentIndex + 1;
@@ -279,8 +343,8 @@ export interface ObjectiveProgress {
 
 /**
  * Numeric progress toward an objective, for HUD feedback (e.g. "3/8"). A
- * 'reach' objective has no count (it is shown by a map marker instead), so it
- * reports null. Pure.
+ * 'reach' objectives have no count (they are shown by a map marker), so they
+ * report null. Pure.
  */
 export function objectiveProgress(
   obj: Objective,
@@ -296,6 +360,7 @@ export function objectiveProgress(
     case 'collect':
       return { current: clamp(ctx.collected - base.collected, 0, obj.count), goal: obj.count };
     case 'route':
+    case 'sabotage':
       return {
         current: clamp(routeProgress(mission), 0, obj.targets.length),
         goal: obj.targets.length,
@@ -313,6 +378,11 @@ export function objectiveProgress(
     case 'survive':
       return {
         current: clamp(Math.floor(ctx.elapsed - base.elapsed), 0, obj.seconds),
+        goal: obj.seconds,
+      };
+    case 'defend':
+      return {
+        current: clamp(Math.floor(defendProgress(mission)), 0, obj.seconds),
         goal: obj.seconds,
       };
     case 'wanted':

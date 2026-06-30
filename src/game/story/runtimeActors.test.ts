@@ -11,6 +11,20 @@ import {
 } from './runtimeActors';
 
 describe('advanceVehicleRouteActor', () => {
+  it('moves a route vehicle from the first waypoint toward the second waypoint', () => {
+    const actor = {
+      kind: 'vehicleRoute' as const,
+      actorId: 'a',
+      vehicleKind: 'ambulance' as const,
+      route: [vec2(10, 0), vec2(20, 0)],
+      speed: 100,
+      followRadius: 300,
+    };
+    const step = advanceVehicleRouteActor(actor, vec2(10, 0), 0, 0.2, 0);
+    expect(step.pos.x).toBeGreaterThan(10);
+    expect(step.routeIndex).toBe(1);
+  });
+
   it('moves a route vehicle toward the next waypoint and advances the route index on arrival', () => {
     const actor = {
       kind: 'vehicleRoute' as const,
@@ -40,7 +54,7 @@ describe('advancePedestrianRouteActor', () => {
 });
 
 describe('updateTailCaptureProgress', () => {
-  it('accumulates tail progress near the actor and capture progress at the final stop', () => {
+  it('accumulates tail progress near the actor and capture progress before the route ends', () => {
     const actor = {
       kind: 'vehicleRoute' as const,
       actorId: 'a',
@@ -60,28 +74,188 @@ describe('updateTailCaptureProgress', () => {
     const next = updateTailCaptureProgress(
       actor,
       progress,
-      { playerPos: vec2(0, 0), playerSpeed: 0, dt: 1, actorPositions: {} },
+      {
+        playerPos: vec2(0, 0),
+        playerSpeed: 0,
+        wantedStars: 0,
+        dt: 1,
+        actorPositions: {},
+        actorVehicleHealth: {},
+        actorVehicleDisabled: {},
+      },
       vec2(10, 0),
-      1,
     );
     expect(next.tailSeconds).toBe(1);
     expect(next.captureSeconds).toBe(1);
+  });
+
+  it('drains tail progress after the lose grace expires and clears capture when the player is moving too fast', () => {
+    const actor = {
+      kind: 'vehicleRoute' as const,
+      actorId: 'a',
+      vehicleKind: 'ambulance' as const,
+      route: [vec2(0, 0), vec2(10, 0)],
+      speed: 100,
+      followRadius: 40,
+      captureRadius: 20,
+      captureMaxSpeed: 10,
+      tailDrainPerSecond: 2,
+      loseGraceSeconds: 2.5,
+    };
+    const progress: StoryProgressState = {
+      tailSeconds: 5,
+      captureSeconds: 1.5,
+      tailLostSeconds: 2.6,
+      failCounters: {},
+    };
+
+    const next = updateTailCaptureProgress(
+      actor,
+      progress,
+      {
+        playerPos: vec2(100, 0),
+        playerSpeed: 25,
+        wantedStars: 0,
+        dt: 1,
+        actorPositions: {},
+        actorVehicleHealth: {},
+        actorVehicleDisabled: {},
+      },
+      vec2(10, 0),
+    );
+
+    expect(next.tailSeconds).toBe(3);
+    expect(next.tailLostSeconds).toBeCloseTo(3.6);
+    expect(next.captureSeconds).toBe(0);
+  });
+
+  it('treats a disabled target as immediately captured', () => {
+    const actor = {
+      kind: 'vehicleRoute' as const,
+      actorId: 'a',
+      vehicleKind: 'ambulance' as const,
+      route: [vec2(0, 0), vec2(10, 0)],
+      speed: 100,
+      followRadius: 40,
+      captureRadius: 20,
+      captureMaxSpeed: 10,
+    };
+    const progress: StoryProgressState = {
+      tailSeconds: 0,
+      captureSeconds: 0,
+      tailLostSeconds: 0,
+      failCounters: {},
+    };
+
+    const next = updateTailCaptureProgress(
+      actor,
+      progress,
+      {
+        playerPos: vec2(100, 0),
+        playerSpeed: 25,
+        wantedStars: 0,
+        dt: 1,
+        actorPositions: {},
+        actorVehicleHealth: {},
+        actorVehicleDisabled: {},
+      },
+      vec2(10, 0),
+      true,
+    );
+
+    expect(next.captureSeconds).toBe(Number.MAX_SAFE_INTEGER);
   });
 });
 
 describe('applyStoryFailRules', () => {
   it('fails when an escort actor is left outside its allowed radius too long', () => {
     const result = applyStoryFailRules(
-      [{ kind: 'escortRadius', actorId: 'escort', radius: 30, maxSeconds: 2, failureText: 'Escort lost' }],
+      [
+        {
+          kind: 'escortRadius',
+          actorId: 'escort',
+          radius: 30,
+          maxSeconds: 2,
+          failureText: 'Escort lost',
+        },
+      ],
       { tailSeconds: 0, captureSeconds: 0, tailLostSeconds: 0, failCounters: {} },
       {
         playerPos: vec2(0, 0),
         playerSpeed: 0,
+        wantedStars: 0,
         dt: 2.1,
         actorPositions: { escort: vec2(100, 0) },
+        actorVehicleHealth: {},
+        actorVehicleDisabled: {},
       },
     );
     expect(result.failureText).toBe('Escort lost');
+  });
+
+  it('fails when a required actor disappears for too long', () => {
+    const result = applyStoryFailRules(
+      [{ kind: 'loseActor', actorId: 'van', maxSeconds: 1.5, failureText: 'Target lost' }],
+      { tailSeconds: 0, captureSeconds: 0, tailLostSeconds: 0, failCounters: {} },
+      {
+        playerPos: vec2(0, 0),
+        playerSpeed: 0,
+        wantedStars: 0,
+        dt: 1.6,
+        actorPositions: { van: null },
+        actorVehicleHealth: {},
+        actorVehicleDisabled: {},
+      },
+    );
+
+    expect(result.failureText).toBe('Target lost');
+    expect(result.progress.failCounters.van).toBeCloseTo(1.6);
+  });
+
+  it('fails when a stealth route stays loud for too long', () => {
+    const result = applyStoryFailRules(
+      [{ kind: 'wantedPressure', minStars: 2, maxSeconds: 2, failureText: 'Stealth blown' }],
+      { tailSeconds: 0, captureSeconds: 0, tailLostSeconds: 0, failCounters: {} },
+      {
+        playerPos: vec2(0, 0),
+        playerSpeed: 0,
+        wantedStars: 2,
+        dt: 2.1,
+        actorPositions: {},
+        actorVehicleHealth: {},
+        actorVehicleDisabled: {},
+      },
+    );
+
+    expect(result.failureText).toBe('Stealth blown');
+    expect(result.progress.failCounters['wanted-pressure:2:Stealth blown']).toBeCloseTo(2.1);
+  });
+
+  it('fails when a protected story vehicle stays below its minimum condition', () => {
+    const result = applyStoryFailRules(
+      [
+        {
+          kind: 'actorVehicleCondition',
+          actorId: 'shell',
+          minHealth: 55,
+          maxSeconds: 0.5,
+          failureText: 'Cargo wrecked',
+        },
+      ],
+      { tailSeconds: 0, captureSeconds: 0, tailLostSeconds: 0, failCounters: {} },
+      {
+        playerPos: vec2(0, 0),
+        playerSpeed: 0,
+        wantedStars: 0,
+        dt: 0.6,
+        actorPositions: { shell: vec2(10, 0) },
+        actorVehicleHealth: { shell: 40 },
+        actorVehicleDisabled: { shell: false },
+      },
+    );
+
+    expect(result.failureText).toBe('Cargo wrecked');
+    expect(result.progress.failCounters['actor-vehicle-condition:shell']).toBeCloseTo(0.6);
   });
 });
 
@@ -94,11 +268,9 @@ describe('stage transitions', () => {
       failCounters: {},
     };
     expect(
-      isStageTransitionMet(
-        { kind: 'routeComplete', actorId: 'van' },
-        progress,
-        { van: normalizeRouteCompletion(2, 3) },
-      ),
+      isStageTransitionMet({ kind: 'routeComplete', actorId: 'van' }, progress, {
+        van: normalizeRouteCompletion(2, 3),
+      }),
     ).toBe(true);
   });
 

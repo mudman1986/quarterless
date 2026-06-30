@@ -1,11 +1,13 @@
 import { distance, vec2, type Vec2 } from '../../core/vector';
 import type {
+  ActorVehicleConditionFailRule,
   EscortRadiusFailRule,
   LoseActorFailRule,
   PedestrianRouteActorScript,
   StoryFailRule,
   StoryStageTransition,
   VehicleRouteActorScript,
+  WantedPressureFailRule,
 } from './storyMode';
 
 export interface RouteActorStep {
@@ -13,6 +15,16 @@ export interface RouteActorStep {
   heading: number;
   speed: number;
   routeIndex: number;
+}
+
+function wrapAngle(angle: number): number {
+  while (angle > Math.PI) angle -= Math.PI * 2;
+  while (angle < -Math.PI) angle += Math.PI * 2;
+  return angle;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 export interface StoryProgressState {
@@ -25,8 +37,11 @@ export interface StoryProgressState {
 export interface StoryScriptTickContext {
   playerPos: Vec2;
   playerSpeed: number;
+  wantedStars: number;
   dt: number;
   actorPositions: Record<string, Vec2 | null>;
+  actorVehicleHealth: Record<string, number | null>;
+  actorVehicleDisabled: Record<string, boolean>;
 }
 
 export interface StoryScriptTickResult {
@@ -60,21 +75,32 @@ function moveAlongRoute(
   routeIndex: number,
   speed: number,
   dt: number,
+  prevHeading = 0,
 ): RouteActorStep {
-  const first = route[0] ?? pos;
-  const safeIndex = Math.max(0, Math.min(route.length - 1, routeIndex));
-  const target = route[safeIndex] ?? first;
+  if (route.length <= 1) {
+    return { pos, heading: prevHeading, speed: 0, routeIndex: 0 };
+  }
+
+  const safeIndex = Math.max(0, Math.min(route.length - 2, routeIndex));
+  const current = route[safeIndex] ?? pos;
+  const target = route[safeIndex + 1] ?? current;
   const dx = target.x - pos.x;
   const dy = target.y - pos.y;
   const dist = Math.hypot(dx, dy);
-  const heading = dist > 0 ? Math.atan2(dy, dx) : 0;
+  const desiredHeading = dist > 0 ? Math.atan2(dy, dx) : prevHeading;
+  const turnDelta = wrapAngle(desiredHeading - prevHeading);
+  const maxTurn = Math.PI * 1.35 * dt;
+  const heading = prevHeading + clamp(turnDelta, -maxTurn, maxTurn);
   const step = Math.min(dist, dt * speed);
   const nextPos = dist > 0 ? vec2(pos.x + (dx / dist) * step, pos.y + (dy / dist) * step) : pos;
+  const reachedTarget = step >= dist - 1e-6;
+  const nextRouteIndex = reachedTarget ? Math.min(route.length - 1, safeIndex + 1) : safeIndex;
+
   return {
     pos: nextPos,
     heading,
-    speed: step > 0 ? speed : 0,
-    routeIndex: step >= dist && safeIndex < route.length - 1 ? safeIndex + 1 : safeIndex,
+    speed: reachedTarget ? 0 : speed,
+    routeIndex: nextRouteIndex,
   };
 }
 
@@ -83,8 +109,9 @@ export function advanceVehicleRouteActor(
   pos: Vec2,
   routeIndex: number,
   dt: number,
+  prevHeading = 0,
 ): RouteActorStep {
-  return moveAlongRoute(pos, actor.route, routeIndex, actor.speed, dt);
+  return moveAlongRoute(pos, actor.route, routeIndex, actor.speed, dt, prevHeading);
 }
 
 export function advancePedestrianRouteActor(
@@ -92,8 +119,9 @@ export function advancePedestrianRouteActor(
   pos: Vec2,
   routeIndex: number,
   dt: number,
+  prevHeading = 0,
 ): RouteActorStep {
-  return moveAlongRoute(pos, actor.route, routeIndex, actor.speed, dt);
+  return moveAlongRoute(pos, actor.route, routeIndex, actor.speed, dt, prevHeading);
 }
 
 function applyLoseActorRule(
@@ -125,6 +153,38 @@ function applyEscortRadiusRule(
   };
 }
 
+function applyWantedPressureRule(
+  rule: WantedPressureFailRule,
+  progress: StoryProgressState,
+  ctx: StoryScriptTickContext,
+): StoryScriptTickResult {
+  const key = `wanted-pressure:${rule.minStars}:${rule.failureText}`;
+  const nextCounter =
+    ctx.wantedStars >= rule.minStars ? (progress.failCounters[key] ?? 0) + ctx.dt : 0;
+  const failCounters = { ...progress.failCounters, [key]: nextCounter };
+  return {
+    progress: { ...progress, failCounters },
+    failureText: nextCounter >= rule.maxSeconds ? rule.failureText : null,
+  };
+}
+
+function applyActorVehicleConditionRule(
+  rule: ActorVehicleConditionFailRule,
+  progress: StoryProgressState,
+  ctx: StoryScriptTickContext,
+): StoryScriptTickResult {
+  const key = `actor-vehicle-condition:${rule.actorId}`;
+  const health = ctx.actorVehicleHealth[rule.actorId] ?? null;
+  const disabled = ctx.actorVehicleDisabled[rule.actorId] ?? false;
+  const compromised = health === null || disabled || health < rule.minHealth;
+  const nextCounter = compromised ? (progress.failCounters[key] ?? 0) + ctx.dt : 0;
+  const failCounters = { ...progress.failCounters, [key]: nextCounter };
+  return {
+    progress: { ...progress, failCounters },
+    failureText: nextCounter >= rule.maxSeconds ? rule.failureText : null,
+  };
+}
+
 export function applyStoryFailRules(
   rules: readonly StoryFailRule[] | undefined,
   progress: StoryProgressState,
@@ -137,7 +197,11 @@ export function applyStoryFailRules(
     const result =
       rule.kind === 'loseActor'
         ? applyLoseActorRule(rule, next, ctx)
-        : applyEscortRadiusRule(rule, next, ctx);
+        : rule.kind === 'escortRadius'
+          ? applyEscortRadiusRule(rule, next, ctx)
+          : rule.kind === 'wantedPressure'
+            ? applyWantedPressureRule(rule, next, ctx)
+            : applyActorVehicleConditionRule(rule, next, ctx);
     next = result.progress;
     if (result.failureText) return result;
   }
@@ -149,7 +213,7 @@ export function updateTailCaptureProgress(
   progress: StoryProgressState,
   ctx: StoryScriptTickContext,
   actorPos: Vec2,
-  routeIndex: number,
+  targetDisabled = false,
 ): StoryProgressState {
   const playerDist = distance(ctx.playerPos, actorPos);
   let tailSeconds = progress.tailSeconds;
@@ -167,11 +231,14 @@ export function updateTailCaptureProgress(
   const loseGrace = actor.loseGraceSeconds ?? 2.5;
   if (tailLostSeconds > loseGrace) tailSeconds = Math.max(0, tailSeconds - ctx.dt * tailDrain);
 
-  const captureReady =
+  if (targetDisabled) {
+    captureSeconds = Number.MAX_SAFE_INTEGER;
+  } else if (
     actor.captureRadius !== undefined &&
     actor.captureMaxSpeed !== undefined &&
-    routeIndex >= actor.route.length - 1;
-  if (captureReady && playerDist <= (actor.captureRadius ?? 0) && Math.abs(ctx.playerSpeed) <= (actor.captureMaxSpeed ?? 0)) {
+    playerDist <= actor.captureRadius &&
+    Math.abs(ctx.playerSpeed) <= actor.captureMaxSpeed
+  ) {
     captureSeconds += ctx.dt;
   } else {
     captureSeconds = 0;

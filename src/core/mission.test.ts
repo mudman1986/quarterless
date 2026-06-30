@@ -148,6 +148,35 @@ describe('updateMission — route objective', () => {
   });
 });
 
+describe('updateMission — sabotage objective', () => {
+  const sabotageMission = () =>
+    createMission({
+      id: 'sab',
+      title: 'Crusher Feed',
+      objectives: [
+        {
+          kind: 'sabotage',
+          description: 'Trip 3 crusher safeties in order',
+          targets: [vec2(10, 0), vec2(20, 0), vec2(30, 0)],
+          radius: 5,
+          timeLimitSeconds: 60,
+        },
+      ],
+    });
+
+  it('tracks sequential sabotage progress before completing', () => {
+    let m = updateMission(sabotageMission(), ctx({ playerPos: vec2(10, 0) }), base());
+    expect(isComplete(m)).toBe(false);
+    expect(m.objectiveState).toEqual({ kind: 'route', completed: 1 });
+
+    m = updateMission(m, ctx({ playerPos: vec2(20, 0) }), base());
+    expect(m.objectiveState).toEqual({ kind: 'route', completed: 2 });
+
+    m = updateMission(m, ctx({ playerPos: vec2(30, 0) }), base());
+    expect(isComplete(m)).toBe(true);
+  });
+});
+
 describe('updateMission — tail objective', () => {
   const tailMission = () =>
     createMission({
@@ -190,6 +219,39 @@ describe('updateMission — survive objective', () => {
     const started = base({ elapsed: 10 });
     expect(isComplete(updateMission(surviveMission(), ctx({ elapsed: 30 }), started))).toBe(false);
     expect(isComplete(updateMission(surviveMission(), ctx({ elapsed: 41 }), started))).toBe(true);
+  });
+});
+
+describe('updateMission — defend objective', () => {
+  const defendMission = () =>
+    createMission({
+      id: 'd',
+      title: 'Hold Fast',
+      objectives: [
+        { kind: 'defend', description: 'Hold the yard for 10s', target: vec2(100, 0), radius: 20, seconds: 10 },
+      ],
+    });
+
+  it('accumulates hold time only while the player stays inside the defend radius', () => {
+    let m = updateMission(defendMission(), ctx({ playerPos: vec2(100, 0), elapsed: 4 }), base({ elapsed: 0 }));
+    expect(m.objectiveState).toEqual({ kind: 'defend', heldSeconds: 4, lastElapsed: 4 });
+
+    m = updateMission(m, ctx({ playerPos: vec2(160, 0), elapsed: 6 }), base({ elapsed: 0 }));
+    expect(m.objectiveState).toEqual({ kind: 'defend', heldSeconds: 0, lastElapsed: 6 });
+
+    m = updateMission(m, ctx({ playerPos: vec2(100, 0), elapsed: 12 }), base({ elapsed: 0 }));
+    expect(m.objectiveState).toEqual({ kind: 'defend', heldSeconds: 6, lastElapsed: 12 });
+    expect(isComplete(m)).toBe(false);
+  });
+
+  it('completes once the defend area is held continuously for the full duration', () => {
+    const started = updateMission(
+      defendMission(),
+      ctx({ playerPos: vec2(100, 0), elapsed: 5 }),
+      base({ elapsed: 0 }),
+    );
+    const done = updateMission(started, ctx({ playerPos: vec2(100, 0), elapsed: 10 }), base({ elapsed: 0 }));
+    expect(isComplete(done)).toBe(true);
   });
 });
 
@@ -273,9 +335,34 @@ describe('objectiveProgress', () => {
     expect(objectiveProgress(started.objectives[0]!, ctx(), base(), started)).toEqual({ current: 1, goal: 2 });
   });
 
+  it('reports sequential sabotage progress from mission state', () => {
+    const sabotage = createMission({
+      id: 'sab',
+      title: 'Sabotage',
+      objectives: [
+        { kind: 'sabotage', description: 'Trip 2 switches', targets: [vec2(1, 0), vec2(2, 0)], radius: 5 },
+      ],
+    });
+    const started = updateMission(sabotage, ctx({ playerPos: vec2(1, 0) }), base());
+    expect(objectiveProgress(started.objectives[0]!, ctx(), base(), started)).toEqual({
+      current: 1,
+      goal: 2,
+    });
+  });
+
   it('reports survive progress in whole seconds and wanted progress in stars', () => {
     const survive: Objective = { kind: 'survive', description: 'Last 30s', seconds: 30 };
     expect(objectiveProgress(survive, ctx({ elapsed: 12.7 }), base())).toEqual({ current: 12, goal: 30 });
+    const defendMission = createMission({
+      id: 'defend',
+      title: 'Defend',
+      objectives: [{ kind: 'defend', description: 'Hold', target: vec2(0, 0), radius: 10, seconds: 8 }],
+    });
+    const defendStarted = updateMission(defendMission, ctx({ playerPos: vec2(0, 0), elapsed: 3.8 }), base());
+    expect(objectiveProgress(defendStarted.objectives[0]!, ctx(), base(), defendStarted)).toEqual({
+      current: 3,
+      goal: 8,
+    });
     const wanted: Objective = { kind: 'wanted', description: '3 stars', stars: 3 };
     expect(objectiveProgress(wanted, ctx({ wantedStars: 2 }), base())).toEqual({ current: 2, goal: 3 });
   });

@@ -1,4 +1,10 @@
-import { createMission, type Mission, type MissionSpec, type Objective } from '../../core/mission';
+import {
+  createMission,
+  type Mission,
+  type MissionSpec,
+  type Objective,
+  type ServiceObjectiveKind,
+} from '../../core/mission';
 import type { VehicleKind } from '../../core/world';
 import type { Vec2 } from '../../core/vector';
 import type { Pedestrian } from '../../core/pedestrianAI';
@@ -24,6 +30,28 @@ export interface RuntimeCampaignTemplate {
   missions: readonly MissionSpec[];
 }
 
+export interface StoryMissionVariantOverride {
+  title?: string;
+  hook?: string;
+  primaryGoal?: string;
+  secondaryPressure?: string;
+  failureState?: string;
+  payoff?: string;
+  requiredSystems?: readonly StorySystem[];
+  prototypeRuntime?: MissionSpec;
+  prototypeScript?: StoryRuntimeScript;
+}
+
+export interface StoryMissionVariant extends StoryMissionVariantOverride {
+  branchId: string;
+  outcomeId: string;
+}
+
+export interface StoryMissionBranchOutcome {
+  branchId: string;
+  outcomeId: string;
+}
+
 export interface StoryMissionPlan {
   id: string;
   title: string;
@@ -32,9 +60,11 @@ export interface StoryMissionPlan {
   secondaryPressure: string;
   failureState: string;
   payoff: string;
+  branchOutcome?: StoryMissionBranchOutcome;
   requiredSystems?: readonly StorySystem[];
   prototypeRuntime?: MissionSpec;
   prototypeScript?: StoryRuntimeScript;
+  variants?: readonly StoryMissionVariant[];
 }
 
 export interface VehicleRouteActorScript {
@@ -77,6 +107,10 @@ export type StoryActorScript =
 export interface StoryDistrictStateScript {
   label: string;
   summary?: string;
+  serviceLaneBlocks?: readonly ServiceObjectiveKind[];
+  trafficSpeedMultiplier?: number;
+  suppressNpcDriving?: boolean;
+  wantedPressureBonus?: number;
 }
 
 export interface LoseActorFailRule {
@@ -94,7 +128,26 @@ export interface EscortRadiusFailRule {
   failureText: string;
 }
 
-export type StoryFailRule = LoseActorFailRule | EscortRadiusFailRule;
+export interface WantedPressureFailRule {
+  kind: 'wantedPressure';
+  minStars: number;
+  maxSeconds: number;
+  failureText: string;
+}
+
+export interface ActorVehicleConditionFailRule {
+  kind: 'actorVehicleCondition';
+  actorId: string;
+  minHealth: number;
+  maxSeconds: number;
+  failureText: string;
+}
+
+export type StoryFailRule =
+  | LoseActorFailRule
+  | EscortRadiusFailRule
+  | WantedPressureFailRule
+  | ActorVehicleConditionFailRule;
 
 export interface RouteCompleteStageTransition {
   kind: 'routeComplete';
@@ -175,7 +228,11 @@ function rawStoryChapterMissionGroups(chapter: StoryChapter): readonly (readonly
 export function storyChapterMissionGroups(chapter: StoryChapter): StoryMissionPlan[][] {
   const missionById = new Map(chapter.missions.map((mission) => [mission.id, mission]));
   return rawStoryChapterMissionGroups(chapter)
-    .map((group) => group.map((missionId) => missionById.get(missionId)).filter((mission): mission is StoryMissionPlan => !!mission))
+    .map((group) =>
+      group
+        .map((missionId) => missionById.get(missionId))
+        .filter((mission): mission is StoryMissionPlan => !!mission),
+    )
     .filter((group) => group.length > 0);
 }
 
@@ -189,6 +246,32 @@ export function storyChapterPendingMissionGroup(
     if (pending.length > 0) return pending;
   }
   return null;
+}
+
+export function resolveStoryMissionPlan(
+  plan: StoryMissionPlan,
+  branchOutcomes: Record<string, string> = {},
+): StoryMissionPlan {
+  const variant = plan.variants?.find(
+    ({ branchId, outcomeId }) => branchOutcomes[branchId] === outcomeId,
+  );
+  if (!variant) return plan;
+  const overrides: StoryMissionVariantOverride = {
+    title: variant.title,
+    hook: variant.hook,
+    primaryGoal: variant.primaryGoal,
+    secondaryPressure: variant.secondaryPressure,
+    failureState: variant.failureState,
+    payoff: variant.payoff,
+    requiredSystems: variant.requiredSystems,
+    prototypeRuntime: variant.prototypeRuntime,
+    prototypeScript: variant.prototypeScript,
+  };
+  return {
+    ...plan,
+    ...overrides,
+    variants: plan.variants,
+  };
 }
 
 function storyActorStartPosition(actor: StoryActorScript | undefined): Vec2 | null {
@@ -217,11 +300,17 @@ function storyMissionEntryObjective(plan: StoryMissionPlan): Objective | null {
   };
 }
 
-export function storyMissionStartPosition(plan: Pick<StoryMissionPlan, 'prototypeRuntime' | 'prototypeScript'>): Vec2 | null {
+export function storyMissionStartPosition(
+  plan: Pick<StoryMissionPlan, 'prototypeRuntime' | 'prototypeScript'>,
+): Vec2 | null {
   const firstObjective = plan.prototypeRuntime?.objectives[0];
   if (firstObjective?.kind === 'reach') return firstObjective.target;
-  if (firstObjective?.kind === 'route') return firstObjective.targets[0] ?? null;
-  return plan.prototypeScript ? storyActorStartPosition(storyPrimaryActor(plan.prototypeScript)) : null;
+  if (firstObjective?.kind === 'defend') return firstObjective.target;
+  if (firstObjective?.kind === 'route' || firstObjective?.kind === 'sabotage')
+    return firstObjective.targets[0] ?? null;
+  return plan.prototypeScript
+    ? storyActorStartPosition(storyPrimaryActor(plan.prototypeScript))
+    : null;
 }
 
 export function storyMissionInitialObjectiveIndex(
@@ -234,7 +323,9 @@ export function storyMissionGroupObjectiveIndex(
   plan: Pick<StoryMissionPlan, 'prototypeRuntime' | 'prototypeScript'>,
   pendingInGroup: number,
 ): number {
-  return pendingInGroup > 1 ? STORY_MISSION_GROUP_SELECTION_INDEX : storyMissionInitialObjectiveIndex(plan);
+  return pendingInGroup > 1
+    ? STORY_MISSION_GROUP_SELECTION_INDEX
+    : storyMissionInitialObjectiveIndex(plan);
 }
 
 export function runtimeObjectiveIndexFromStory(
@@ -246,7 +337,10 @@ export function runtimeObjectiveIndexFromStory(
   const hasEntryMarker = storyMissionInitialObjectiveIndex(plan) < 0;
   const minStoryIndex = hasEntryMarker ? -1 : 0;
   const normalized = Math.floor(storyObjectiveIndex);
-  const clamped = Math.max(minStoryIndex, Math.min(authoredObjectiveCount - 1, Number.isFinite(normalized) ? normalized : 0));
+  const clamped = Math.max(
+    minStoryIndex,
+    Math.min(authoredObjectiveCount - 1, Number.isFinite(normalized) ? normalized : 0),
+  );
   return hasEntryMarker ? clamped + 1 : clamped;
 }
 
@@ -258,7 +352,13 @@ export function storyObjectiveIndexFromRuntime(
   if (authoredObjectiveCount <= 0) return 0;
   const hasEntryMarker = storyMissionInitialObjectiveIndex(plan) < 0;
   const normalized = Math.floor(runtimeObjectiveIndex);
-  const clamped = Math.max(0, Math.min(authoredObjectiveCount - 1 + (hasEntryMarker ? 1 : 0), Number.isFinite(normalized) ? normalized : 0));
+  const clamped = Math.max(
+    0,
+    Math.min(
+      authoredObjectiveCount - 1 + (hasEntryMarker ? 1 : 0),
+      Number.isFinite(normalized) ? normalized : 0,
+    ),
+  );
   return hasEntryMarker ? clamped - 1 : clamped;
 }
 
@@ -267,7 +367,9 @@ export function compileStoryMissionRuntime(plan: StoryMissionPlan): Mission | nu
   const entryObjective = storyMissionEntryObjective(plan);
   return createMission({
     ...plan.prototypeRuntime,
-    objectives: entryObjective ? [entryObjective, ...plan.prototypeRuntime.objectives] : plan.prototypeRuntime.objectives,
+    objectives: entryObjective
+      ? [entryObjective, ...plan.prototypeRuntime.objectives]
+      : plan.prototypeRuntime.objectives,
   });
 }
 
@@ -279,10 +381,13 @@ export function compileStoryChapterRuntimeCampaign(
   chapter: StoryChapter,
   startMissionId = chapter.missions[0]?.id,
   startObjectiveIndex?: number,
+  branchOutcomes: Record<string, string> = {},
 ): Mission[] | null {
   const startIndex = chapter.missions.findIndex((mission) => mission.id === startMissionId);
   if (startIndex === -1) return null;
-  const plans = chapter.missions.slice(startIndex);
+  const plans = chapter.missions
+    .slice(startIndex)
+    .map((mission) => resolveStoryMissionPlan(mission, branchOutcomes));
   if (plans.some((mission) => !mission.prototypeRuntime)) return null;
 
   return plans.map((plan, index) => {
@@ -292,7 +397,13 @@ export function compileStoryChapterRuntimeCampaign(
     const resumeObjectiveIndex = startObjectiveIndex ?? storyMissionInitialObjectiveIndex(plan);
     return {
       ...mission,
-      currentIndex: Math.max(0, Math.min(mission.objectives.length - 1, runtimeObjectiveIndexFromStory(plan, resumeObjectiveIndex))),
+      currentIndex: Math.max(
+        0,
+        Math.min(
+          mission.objectives.length - 1,
+          runtimeObjectiveIndexFromStory(plan, resumeObjectiveIndex),
+        ),
+      ),
       status: mission.objectives.length === 0 ? 'completed' : 'active',
       objectiveState: null,
     };
@@ -305,7 +416,8 @@ export function countStoryChapters(story: StoryMode): number {
 
 export function countStoryMissions(story: StoryMode): number {
   return story.acts.reduce(
-    (sum, act) => sum + act.chapters.reduce((chapterSum, chapter) => chapterSum + chapter.missions.length, 0),
+    (sum, act) =>
+      sum + act.chapters.reduce((chapterSum, chapter) => chapterSum + chapter.missions.length, 0),
     0,
   );
 }
@@ -329,7 +441,8 @@ export function validateStoryMode(story: StoryMode): StoryValidationIssue[] {
 
   for (const [actIndex, act] of story.acts.entries()) {
     const actPath = `acts[${actIndex}]`;
-    if (actIds.has(act.id)) issues.push({ path: `${actPath}.id`, message: `Duplicate act id "${act.id}"` });
+    if (actIds.has(act.id))
+      issues.push({ path: `${actPath}.id`, message: `Duplicate act id "${act.id}"` });
     actIds.add(act.id);
     if (act.order !== actIndex + 1) {
       issues.push({
@@ -338,7 +451,10 @@ export function validateStoryMode(story: StoryMode): StoryValidationIssue[] {
       });
     }
     if (act.chapters.length === 0) {
-      issues.push({ path: `${actPath}.chapters`, message: 'Act must contain at least one chapter' });
+      issues.push({
+        path: `${actPath}.chapters`,
+        message: 'Act must contain at least one chapter',
+      });
     }
 
     for (const [chapterIndex, chapter] of act.chapters.entries()) {
@@ -370,15 +486,25 @@ export function validateStoryMode(story: StoryMode): StoryValidationIssue[] {
       for (const [missionIndex, mission] of chapter.missions.entries()) {
         const missionPath = `${chapterPath}.missions[${missionIndex}]`;
         if (missionIds.has(mission.id)) {
-          issues.push({ path: `${missionPath}.id`, message: `Duplicate mission id "${mission.id}"` });
+          issues.push({
+            path: `${missionPath}.id`,
+            message: `Duplicate mission id "${mission.id}"`,
+          });
         }
         missionIds.add(mission.id);
-        if (!mission.title.trim()) issues.push({ path: `${missionPath}.title`, message: 'Mission title must not be empty' });
+        if (!mission.title.trim())
+          issues.push({ path: `${missionPath}.title`, message: 'Mission title must not be empty' });
         if (!mission.primaryGoal.trim()) {
-          issues.push({ path: `${missionPath}.primaryGoal`, message: 'Mission primaryGoal must not be empty' });
+          issues.push({
+            path: `${missionPath}.primaryGoal`,
+            message: 'Mission primaryGoal must not be empty',
+          });
         }
         if (!mission.failureState.trim()) {
-          issues.push({ path: `${missionPath}.failureState`, message: 'Mission failureState must not be empty' });
+          issues.push({
+            path: `${missionPath}.failureState`,
+            message: 'Mission failureState must not be empty',
+          });
         }
       }
 
@@ -393,7 +519,10 @@ export function validateStoryMode(story: StoryMode): StoryValidationIssue[] {
       const groupedIdSet = new Set<string>();
       for (const [groupIndex, group] of rawStoryChapterMissionGroups(chapter).entries()) {
         if (group.length === 0) {
-          issues.push({ path: `${chapterPath}.missionGroups[${groupIndex}]`, message: 'Mission group must not be empty' });
+          issues.push({
+            path: `${chapterPath}.missionGroups[${groupIndex}]`,
+            message: 'Mission group must not be empty',
+          });
         }
         for (const missionId of group) {
           if (!missionIds.has(missionId)) {
