@@ -10,6 +10,58 @@ async function launchStoryMode(page: import('@playwright/test').Page): Promise<v
   await launchStoryModeWithOptions(page, { acknowledgeBrief: true });
 }
 
+async function forceStoryChapterCompletion(
+  page: import('@playwright/test').Page,
+  state: {
+    actId: string;
+    chapterId: string;
+    missionId: string;
+    completedMissionIds: string[];
+  },
+): Promise<void> {
+  await page.evaluate(({ actId, chapterId, missionId, completedMissionIds }) => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: { campaign?: { missions: Array<unknown>; currentIndex: number } | null };
+      storyProgress?: {
+        current: { actId: string; missionId: string; chapterId: string; objectiveIndex: number } | null;
+        completedMissionIds: string[];
+      };
+      prevMissionId?: string | null;
+      prevMissionComplete?: boolean;
+      pendingStoryRestart?: unknown;
+      handleEvents?: () => void;
+      scene: { restart(data: unknown): void };
+    };
+    if (!scene?.world?.campaign || !scene.storyProgress || typeof scene.handleEvents !== 'function') {
+      throw new Error('Missing chapter completion hooks');
+    }
+
+    scene.storyProgress.current = {
+      actId,
+      chapterId,
+      missionId,
+      objectiveIndex: 0,
+    };
+    scene.storyProgress.completedMissionIds = completedMissionIds;
+    scene.prevMissionId = missionId;
+    scene.prevMissionComplete = false;
+    scene.world.campaign.currentIndex = scene.world.campaign.missions.length;
+    scene.handleEvents();
+    scene.scene.restart({ skipResume: true, mode: 'story', storyProgress: scene.pendingStoryRestart });
+  }, state);
+}
+
+async function restartIntoStoryProgress(page: import('@playwright/test').Page, storyProgress: unknown): Promise<void> {
+  await page.evaluate((progress) => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      scene: { restart(data: unknown): void };
+    };
+    scene?.scene.restart({ skipResume: true, mode: 'story', storyProgress: progress });
+  }, storyProgress);
+}
+
 async function launchStoryModeWithOptions(
   page: import('@playwright/test').Page,
   options: { acknowledgeBrief: boolean },
@@ -389,36 +441,26 @@ test('grouped chapter leads show simultaneous mission markers and start the chos
 test('the empty shell uses staged scripted district-state beats after mission start', async ({ page }) => {
   await launchStoryMode(page);
 
-  await page.evaluate(() => {
-    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
-    const scene = game?.scene.getScene('City') as {
-      scene: { restart(data: unknown): void };
-    };
-    scene?.scene.restart({
-      skipResume: true,
-      mode: 'story',
-      storyProgress: {
-        version: 1,
-        storyId: 'sindicate-story-mode',
-        current: {
-          actId: 'find-the-missing-dispatcher',
-          chapterId: 'spare-parts-gospel',
-          missionId: 'the-empty-shell',
-          objectiveIndex: 0,
-        },
-        unlockedChapterIds: ['dead-drop-district', 'spare-parts-gospel'],
-        completedChapterIds: ['dead-drop-district'],
-        completedMissionIds: [
-          'night-ferry-run',
-          'burned-locker',
-          'wreck-before-dawn',
-          'false-ambulance',
-          'last-call-at-pier-9',
-          'yard-talk',
-        ],
-        branchOutcomes: {},
-      },
-    });
+  await restartIntoStoryProgress(page, {
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'spare-parts-gospel',
+      missionId: 'the-empty-shell',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: ['dead-drop-district', 'spare-parts-gospel'],
+    completedChapterIds: ['dead-drop-district'],
+    completedMissionIds: [
+      'night-ferry-run',
+      'burned-locker',
+      'wreck-before-dawn',
+      'false-ambulance',
+      'last-call-at-pier-9',
+      'yard-talk',
+    ],
+    branchOutcomes: {},
   });
 
   const stateLabel = await page.waitForFunction(() => {
@@ -430,6 +472,205 @@ test('the empty shell uses staged scripted district-state beats after mission st
   });
 
   expect(await stateLabel.jsonValue()).toContain('Decoy wrecks are dragging the chase east');
+});
+
+test('scripted district-state missions announce stage shifts and update the active district label', async ({ page }) => {
+  await launchStoryMode(page);
+
+  await restartIntoStoryProgress(page, {
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'spare-parts-gospel',
+      missionId: 'the-empty-shell',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: ['dead-drop-district', 'spare-parts-gospel'],
+    completedChapterIds: ['dead-drop-district'],
+    completedMissionIds: [
+      'night-ferry-run',
+      'burned-locker',
+      'wreck-before-dawn',
+      'false-ambulance',
+      'last-call-at-pier-9',
+      'yard-talk',
+    ],
+    branchOutcomes: {},
+  });
+
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      storyScript?: { actorCarIndices: Record<string, number> } | null;
+    };
+    return scene?.storyScript?.actorCarIndices?.['empty-shell-sedan'] !== undefined;
+  });
+
+  const shift = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      storyScript?: { actorCarIndices: Record<string, number>; actorRouteIndices: Record<string, number> } | null;
+      world: { cars: Array<{ pos: { x: number; y: number }; heading: number; speed: number; radius: number }> };
+      storyPanel?: { visible: boolean; text: string };
+      storyStateText?: { text: string };
+      syncStoryScript?: (dt?: number) => void;
+    };
+    const storyScript = scene?.storyScript;
+    const carIndex = storyScript?.actorCarIndices?.['empty-shell-sedan'];
+    if (!storyScript || carIndex === undefined || typeof scene?.syncStoryScript !== 'function') {
+      throw new Error('Missing scripted actor stage hooks');
+    }
+    const car = scene.world.cars[carIndex];
+    scene.world.cars[carIndex] = { ...car, pos: { x: 2496, y: 2112 } };
+    storyScript.actorRouteIndices['empty-shell-sedan'] = 2;
+    scene.syncStoryScript(0);
+    scene.syncStoryScript(0);
+    return {
+      visible: !!scene.storyPanel?.visible,
+      panel: scene.storyPanel?.text ?? '',
+      state: scene.storyStateText?.text ?? '',
+    };
+  });
+
+  expect(shift.visible).toBe(true);
+  expect(shift.panel).toContain('STAGE SHIFT');
+  expect(shift.panel).toContain('Confirm the receiving yard');
+  expect(shift.panel).toContain('Hold the tail until the receiving yard is unmistakable.');
+  expect(shift.state).toContain('The real shell is slipping through the salvage gate');
+});
+
+test('scripted encounter mission summaries keep their authored objective outcome text', async ({ page }) => {
+  await launchStoryMode(page);
+
+  const result = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: {
+        campaign?: { currentIndex: number } | null;
+        kills: number;
+        targetKills: number;
+        explosionsTriggered: number;
+        elapsedSeconds: number;
+      };
+      storyProgress?: {
+        current: { actId: string; chapterId: string; missionId: string; objectiveIndex: number } | null;
+        completedMissionIds: string[];
+        unlockedChapterIds: string[];
+        completedChapterIds: string[];
+      };
+      storyMissionSummaryBaseline?: {
+        missionId: string;
+        kills: number;
+        targetKills: number;
+        explosionsTriggered: number;
+        elapsedSeconds: number;
+        unlockedChapterIds: string[];
+        completedChapterIds: string[];
+      } | null;
+      prevMissionId?: string | null;
+      prevMissionComplete?: boolean;
+      handleEvents?: () => void;
+      storyPanel?: { visible: boolean; text: string };
+    };
+    if (!scene?.world?.campaign || !scene.storyProgress || typeof scene.handleEvents !== 'function') {
+      throw new Error('Missing scripted mission summary hooks');
+    }
+
+    scene.storyProgress.current = {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'dead-drop-district',
+      missionId: 'last-call-at-pier-9',
+      objectiveIndex: 0,
+    };
+    scene.storyProgress.completedMissionIds = ['night-ferry-run', 'burned-locker', 'wreck-before-dawn', 'false-ambulance'];
+    scene.storyMissionSummaryBaseline = {
+      missionId: 'false-ambulance',
+      kills: scene.world.kills,
+      targetKills: scene.world.targetKills,
+      explosionsTriggered: scene.world.explosionsTriggered,
+      elapsedSeconds: Math.max(0, scene.world.elapsedSeconds - 18),
+      unlockedChapterIds: [...scene.storyProgress.unlockedChapterIds],
+      completedChapterIds: [...scene.storyProgress.completedChapterIds],
+    };
+    scene.prevMissionId = 'false-ambulance';
+    scene.prevMissionComplete = false;
+    scene.world.campaign.currentIndex = 4;
+    scene.handleEvents();
+
+    return {
+      visible: !!scene.storyPanel?.visible,
+      text: scene.storyPanel?.text ?? '',
+    };
+  });
+
+  expect(result.visible).toBe(true);
+  expect(result.text).toContain('MISSION SUMMARY');
+  expect(result.text).toContain('False Ambulance');
+  expect(result.text).toContain('Objective Outcome: The rescued contact confirms the cleaners are storing Nia\'s badge and paper trail in the Pier 9 office.');
+  expect(result.text).toContain('Next: Last Call At Pier 9');
+});
+
+test('story mode resolves branch-dependent mission variants from saved outcomes', async ({ page }) => {
+  await launchStoryMode(page);
+
+  await restartIntoStoryProgress(page, {
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'meter-running',
+      missionId: 'red-light-choir',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: [
+      'dead-drop-district',
+      'spare-parts-gospel',
+      'static-on-the-hospital-band',
+      'meter-running',
+    ],
+    completedChapterIds: ['dead-drop-district', 'spare-parts-gospel', 'static-on-the-hospital-band'],
+    completedMissionIds: [
+      'night-ferry-run',
+      'burned-locker',
+      'wreck-before-dawn',
+      'false-ambulance',
+      'last-call-at-pier-9',
+      'yard-talk',
+      'hook-chain',
+      'the-empty-shell',
+      'crusher-feed',
+      'towline-oath',
+      'cold-intake',
+      'flatline-gap',
+      'clean-sheets',
+      'crash-cart',
+      'ward-6-exit',
+      'ghost-fare',
+      'double-booking',
+    ],
+    branchOutcomes: { 'double-booking': 'save-passenger-a' },
+  });
+
+  const variant = await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: { mission?: { id: string; title: string } | null; missionObjective?: { description: string } | null };
+      storyStateText?: { text: string };
+    };
+    if (scene?.world?.mission?.id !== 'red-light-choir') return null;
+    return {
+      title: scene.world.mission?.title ?? '',
+      objective: scene.world.missionObjective?.description ?? '',
+      state: scene.storyStateText?.text ?? '',
+    };
+  });
+
+  expect(await variant.jsonValue()).toEqual({
+    title: 'Red Light Choir: Uptown Lead',
+    objective: 'Tail the radio host through the uptown club strip',
+    state: 'DISTRICT STATE\nThe host is still circling the uptown clubs',
+  });
 });
 
 test('pause routes into the integrated Sindicate launch page with the current objective visible', async ({ page }) => {
@@ -595,42 +836,11 @@ test('story mode shows an authored mission transition panel between chapter miss
 test('story mode restarts into the next chapter after chapter completion', async ({ page }) => {
   await launchStoryMode(page);
 
-  await page.evaluate(() => {
-    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
-    const scene = game?.scene.getScene('City') as {
-      world: { campaign?: { missions: Array<unknown>; currentIndex: number } | null };
-      storyProgress?: {
-        current: { actId: string; missionId: string; chapterId: string; objectiveIndex: number } | null;
-        completedMissionIds: string[];
-      };
-      prevMissionId?: string | null;
-      prevMissionComplete?: boolean;
-      pendingStoryRestart?: unknown;
-      storyPanelRemaining?: number;
-      handleEvents?: () => void;
-      scene: { restart(data: unknown): void };
-    };
-    if (!scene?.world?.campaign || !scene.storyProgress || typeof scene.handleEvents !== 'function') {
-      throw new Error('Missing chapter completion hooks');
-    }
-
-    scene.storyProgress.current = {
-      actId: 'find-the-missing-dispatcher',
-      chapterId: 'dead-drop-district',
-      missionId: 'last-call-at-pier-9',
-      objectiveIndex: 0,
-    };
-    scene.storyProgress.completedMissionIds = [
-      'night-ferry-run',
-      'burned-locker',
-      'wreck-before-dawn',
-      'false-ambulance',
-    ];
-    scene.prevMissionId = 'last-call-at-pier-9';
-    scene.prevMissionComplete = false;
-    scene.world.campaign.currentIndex = scene.world.campaign.missions.length;
-    scene.handleEvents();
-    scene.scene.restart({ skipResume: true, mode: 'story', storyProgress: scene.pendingStoryRestart });
+  await forceStoryChapterCompletion(page, {
+    actId: 'find-the-missing-dispatcher',
+    chapterId: 'dead-drop-district',
+    missionId: 'last-call-at-pier-9',
+    completedMissionIds: ['night-ferry-run', 'burned-locker', 'wreck-before-dawn', 'false-ambulance'],
   });
 
   await page.waitForFunction(() => {
@@ -643,6 +853,74 @@ test('story mode restarts into the next chapter after chapter completion', async
       scene?.storyProgress?.current?.chapterId === 'spare-parts-gospel' &&
       scene?.storyProgress?.current?.missionId === 'yard-talk'
     );
+  });
+});
+
+test('story mode can progress across multiple chapter finales and preserve unlock state', async ({ page }) => {
+  await launchStoryMode(page);
+
+  await forceStoryChapterCompletion(page, {
+    actId: 'find-the-missing-dispatcher',
+    chapterId: 'dead-drop-district',
+    missionId: 'last-call-at-pier-9',
+    completedMissionIds: ['night-ferry-run', 'burned-locker', 'wreck-before-dawn', 'false-ambulance'],
+  });
+
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      storyProgress?: {
+        current: { chapterId: string; missionId: string } | null;
+        unlockedChapterIds: string[];
+        completedChapterIds: string[];
+      };
+    };
+    return (
+      scene?.storyProgress?.current?.chapterId === 'spare-parts-gospel' &&
+      scene?.storyProgress?.current?.missionId === 'yard-talk' &&
+      scene.storyProgress.unlockedChapterIds.includes('spare-parts-gospel') &&
+      scene.storyProgress.completedChapterIds.includes('dead-drop-district')
+    );
+  });
+
+  await forceStoryChapterCompletion(page, {
+    actId: 'find-the-missing-dispatcher',
+    chapterId: 'spare-parts-gospel',
+    missionId: 'towline-oath',
+    completedMissionIds: [
+      'night-ferry-run',
+      'burned-locker',
+      'wreck-before-dawn',
+      'false-ambulance',
+      'last-call-at-pier-9',
+      'yard-talk',
+      'hook-chain',
+      'the-empty-shell',
+      'crusher-feed',
+    ],
+  });
+
+  const result = await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      storyProgress?: {
+        current: { chapterId: string; missionId: string } | null;
+        unlockedChapterIds: string[];
+        completedChapterIds: string[];
+      };
+    };
+    if (scene?.storyProgress?.current?.chapterId !== 'static-on-the-hospital-band') return null;
+    return {
+      missionId: scene.storyProgress.current?.missionId ?? null,
+      unlocked: [...scene.storyProgress.unlockedChapterIds],
+      completed: [...scene.storyProgress.completedChapterIds],
+    };
+  });
+
+  expect(await result.jsonValue()).toEqual({
+    missionId: 'cold-intake',
+    unlocked: ['dead-drop-district', 'spare-parts-gospel', 'static-on-the-hospital-band'],
+    completed: ['dead-drop-district', 'spare-parts-gospel'],
   });
 });
 

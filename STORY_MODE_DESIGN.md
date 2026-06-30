@@ -416,6 +416,7 @@ Implemented now:
 - Focused Playwright coverage now also covers story mission-start markers, route markers, marked-target minimap dots, scripted chase-target minimap markers, grouped in-world mission selection, staged district-state labels, and the integrated launcher-owned pause flow.
 - A dedicated authored-mission browser regression now walks every current runtime story mission and verifies that each mission shell boots with the expected mission title and scripted district-state surface.
 - Regression coverage now extends beyond mission-shell boot checks into longer multi-chapter story progression and lower-level world and scripted-actor seams, including consecutive chapter-finale unlock flow, scene-fed tail/capture objective progress, tail-drain behavior, and actor-loss fail rules.
+- Story authoring can now resolve branch-dependent mission variants from saved story outcomes, and the current browser suite asserts scripted mission summaries, stage-shift district-state updates, and seeded branch-variant mission text against live story data.
 - The pause/menu UX is now fully integrated into the Sindicate launcher page: pausing returns to the launcher, which owns resume, checkpoint restart, manual save/load slots, current-objective presentation, and chapter replay.
 - Story mission transitions now use a richer summary card that surfaces reward, objective outcome, duration, collateral, and story unlock changes.
 
@@ -436,7 +437,7 @@ Priority after this pass:
 2. Expand the mission runtime beyond route/tail/capture by implementing stronger bespoke systems such as vehicle-condition, defend, sabotage-order, and stealth-pressure objectives.
 3. Push district-state scripting further so blackout, checkpoint, and service-lane changes materially alter ambient city behavior instead of only updating story labels.
 4. Deepen the mission summary card with more systemic detail, especially vehicle-condition outcomes, service-lane state, and chapter-level faction effects.
-5. Build on the authored regression sweep with mission-outcome assertions, not just mission-shell boot checks, so scripted encounter behavior stays stable as the runtime grows.
+5. Build on the authored regression sweep with live failure-path, restart, and longer-running scripted encounter assertions so the new outcome-aware story runtime stays stable as it grows.
 
 ## Grounded Implementation Plan
 
@@ -613,7 +614,7 @@ What is still missing before it counts as a full slice:
 
 - Rich scripted encounter control for multi-stage raids and more persistent systemic district-state choreography beyond the current actor layer.
 - A more polished chapter-map style story front end and deeper post-mission scorecards.
-- Deeper mission-outcome assertions and longer-running scripted encounter coverage beyond the current shell, progression, and world-seam regression suite.
+- Longer-running scripted encounter completion and failure-path coverage beyond the current shell, progression, district-state, and branch-variant regression suite.
 
 ## What To Do Next
 
@@ -622,4 +623,4 @@ Recommended next production step:
 1. Expand the mission-actor layer from staged route actors into full multi-stage raids, convoy handoffs with multiple tracked actors, and more persistent systemic district-state choreography.
 2. Add fuller post-mission scorecards and a more polished chapter-map style story front end on top of the current act-grouped menu and recap archive.
 3. Continue authoring Chapter 10 and beyond on top of the broader actor layer.
-4. Extend regression coverage from shell and progression checks into mission-outcome assertions for scripted encounters, district-state changes, and future branch-dependent mission variants.
+4. Extend regression coverage from seeded branch variants and forced stage shifts into live branch-recording flows, scripted failure-path restarts, and longer-running encounter completions.

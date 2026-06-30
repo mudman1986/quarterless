@@ -67,6 +67,39 @@ describe('updateTailCaptureProgress', () => {
     expect(next.tailSeconds).toBe(1);
     expect(next.captureSeconds).toBe(1);
   });
+
+  it('drains tail progress after the lose grace expires and clears capture when the player is moving too fast', () => {
+    const actor = {
+      kind: 'vehicleRoute' as const,
+      actorId: 'a',
+      vehicleKind: 'ambulance' as const,
+      route: [vec2(0, 0), vec2(10, 0)],
+      speed: 100,
+      followRadius: 40,
+      captureRadius: 20,
+      captureMaxSpeed: 10,
+      tailDrainPerSecond: 2,
+      loseGraceSeconds: 2.5,
+    };
+    const progress: StoryProgressState = {
+      tailSeconds: 5,
+      captureSeconds: 1.5,
+      tailLostSeconds: 2.6,
+      failCounters: {},
+    };
+
+    const next = updateTailCaptureProgress(
+      actor,
+      progress,
+      { playerPos: vec2(100, 0), playerSpeed: 25, dt: 1, actorPositions: {} },
+      vec2(10, 0),
+      1,
+    );
+
+    expect(next.tailSeconds).toBe(3);
+    expect(next.tailLostSeconds).toBeCloseTo(3.6);
+    expect(next.captureSeconds).toBe(0);
+  });
 });
 
 describe('applyStoryFailRules', () => {
@@ -82,6 +115,22 @@ describe('applyStoryFailRules', () => {
       },
     );
     expect(result.failureText).toBe('Escort lost');
+  });
+
+  it('fails when a required actor disappears for too long', () => {
+    const result = applyStoryFailRules(
+      [{ kind: 'loseActor', actorId: 'van', maxSeconds: 1.5, failureText: 'Target lost' }],
+      { tailSeconds: 0, captureSeconds: 0, tailLostSeconds: 0, failCounters: {} },
+      {
+        playerPos: vec2(0, 0),
+        playerSpeed: 0,
+        dt: 1.6,
+        actorPositions: { van: null },
+      },
+    );
+
+    expect(result.failureText).toBe('Target lost');
+    expect(result.progress.failCounters.van).toBeCloseTo(1.6);
   });
 });
 

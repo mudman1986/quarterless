@@ -13,6 +13,7 @@ import {
   countStoryChapters,
   countStoryMissions,
   isChapterRuntimeReady,
+  resolveStoryMissionPlan,
   storyChapterPendingMissionGroup,
   storyMissionInitialObjectiveIndex,
   storyObjectiveIndexFromRuntime,
@@ -91,6 +92,22 @@ describe('compileStoryChapterRuntimeCampaign', () => {
     expect(missions?.[0]).toMatchObject({ id: 'burned-locker', currentIndex: 2 });
     expect(storyObjectiveIndexFromRuntime(DEAD_DROP_DISTRICT.missions[1]!, missions?.[0]?.currentIndex ?? -1)).toBe(1);
     expect(missions?.[1]).toMatchObject({ id: 'wreck-before-dawn' });
+  });
+
+  it('resolves branch-dependent mission variants when compiling a chapter runtime', () => {
+    const chapter = STORY_MODE_PROTOTYPE.acts[0]!.chapters[3]!;
+    const resolved = resolveStoryMissionPlan(chapter.missions[2]!, { 'double-booking': 'save-passenger-a' });
+    const missions = compileStoryChapterRuntimeCampaign(chapter, 'red-light-choir', 0, {
+      'double-booking': 'save-passenger-a',
+    });
+
+    expect(resolved.title).toBe('Red Light Choir: Uptown Lead');
+    expect(resolved.prototypeScript?.stages?.[0]?.districtState?.label).toBe('The host is still circling the uptown clubs');
+    expect(missions?.[0]).toMatchObject({
+      id: 'red-light-choir',
+      title: 'Red Light Choir: Uptown Lead',
+    });
+    expect(missions?.[0] ? currentObjective(missions[0])?.description : null).toBe('Tail the radio host through the uptown club strip');
   });
 });
 

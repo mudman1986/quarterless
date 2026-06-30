@@ -758,6 +758,7 @@ export const METER_RUNNING: StoryChapter = {
       secondaryPressure: 'Rook has to stay close enough to track the route without losing the host in traffic.',
       failureState: 'Fail if the host\'s route is lost before the producer\'s car is identified.',
       payoff: 'The tape reveals where the dying dispatcher is trying to make their last call.',
+      requiredSystems: ['tail', 'scriptedEncounter', 'districtState', 'branching'],
       prototypeRuntime: {
         id: 'red-light-choir',
         title: 'Red Light Choir',
@@ -770,6 +771,188 @@ export const METER_RUNNING: StoryChapter = {
         ],
         reward: 3600,
       },
+      variants: [
+        {
+          branchId: 'double-booking',
+          outcomeId: 'save-passenger-a',
+          title: 'Red Light Choir: Uptown Lead',
+          hook: 'The fare you protected pointed straight into the uptown club strip the host still trusts.',
+          primaryGoal: 'Stay on the host\'s uptown cab route long enough to find the producer carrying the tape.',
+          secondaryPressure: 'The uptown loop is tighter, so Rook has less room to drift without losing the disguise of traffic.',
+          failureState: 'Fail if the host\'s uptown route is lost before the producer\'s car is identified.',
+          prototypeRuntime: {
+            id: 'red-light-choir',
+            title: 'Red Light Choir: Uptown Lead',
+            objectives: [
+              {
+                kind: 'tail',
+                description: 'Tail the radio host through the uptown club strip',
+                seconds: 10,
+              },
+            ],
+            reward: 3600,
+          },
+          prototypeScript: {
+            primaryActorId: 'radio-host-cab',
+            actors: [],
+            stages: [
+              {
+                id: 'host-cab-route',
+                title: 'Stay on the host cab',
+                primaryActorId: 'radio-host-cab',
+                districtState: {
+                  label: 'The host is still circling the uptown clubs',
+                  summary: 'The bodyguard coupe is screening the cab through the tighter uptown loop.',
+                },
+                actors: [
+                  {
+                    kind: 'vehicleRoute',
+                    actorId: 'radio-host-cab',
+                    vehicleKind: 'taxi',
+                    route: [
+                      { x: 3008, y: 1216 },
+                      { x: 3328, y: 960 },
+                      { x: 3520, y: 960 },
+                    ],
+                    speed: 115,
+                    followRadius: 320,
+                    tailDrainPerSecond: 2,
+                    loseGraceSeconds: 2.5,
+                  },
+                  {
+                    kind: 'vehicleRoute',
+                    actorId: 'bodyguard-coupe',
+                    vehicleKind: 'coupe',
+                    route: [
+                      { x: 2944, y: 1280 },
+                      { x: 3264, y: 1024 },
+                      { x: 3456, y: 1024 },
+                    ],
+                    speed: 112,
+                    followRadius: 240,
+                  },
+                ],
+                nextWhen: { kind: 'routeComplete', actorId: 'radio-host-cab' },
+              },
+              {
+                id: 'producer-handoff',
+                title: 'Track the producer car',
+                primaryActorId: 'producer-sedan',
+                districtState: {
+                  label: 'The tape has moved into an uptown alley handoff',
+                  summary: 'A producer sedan is trying to peel away from the club strip with the recording.',
+                },
+                actors: [
+                  {
+                    kind: 'vehicleRoute',
+                    actorId: 'producer-sedan',
+                    vehicleKind: 'sedan',
+                    route: [
+                      { x: 3520, y: 960 },
+                      { x: 3776, y: 1088 },
+                      { x: 3968, y: 1344 },
+                    ],
+                    speed: 122,
+                    followRadius: 320,
+                    tailDrainPerSecond: 2,
+                    loseGraceSeconds: 2.5,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+        {
+          branchId: 'double-booking',
+          outcomeId: 'save-passenger-b',
+          title: 'Red Light Choir: River Lead',
+          hook: 'The delayed fare cut across the riverfront lanes, and the host shifted to a darker traffic cover route.',
+          primaryGoal: 'Stay on the host\'s riverfront cab route long enough to find the producer carrying the tape.',
+          secondaryPressure: 'The riverfront lanes are faster and more open, so Rook has to hold the tail without obvious cover.',
+          failureState: 'Fail if the host\'s riverfront route is lost before the producer\'s car is identified.',
+          prototypeRuntime: {
+            id: 'red-light-choir',
+            title: 'Red Light Choir: River Lead',
+            objectives: [
+              {
+                kind: 'tail',
+                description: 'Tail the radio host through the riverfront lanes',
+                seconds: 10,
+              },
+            ],
+            reward: 3600,
+          },
+          prototypeScript: {
+            primaryActorId: 'radio-host-cab',
+            actors: [],
+            stages: [
+              {
+                id: 'host-cab-route',
+                title: 'Stay on the host cab',
+                primaryActorId: 'radio-host-cab',
+                districtState: {
+                  label: 'The host is sweeping the riverfront lanes',
+                  summary: 'The bodyguard coupe has more room to screen the cab once the river road opens up.',
+                },
+                actors: [
+                  {
+                    kind: 'vehicleRoute',
+                    actorId: 'radio-host-cab',
+                    vehicleKind: 'taxi',
+                    route: [
+                      { x: 3008, y: 1216 },
+                      { x: 3328, y: 960 },
+                      { x: 3520, y: 960 },
+                    ],
+                    speed: 115,
+                    followRadius: 320,
+                    tailDrainPerSecond: 2,
+                    loseGraceSeconds: 2.5,
+                  },
+                  {
+                    kind: 'vehicleRoute',
+                    actorId: 'bodyguard-coupe',
+                    vehicleKind: 'coupe',
+                    route: [
+                      { x: 2944, y: 1280 },
+                      { x: 3264, y: 1024 },
+                      { x: 3456, y: 1024 },
+                    ],
+                    speed: 112,
+                    followRadius: 240,
+                  },
+                ],
+                nextWhen: { kind: 'routeComplete', actorId: 'radio-host-cab' },
+              },
+              {
+                id: 'producer-handoff',
+                title: 'Track the producer car',
+                primaryActorId: 'producer-sedan',
+                districtState: {
+                  label: 'The tape is breaking south along the river wall',
+                  summary: 'A producer sedan is trying to use the river road to outrun the club district tail.',
+                },
+                actors: [
+                  {
+                    kind: 'vehicleRoute',
+                    actorId: 'producer-sedan',
+                    vehicleKind: 'sedan',
+                    route: [
+                      { x: 3520, y: 960 },
+                      { x: 3776, y: 1088 },
+                      { x: 3968, y: 1344 },
+                    ],
+                    speed: 122,
+                    followRadius: 320,
+                    tailDrainPerSecond: 2,
+                    loseGraceSeconds: 2.5,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
       prototypeScript: {
         primaryActorId: 'radio-host-cab',
         actors: [],

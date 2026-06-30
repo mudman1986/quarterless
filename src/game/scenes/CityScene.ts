@@ -66,6 +66,7 @@ import {
 import { clearStoryLaunchRequest, loadStoryLaunchRequest } from '../story/storyLaunchState';
 import {
   compileStoryChapterRuntimeCampaign,
+  resolveStoryMissionPlan,
   STORY_MISSION_GROUP_SELECTION_INDEX,
   storyMissionStartPosition,
   storyObjectiveIndexFromRuntime,
@@ -603,6 +604,7 @@ export class CityScene extends Phaser.Scene {
       chapter,
       this.storyProgress.current.missionId,
       this.storyProgress.current.objectiveIndex,
+      this.storyProgress.branchOutcomes,
     );
   }
 
@@ -2383,15 +2385,16 @@ export class CityScene extends Phaser.Scene {
       this.showMissionBriefingPanel();
       return;
     }
-    const summary = this.buildStoryMissionSummaryCard(previousMission, this.storyProgress);
+    const resolvedPreviousMission = resolveStoryMissionPlan(previousMission, this.storyProgress.branchOutcomes);
+    const summary = this.buildStoryMissionSummaryCard(resolvedPreviousMission, this.storyProgress);
     if (summary) {
       this.showPersistentStoryPanel(this.storyMissionSummaryText(summary));
       return;
     }
     if (!mission) return;
-    const reward = previousMission.prototypeRuntime?.reward ?? 0;
+    const reward = resolvedPreviousMission.prototypeRuntime?.reward ?? 0;
     this.showStoryPanel(
-      `MISSION COMPLETE\n${previousMission.title}\nReward: $${reward}\n\n${previousMission.payoff}\n\nNext: ${mission.title}\n${mission.primaryGoal}`,
+      `MISSION COMPLETE\n${resolvedPreviousMission.title}\nReward: $${reward}\n\n${resolvedPreviousMission.payoff}\n\nNext: ${mission.title}\n${mission.primaryGoal}`,
       4.8,
     );
   }
@@ -2401,10 +2404,15 @@ export class CityScene extends Phaser.Scene {
     const chapter = currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress);
     const choices = this.storyMissionChoices();
     if (!chapter || choices.length === 0) return;
-    const previousMission = previousMissionId ? chapter.missions.find((entry) => entry.id === previousMissionId) ?? null : null;
+    const previousMission = previousMissionId
+      ? chapter.missions.find((entry) => entry.id === previousMissionId)
+      : null;
+    const resolvedPreviousMission = previousMission
+      ? resolveStoryMissionPlan(previousMission, this.storyProgress.branchOutcomes)
+      : null;
     const leads = choices.map((mission, index) => `${index + 1}. ${mission.title}\n${mission.primaryGoal}`).join('\n\n');
-    const header = previousMission
-      ? `MISSION COMPLETE\n${previousMission.title}\n\n${previousMission.payoff}`
+    const header = resolvedPreviousMission
+      ? `MISSION COMPLETE\n${resolvedPreviousMission.title}\n\n${resolvedPreviousMission.payoff}`
       : `CHAPTER ${chapter.order}\n${chapter.title}`;
     this.showStoryPanel(`${header}\n\nChoose the next lead by driving into a mission marker.\n\n${leads}`, 6.2);
   }

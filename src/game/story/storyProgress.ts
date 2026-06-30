@@ -2,6 +2,7 @@ import { GAME_STATE_KEY } from '../../core/gameState';
 import type { KeyValueStore } from '../../core/highScore';
 import {
   STORY_MISSION_GROUP_SELECTION_INDEX,
+  resolveStoryMissionPlan,
   storyChapterPendingMissionGroup,
   storyMissionGroupObjectiveIndex,
   storyMissionInitialObjectiveIndex,
@@ -82,14 +83,19 @@ function cloneBranchOutcomes(branchOutcomes: Record<string, string>): Record<str
   return { ...branchOutcomes };
 }
 
-function cursorForPendingGroup(chapter: StoryChapter, pending: readonly StoryMissionPlan[]): StoryCursor {
+function cursorForPendingGroup(
+  chapter: StoryChapter,
+  pending: readonly StoryMissionPlan[],
+  branchOutcomes: Record<string, string> = {},
+): StoryCursor {
   const mission = pending[0];
   if (!mission) throw new Error(`Chapter "${chapter.id}" has no pending missions`);
+  const resolvedMission = resolveStoryMissionPlan(mission, branchOutcomes);
   return {
     actId: chapter.actId,
     chapterId: chapter.id,
-    missionId: mission.id,
-    objectiveIndex: storyMissionGroupObjectiveIndex(mission, pending.length),
+    missionId: resolvedMission.id,
+    objectiveIndex: storyMissionGroupObjectiveIndex(resolvedMission, pending.length),
   };
 }
 
@@ -123,21 +129,24 @@ export function currentStoryChapter(
 
 export function currentStoryMission(
   story: StoryMode,
-  progress: Pick<StoryProgressSnapshot, 'storyId' | 'current'>,
+  progress: Pick<StoryProgressSnapshot, 'storyId' | 'current'> & Partial<Pick<StoryProgressSnapshot, 'branchOutcomes'>>,
 ): StoryMissionPlan | null {
   const chapter = currentStoryChapter(story, progress);
   if (!chapter || !progress.current) return null;
-  return storyMissionById(chapter, progress.current.missionId);
+  const mission = storyMissionById(chapter, progress.current.missionId);
+  return mission ? resolveStoryMissionPlan(mission, progress.branchOutcomes ?? {}) : null;
 }
 
 export function currentStoryMissionChoices(
   story: StoryMode,
-  progress: Pick<StoryProgressSnapshot, 'storyId' | 'current' | 'completedMissionIds'>,
+  progress: Pick<StoryProgressSnapshot, 'storyId' | 'current' | 'completedMissionIds'> & Partial<Pick<StoryProgressSnapshot, 'branchOutcomes'>>,
 ): StoryMissionPlan[] {
   if (!progress.current || progress.storyId !== story.id) return [];
   const chapter = currentStoryChapter(story, progress);
   if (!chapter || progress.current.objectiveIndex !== STORY_MISSION_GROUP_SELECTION_INDEX) return [];
-  return storyChapterPendingMissionGroup(chapter, progress.completedMissionIds) ?? [];
+  return (storyChapterPendingMissionGroup(chapter, progress.completedMissionIds) ?? []).map((mission) =>
+    resolveStoryMissionPlan(mission, progress.branchOutcomes ?? {}),
+  );
 }
 
 export function isChapterUnlocked(progress: StoryProgressSnapshot, chapterId: string): boolean {
@@ -179,7 +188,11 @@ export function selectStoryChapter(
   if (!chapter) return progress;
   return {
     ...progress,
-    current: cursorForPendingGroup(chapter, storyChapterPendingMissionGroup(chapter, progress.completedMissionIds) ?? [firstMission(chapter)]),
+    current: cursorForPendingGroup(
+      chapter,
+      storyChapterPendingMissionGroup(chapter, progress.completedMissionIds) ?? [firstMission(chapter)],
+      progress.branchOutcomes,
+    ),
   };
 }
 
@@ -194,13 +207,14 @@ export function selectStoryMission(
   const pending = storyChapterPendingMissionGroup(chapter, progress.completedMissionIds) ?? [];
   const mission = pending.find((candidate) => candidate.id === missionId);
   if (!mission) return progress;
+  const resolvedMission = resolveStoryMissionPlan(mission, progress.branchOutcomes);
   return {
     ...progress,
     current: {
       actId: chapter.actId,
       chapterId: chapter.id,
-      missionId: mission.id,
-      objectiveIndex: storyMissionInitialObjectiveIndex(mission),
+      missionId: resolvedMission.id,
+      objectiveIndex: storyMissionInitialObjectiveIndex(resolvedMission),
     },
   };
 }
@@ -226,7 +240,7 @@ export function completeStoryMission(
     return {
       ...progress,
       completedMissionIds,
-      current: cursorForPendingGroup(chapter, pendingGroup),
+      current: cursorForPendingGroup(chapter, pendingGroup, progress.branchOutcomes),
     };
   }
 
@@ -248,7 +262,7 @@ export function completeStoryMission(
     completedMissionIds,
     completedChapterIds,
     unlockedChapterIds: unique([...progress.unlockedChapterIds, nextChapter.id]),
-    current: cursorForPendingGroup(nextChapter, nextPendingGroup),
+    current: cursorForPendingGroup(nextChapter, nextPendingGroup, progress.branchOutcomes),
   };
 }
 

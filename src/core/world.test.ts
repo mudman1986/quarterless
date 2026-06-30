@@ -244,6 +244,46 @@ describe('World pedestrians', () => {
   });
 });
 
+describe('World story objective progress', () => {
+  it('advances tail and capture objectives from scene-fed scripted progress with fresh baselines', () => {
+    const w = new World({
+      player: player(),
+      missions: [
+        createMission({
+          id: 'scripted-tail-capture',
+          title: 'Scripted Tail Capture',
+          objectives: [
+            { kind: 'tail', description: 'Tail the target', seconds: 3 },
+            { kind: 'capture', description: 'Hold the target', seconds: 2 },
+          ],
+          reward: 900,
+        }),
+      ],
+    });
+
+    w.setStoryObjectiveProgress({ tailSeconds: 3, captureSeconds: 1 });
+    w.tick(controls(), 1 / 60);
+
+    expect(w.mission?.currentIndex).toBe(1);
+    expect(w.missionObjective?.kind).toBe('capture');
+    expect(w.score.current).toBe(0);
+
+    w.setStoryObjectiveProgress({ tailSeconds: 3, captureSeconds: 2 });
+    w.tick(controls(), 1 / 60);
+
+    expect(w.mission?.currentIndex).toBe(1);
+    expect(w.missionComplete).toBe(false);
+    expect(w.score.current).toBe(0);
+
+    w.setStoryObjectiveProgress({ tailSeconds: 3, captureSeconds: 3 });
+    w.tick(controls(), 1 / 60);
+
+    expect(w.missionComplete).toBe(true);
+    expect(w.mission).toBeNull();
+    expect(w.score.current).toBe(900);
+  });
+});
+
 describe('World police and wanted level', () => {
   it('spawns police that pursue the player once wanted', () => {
     const w = new World({

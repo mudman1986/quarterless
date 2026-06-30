@@ -24,6 +24,23 @@ export interface RuntimeCampaignTemplate {
   missions: readonly MissionSpec[];
 }
 
+export interface StoryMissionVariantOverride {
+  title?: string;
+  hook?: string;
+  primaryGoal?: string;
+  secondaryPressure?: string;
+  failureState?: string;
+  payoff?: string;
+  requiredSystems?: readonly StorySystem[];
+  prototypeRuntime?: MissionSpec;
+  prototypeScript?: StoryRuntimeScript;
+}
+
+export interface StoryMissionVariant extends StoryMissionVariantOverride {
+  branchId: string;
+  outcomeId: string;
+}
+
 export interface StoryMissionPlan {
   id: string;
   title: string;
@@ -35,6 +52,7 @@ export interface StoryMissionPlan {
   requiredSystems?: readonly StorySystem[];
   prototypeRuntime?: MissionSpec;
   prototypeScript?: StoryRuntimeScript;
+  variants?: readonly StoryMissionVariant[];
 }
 
 export interface VehicleRouteActorScript {
@@ -191,6 +209,30 @@ export function storyChapterPendingMissionGroup(
   return null;
 }
 
+export function resolveStoryMissionPlan(
+  plan: StoryMissionPlan,
+  branchOutcomes: Record<string, string> = {},
+): StoryMissionPlan {
+  const variant = plan.variants?.find(({ branchId, outcomeId }) => branchOutcomes[branchId] === outcomeId);
+  if (!variant) return plan;
+  const overrides: StoryMissionVariantOverride = {
+    title: variant.title,
+    hook: variant.hook,
+    primaryGoal: variant.primaryGoal,
+    secondaryPressure: variant.secondaryPressure,
+    failureState: variant.failureState,
+    payoff: variant.payoff,
+    requiredSystems: variant.requiredSystems,
+    prototypeRuntime: variant.prototypeRuntime,
+    prototypeScript: variant.prototypeScript,
+  };
+  return {
+    ...plan,
+    ...overrides,
+    variants: plan.variants,
+  };
+}
+
 function storyActorStartPosition(actor: StoryActorScript | undefined): Vec2 | null {
   if (!actor) return null;
   if (actor.kind === 'vehicleRoute' || actor.kind === 'pedestrianRoute') {
@@ -279,10 +321,11 @@ export function compileStoryChapterRuntimeCampaign(
   chapter: StoryChapter,
   startMissionId = chapter.missions[0]?.id,
   startObjectiveIndex?: number,
+  branchOutcomes: Record<string, string> = {},
 ): Mission[] | null {
   const startIndex = chapter.missions.findIndex((mission) => mission.id === startMissionId);
   if (startIndex === -1) return null;
-  const plans = chapter.missions.slice(startIndex);
+  const plans = chapter.missions.slice(startIndex).map((mission) => resolveStoryMissionPlan(mission, branchOutcomes));
   if (plans.some((mission) => !mission.prototypeRuntime)) return null;
 
   return plans.map((plan, index) => {
