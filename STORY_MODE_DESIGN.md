@@ -415,6 +415,7 @@ Implemented now:
 - Focused Playwright coverage now covers story-mode entry, story-menu chapter selection across acts, recap archive presence, refresh-resume, manual save-slot persistence, authored mission transition panels, chapter restart into the next chapter, pause-menu chapter replay, and the current story-complete panel.
 - Focused Playwright coverage now also covers story mission-start markers, route markers, marked-target minimap dots, scripted chase-target minimap markers, grouped in-world mission selection, staged district-state labels, and the integrated launcher-owned pause flow.
 - A dedicated authored-mission browser regression now walks every current runtime story mission and verifies that each mission shell boots with the expected mission title and scripted district-state surface.
+- Regression coverage now extends beyond mission-shell boot checks into longer multi-chapter story progression and lower-level world and scripted-actor seams, including consecutive chapter-finale unlock flow, scene-fed tail/capture objective progress, tail-drain behavior, and actor-loss fail rules.
 - The pause/menu UX is now fully integrated into the Sindicate launcher page: pausing returns to the launcher, which owns resume, checkpoint restart, manual save/load slots, current-objective presentation, and chapter replay.
 - Story mission transitions now use a richer summary card that surfaces reward, objective outcome, duration, collateral, and story unlock changes.
 
@@ -612,7 +613,7 @@ What is still missing before it counts as a full slice:
 
 - Rich scripted encounter control for multi-stage raids and more persistent systemic district-state choreography beyond the current actor layer.
 - A more polished chapter-map style story front end and deeper post-mission scorecards.
-- Broader world-level and long-run multi-chapter regression coverage beyond the current focused story browser suite.
+- Deeper mission-outcome assertions and longer-running scripted encounter coverage beyond the current shell, progression, and world-seam regression suite.
 
 ## What To Do Next
 
@@ -621,4 +622,4 @@ Recommended next production step:
 1. Expand the mission-actor layer from staged route actors into full multi-stage raids, convoy handoffs with multiple tracked actors, and more persistent systemic district-state choreography.
 2. Add fuller post-mission scorecards and a more polished chapter-map style story front end on top of the current act-grouped menu and recap archive.
 3. Continue authoring Chapter 10 and beyond on top of the broader actor layer.
-4. Broaden regression coverage from the focused story browser suite into longer multi-chapter progression and more world-level scripted-actor tests.
+4. Extend regression coverage from shell and progression checks into mission-outcome assertions for scripted encounters, district-state changes, and future branch-dependent mission variants.
