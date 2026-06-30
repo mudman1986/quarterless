@@ -54,7 +54,7 @@ describe('advancePedestrianRouteActor', () => {
 });
 
 describe('updateTailCaptureProgress', () => {
-  it('accumulates tail progress near the actor and capture progress at the final stop', () => {
+  it('accumulates tail progress near the actor and capture progress before the route ends', () => {
     const actor = {
       kind: 'vehicleRoute' as const,
       actorId: 'a',
@@ -76,7 +76,6 @@ describe('updateTailCaptureProgress', () => {
       progress,
       { playerPos: vec2(0, 0), playerSpeed: 0, dt: 1, actorPositions: {} },
       vec2(10, 0),
-      1,
     );
     expect(next.tailSeconds).toBe(1);
     expect(next.captureSeconds).toBe(1);
@@ -107,19 +106,55 @@ describe('updateTailCaptureProgress', () => {
       progress,
       { playerPos: vec2(100, 0), playerSpeed: 25, dt: 1, actorPositions: {} },
       vec2(10, 0),
-      1,
     );
 
     expect(next.tailSeconds).toBe(3);
     expect(next.tailLostSeconds).toBeCloseTo(3.6);
     expect(next.captureSeconds).toBe(0);
   });
+
+  it('treats a disabled target as immediately captured', () => {
+    const actor = {
+      kind: 'vehicleRoute' as const,
+      actorId: 'a',
+      vehicleKind: 'ambulance' as const,
+      route: [vec2(0, 0), vec2(10, 0)],
+      speed: 100,
+      followRadius: 40,
+      captureRadius: 20,
+      captureMaxSpeed: 10,
+    };
+    const progress: StoryProgressState = {
+      tailSeconds: 0,
+      captureSeconds: 0,
+      tailLostSeconds: 0,
+      failCounters: {},
+    };
+
+    const next = updateTailCaptureProgress(
+      actor,
+      progress,
+      { playerPos: vec2(100, 0), playerSpeed: 25, dt: 1, actorPositions: {} },
+      vec2(10, 0),
+      true,
+    );
+
+    expect(next.captureSeconds).toBe(Number.MAX_SAFE_INTEGER);
+  });
 });
 
 describe('applyStoryFailRules', () => {
   it('fails when an escort actor is left outside its allowed radius too long', () => {
     const result = applyStoryFailRules(
-      [{ kind: 'escortRadius', actorId: 'escort', radius: 30, maxSeconds: 2, failureText: 'Escort lost' }],
+      [
+        {
+          kind: 'escortRadius',
+          actorId: 'escort',
+          radius: 30,
+          maxSeconds: 2,
+          failureText: 'Escort lost',
+        },
+      ],
       { tailSeconds: 0, captureSeconds: 0, tailLostSeconds: 0, failCounters: {} },
       {
         playerPos: vec2(0, 0),
@@ -157,11 +192,9 @@ describe('stage transitions', () => {
       failCounters: {},
     };
     expect(
-      isStageTransitionMet(
-        { kind: 'routeComplete', actorId: 'van' },
-        progress,
-        { van: normalizeRouteCompletion(2, 3) },
-      ),
+      isStageTransitionMet({ kind: 'routeComplete', actorId: 'van' }, progress, {
+        van: normalizeRouteCompletion(2, 3),
+      }),
     ).toBe(true);
   });
 

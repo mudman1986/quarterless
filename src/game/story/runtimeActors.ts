@@ -172,7 +172,7 @@ export function updateTailCaptureProgress(
   progress: StoryProgressState,
   ctx: StoryScriptTickContext,
   actorPos: Vec2,
-  routeIndex: number,
+  targetDisabled = false,
 ): StoryProgressState {
   const playerDist = distance(ctx.playerPos, actorPos);
   let tailSeconds = progress.tailSeconds;
@@ -190,11 +190,14 @@ export function updateTailCaptureProgress(
   const loseGrace = actor.loseGraceSeconds ?? 2.5;
   if (tailLostSeconds > loseGrace) tailSeconds = Math.max(0, tailSeconds - ctx.dt * tailDrain);
 
-  const captureReady =
+  if (targetDisabled) {
+    captureSeconds = Number.MAX_SAFE_INTEGER;
+  } else if (
     actor.captureRadius !== undefined &&
     actor.captureMaxSpeed !== undefined &&
-    routeIndex >= actor.route.length - 1;
-  if (captureReady && playerDist <= (actor.captureRadius ?? 0) && Math.abs(ctx.playerSpeed) <= (actor.captureMaxSpeed ?? 0)) {
+    playerDist <= actor.captureRadius &&
+    Math.abs(ctx.playerSpeed) <= actor.captureMaxSpeed
+  ) {
     captureSeconds += ctx.dt;
   } else {
     captureSeconds = 0;

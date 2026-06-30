@@ -44,7 +44,7 @@ Mission shape:
 1. Night Ferry Run: Drive from the bus depot to the old dock motel while avoiding escalating patrol attention. This is a soft onboarding mission focused on route choice, near misses, and learning that the city is hostile before the first gunfire starts.
 2. Burned Locker: Reach three storage lockers before cleanup crews do, grab ledger fragments from each, and escape after the last pickup triggers a wanted spike. The goal is fast traversal with a changing risk profile instead of simple collection.
 3. Wreck Before Dawn: Cause a controlled crash to block a cleanup van, then fight or evade the crew long enough to steal its cargo manifest. This introduces deliberate collision as a mission tool.
-4. False Ambulance: Follow a fake ambulance that collected one of Nia's contacts, keep visual contact without destroying it, and then box it in at a chop garage until it stops. The mission now uses a two-stage pursuit flow so the player first tails the ambulance and then transitions into a clearer capture phase at the garage.
+4. False Ambulance: Chase a fake ambulance that collected one of Nia's contacts and stop it anywhere on the route before it reaches the chop garage. Boxing it in or blowing it up should both count, so the mission plays like an interception instead of a forced tail sequence.
 5. Last Call At Pier 9: Assault the pier office, eliminate marked cleaners, retrieve the dispatch badge inside, and survive the counterpush until the road out reopens. This closes the chapter with a compact siege.
 
 ### Chapter 2 - Spare Parts Gospel

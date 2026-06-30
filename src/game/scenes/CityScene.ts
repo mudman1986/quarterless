@@ -15,17 +15,8 @@ import {
 } from '../../core/world';
 import type { WorldOptions } from '../../core/world';
 import { CITY_SPEC } from '../citySpec';
-import {
-  clearGameState,
-  GAME_STATE_KEY,
-  loadGameState,
-  saveGameState,
-} from '../../core/gameState';
-import {
-  loadHighScore,
-  saveHighScore,
-  type KeyValueStore,
-} from '../../core/highScore';
+import { clearGameState, GAME_STATE_KEY, loadGameState, saveGameState } from '../../core/gameState';
+import { loadHighScore, saveHighScore, type KeyValueStore } from '../../core/highScore';
 import type { Mission } from '../../core/mission';
 import type { Car } from '../../core/vehicle';
 import type { Pedestrian } from '../../core/pedestrianAI';
@@ -427,7 +418,9 @@ export class CityScene extends Phaser.Scene {
       }
     })();
     const launchRequest = launchStore ? loadStoryLaunchRequest(launchStore) : null;
-    const launchProgress = launchStore ? loadStoryProgress(launchStore, STORY_LAUNCH_PROGRESS_KEY) : null;
+    const launchProgress = launchStore
+      ? loadStoryProgress(launchStore, STORY_LAUNCH_PROGRESS_KEY)
+      : null;
     if (launchStore) {
       clearStoryProgress(launchStore, STORY_LAUNCH_PROGRESS_KEY);
       clearStoryLaunchRequest(launchStore);
@@ -435,7 +428,8 @@ export class CityScene extends Phaser.Scene {
     this.requestedLoadKey = data.loadSaveKey ?? launchRequest?.loadSaveKey ?? GAME_STATE_KEY;
     this.skipResumeOnCreate = !!(data.skipResume ?? launchRequest?.skipResume);
     this.requestedMode = data.mode ?? launchRequest?.mode ?? this.queryRequestsStoryMode();
-    this.requestedStoryProgress = data.storyProgress ?? launchRequest?.storyProgress ?? launchProgress ?? null;
+    this.requestedStoryProgress =
+      data.storyProgress ?? launchRequest?.storyProgress ?? launchProgress ?? null;
   }
 
   private queryRequestsStoryMode(): 'sandbox' | 'story' {
@@ -493,11 +487,18 @@ export class CityScene extends Phaser.Scene {
 
     const loadKey = this.skipResumeOnCreate ? null : this.requestedLoadKey;
     const savedState = loadKey ? loadGameState(this.store, loadKey) : null;
-    const savedStoryProgress = loadKey ? loadStoryProgress(this.store, storyProgressSaveKey(loadKey)) : null;
-    this.mode = this.requestedMode === 'story' || savedStoryProgress || this.requestedStoryProgress ? 'story' : 'sandbox';
+    const savedStoryProgress = loadKey
+      ? loadStoryProgress(this.store, storyProgressSaveKey(loadKey))
+      : null;
+    this.mode =
+      this.requestedMode === 'story' || savedStoryProgress || this.requestedStoryProgress
+        ? 'story'
+        : 'sandbox';
     this.storyProgress =
       this.mode === 'story'
-        ? this.requestedStoryProgress ?? savedStoryProgress ?? createStoryProgress(STORY_MODE_PROTOTYPE)
+        ? (this.requestedStoryProgress ??
+          savedStoryProgress ??
+          createStoryProgress(STORY_MODE_PROTOTYPE))
         : null;
     this.savedBest = Math.max(loadHighScore(this.store), savedState?.world.score.best ?? 0);
     if (this.savedBest > 0) this.savedBest = saveHighScore(this.store, this.savedBest);
@@ -535,7 +536,8 @@ export class CityScene extends Phaser.Scene {
     this.touchInput_ = new TouchInput(this.input);
     this.touchAvailable = touchDeviceLikely();
     const storedTouchPreference = this.store.getItem(TOUCH_PREF_KEY);
-    const preferredTouchEnabled = storedTouchPreference === null ? this.touchAvailable : storedTouchPreference === '1';
+    const preferredTouchEnabled =
+      storedTouchPreference === null ? this.touchAvailable : storedTouchPreference === '1';
     this.setTouchEnabled(preferredTouchEnabled);
     if (this.touchLayout) this.touchInput_.setLayout(this.touchLayout);
     // Menu keys: P pauses/resumes, N starts a fresh game.
@@ -591,13 +593,18 @@ export class CityScene extends Phaser.Scene {
       water: this.city.water,
       sidewalks: this.city.sidewalks,
       bestScore,
-      ...(this.mode === 'story' ? (storyMissions ? { missions: storyMissions } : {}) : { campaigns: this.buildCampaigns() }),
+      ...(this.mode === 'story'
+        ? storyMissions
+          ? { missions: storyMissions }
+          : {}
+        : { campaigns: this.buildCampaigns() }),
     };
   }
 
   private buildStoryCampaign(): Mission[] | null {
     if (this.mode !== 'story' || !this.storyProgress?.current) return null;
-    if (this.storyProgress.current.objectiveIndex === STORY_MISSION_GROUP_SELECTION_INDEX) return null;
+    if (this.storyProgress.current.objectiveIndex === STORY_MISSION_GROUP_SELECTION_INDEX)
+      return null;
     const chapter = currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress);
     if (!chapter) return null;
     return compileStoryChapterRuntimeCampaign(
@@ -644,7 +651,11 @@ export class CityScene extends Phaser.Scene {
       return;
     }
 
-    if (!this.storyScript || this.storyScript.chapterId !== chapter.id || this.storyScript.missionId !== mission.id) {
+    if (
+      !this.storyScript ||
+      this.storyScript.chapterId !== chapter.id ||
+      this.storyScript.missionId !== mission.id
+    ) {
       this.storyScript = {
         chapterId: chapter.id,
         missionId: mission.id,
@@ -684,22 +695,35 @@ export class CityScene extends Phaser.Scene {
     ];
   }
 
-  private ensureStoryTargetCar(actorId: string, pos: Vec2, kind: VehicleKind = 'ambulance'): number {
+  private ensureStoryTargetCar(
+    actorId: string,
+    pos: Vec2,
+    kind: VehicleKind = 'ambulance',
+  ): number {
     const script = this.storyScript!;
     const existing = script.actorCarIndices[actorId];
     if (existing !== undefined && this.world.cars[existing]) {
       return existing;
     }
     const index = this.world.cars.length;
-    this.world.cars.push({ pos, heading: 0, speed: 0, radius: vehicleBodySpecForKind(kind).radius });
-    (this.world as unknown as { carDrivers: (TrafficAI | null)[] }).carDrivers.push({ dir: vec2(1, 0) });
+    this.world.cars.push({
+      pos,
+      heading: 0,
+      speed: 0,
+      radius: vehicleBodySpecForKind(kind).radius,
+    });
+    (this.world as unknown as { carDrivers: (TrafficAI | null)[] }).carDrivers.push({
+      dir: vec2(1, 0),
+    });
     (this.world as unknown as { carKinds: VehicleKind[] }).carKinds.push(kind);
-    (this.world as unknown as { taxiStates: (null)[] }).taxiStates.push(null);
+    (this.world as unknown as { taxiStates: null[] }).taxiStates.push(null);
     (this.world as unknown as { carRespawnsAtTow: boolean[] }).carRespawnsAtTow.push(false);
     (this.world as unknown as { carHealth: number[] }).carHealth.push(100);
     (this.world as unknown as { carBurnTimers: number[] }).carBurnTimers.push(0);
     (this.world as unknown as { carBurnByPlayer: boolean[] }).carBurnByPlayer.push(false);
-    (this.world as unknown as { stolenServiceVehicles: boolean[] }).stolenServiceVehicles.push(false);
+    (this.world as unknown as { stolenServiceVehicles: boolean[] }).stolenServiceVehicles.push(
+      false,
+    );
     (this.world as unknown as { towDispatchCooldowns: number[] }).towDispatchCooldowns.push(0);
     (this.world as unknown as { wreckedCars: boolean[] }).wreckedCars.push(false);
     (this.world as unknown as { towedCars: boolean[] }).towedCars.push(false);
@@ -711,10 +735,17 @@ export class CityScene extends Phaser.Scene {
   private ensureStoryTargetPed(
     actorId: string,
     pos: Vec2,
-    opts: { uniform?: Pedestrian['uniform']; missionTarget?: boolean; count?: number; spread?: number } = {},
+    opts: {
+      uniform?: Pedestrian['uniform'];
+      missionTarget?: boolean;
+      count?: number;
+      spread?: number;
+    } = {},
   ): number[] {
     const script = this.storyScript!;
-    const existing = script.actorPedIndices[actorId]?.filter((index) => !!this.world.pedestrians[index]);
+    const existing = script.actorPedIndices[actorId]?.filter(
+      (index) => !!this.world.pedestrians[index],
+    );
     if (existing && existing.length > 0) return existing;
 
     const count = Math.max(1, opts.count ?? 1);
@@ -739,12 +770,26 @@ export class CityScene extends Phaser.Scene {
     return created;
   }
 
-  private runVehicleRouteActor(actor: VehicleRouteActorScript, dt: number): { carIndex: number; routeIndex: number } {
+  private storyTargetCarDisabled(carIndex: number): boolean {
+    const wreckedCars = (this.world as unknown as { wreckedCars: boolean[] }).wreckedCars;
+    return !!wreckedCars[carIndex] || this.world.carIsBurning(carIndex);
+  }
+
+  private runVehicleRouteActor(
+    actor: VehicleRouteActorScript,
+    dt: number,
+    locked = false,
+  ): { carIndex: number; routeIndex: number; disabled: boolean } {
     const script = this.storyScript!;
     const first = actor.route[0] ?? vec2(0, 0);
     const carIndex = this.ensureStoryTargetCar(actor.actorId, first, actor.vehicleKind);
     const routeIndex = script.actorRouteIndices[actor.actorId] ?? 0;
     const car = this.world.cars[carIndex]!;
+    const disabled = this.storyTargetCarDisabled(carIndex);
+    if (disabled || locked) {
+      this.world.cars[carIndex] = { ...car, speed: 0 };
+      return { carIndex, routeIndex, disabled };
+    }
     const step = advanceVehicleRouteActor(actor, car.pos, routeIndex, dt, car.heading);
     this.world.cars[carIndex] = {
       ...car,
@@ -753,13 +798,18 @@ export class CityScene extends Phaser.Scene {
       pos: step.pos,
     };
     script.actorRouteIndices[actor.actorId] = step.routeIndex;
-    return { carIndex, routeIndex: step.routeIndex };
+    return { carIndex, routeIndex: step.routeIndex, disabled };
   }
 
-  private runPedestrianRouteActor(actor: PedestrianRouteActorScript, dt: number): { pedIndex: number; routeIndex: number } {
+  private runPedestrianRouteActor(
+    actor: PedestrianRouteActorScript,
+    dt: number,
+  ): { pedIndex: number; routeIndex: number } {
     const script = this.storyScript!;
     const first = actor.route[0] ?? vec2(0, 0);
-    const pedIndex = this.ensureStoryTargetPed(actor.actorId, first, { uniform: actor.uniform })[0]!;
+    const pedIndex = this.ensureStoryTargetPed(actor.actorId, first, {
+      uniform: actor.uniform,
+    })[0]!;
     const ped = this.world.pedestrians[pedIndex]!;
     const routeIndex = script.actorRouteIndices[actor.actorId] ?? 0;
     const step = advancePedestrianRouteActor(actor, ped.pos, routeIndex, dt, ped.heading);
@@ -791,7 +841,10 @@ export class CityScene extends Phaser.Scene {
       current: { ...this.storyProgress.current, objectiveIndex: 0 },
     };
     this.storyProgress = restart;
-    this.showStoryPanel(`MISSION FAILED\n\n${failureText}\n\nRetrying ${currentStoryMission(STORY_MODE_PROTOTYPE, restart)?.title ?? 'mission'}...`, 2.6);
+    this.showStoryPanel(
+      `MISSION FAILED\n\n${failureText}\n\nRetrying ${currentStoryMission(STORY_MODE_PROTOTYPE, restart)?.title ?? 'mission'}...`,
+      2.6,
+    );
     this.pendingStoryRestart = restart;
   }
 
@@ -820,29 +873,40 @@ export class CityScene extends Phaser.Scene {
     const routeIndices: Record<string, number> = {};
     let primaryVehicleActor: VehicleRouteActorScript | null = null;
     let primaryVehiclePos: Vec2 | null = null;
-    let primaryRouteIndex = 0;
+    let primaryVehicleDisabled = false;
 
     for (const actor of stage.actors) {
       if (actor.kind === 'vehicleRoute') {
-        const state = this.runVehicleRouteActor(actor, dt);
+        const state = this.runVehicleRouteActor(
+          actor,
+          dt,
+          actor.actorId === stagePrimaryActorId && script.captureSeconds > 0,
+        );
         const pos = this.world.cars[state.carIndex]!.pos;
         actorPositions[actor.actorId] = pos;
-        routeIndices[actor.actorId] = normalizeRouteCompletion(state.routeIndex, actor.route.length);
+        routeIndices[actor.actorId] = normalizeRouteCompletion(
+          state.routeIndex,
+          actor.route.length,
+        );
         if (actor.actorId === stagePrimaryActorId) {
           primaryVehicleActor = actor;
           primaryVehiclePos = pos;
-          primaryRouteIndex = state.routeIndex;
+          primaryVehicleDisabled = state.disabled;
         }
         continue;
       }
       if (actor.kind === 'pedestrianRoute') {
         const state = this.runPedestrianRouteActor(actor, dt);
         actorPositions[actor.actorId] = this.world.pedestrians[state.pedIndex]?.pos ?? null;
-        routeIndices[actor.actorId] = normalizeRouteCompletion(state.routeIndex, actor.route.length);
+        routeIndices[actor.actorId] = normalizeRouteCompletion(
+          state.routeIndex,
+          actor.route.length,
+        );
         continue;
       }
       const indices = this.runPedestrianSquadActor(actor);
-      actorPositions[actor.actorId] = indices.length > 0 ? this.world.pedestrians[indices[0]]?.pos ?? null : null;
+      actorPositions[actor.actorId] =
+        indices.length > 0 ? (this.world.pedestrians[indices[0]]?.pos ?? null) : null;
       routeIndices[actor.actorId] = 0;
     }
 
@@ -864,8 +928,14 @@ export class CityScene extends Phaser.Scene {
           actorPositions,
         },
         primaryVehiclePos,
-        primaryRouteIndex,
+        primaryVehicleDisabled,
       );
+      if (progress.captureSeconds > 0 && !primaryVehicleDisabled) {
+        const primaryCarIndex = script.actorCarIndices[stagePrimaryActorId];
+        if (primaryCarIndex !== undefined && this.world.cars[primaryCarIndex]) {
+          this.world.cars[primaryCarIndex] = { ...this.world.cars[primaryCarIndex]!, speed: 0 };
+        }
+      }
     } else {
       progress = { ...progress, tailSeconds: 0, captureSeconds: 0, tailLostSeconds: 0 };
     }
@@ -888,17 +958,24 @@ export class CityScene extends Phaser.Scene {
         script.stageIndex += 1;
         script.failCounters = {};
         const nextStage = stages[script.stageIndex]!;
-        this.showStoryPanel(`STAGE SHIFT\n${nextStage.title}\n\n${nextStage.districtState?.summary ?? 'The city is changing around the mission.'}`, 3.2);
+        this.showStoryPanel(
+          `STAGE SHIFT\n${nextStage.title}\n\n${nextStage.districtState?.summary ?? 'The city is changing around the mission.'}`,
+          3.2,
+        );
       }
     }
   }
 
   private persistGameState(key = GAME_STATE_KEY): void {
     if (!this.world) return;
-    saveGameState(this.store, {
-      world: this.world.snapshot(),
-      timeOfDay: this.timeOfDay,
-    }, key);
+    saveGameState(
+      this.store,
+      {
+        world: this.world.snapshot(),
+        timeOfDay: this.timeOfDay,
+      },
+      key,
+    );
     if (this.mode === 'story' && this.storyProgress) {
       saveStoryProgress(
         this.store,
@@ -931,8 +1008,10 @@ export class CityScene extends Phaser.Scene {
     const drivers: (TrafficAI | null)[] = [];
     const kinds: VehicleKind[] = [];
     const respawnsAtTow: boolean[] = [];
-    const parkedKind = (seed: number): VehicleKind => PARKED_TRAFFIC_MIX[seed % PARKED_TRAFFIC_MIX.length] ?? 'car';
-    const movingKind = (seed: number): VehicleKind => MOVING_TRAFFIC_MIX[seed % MOVING_TRAFFIC_MIX.length] ?? 'car';
+    const parkedKind = (seed: number): VehicleKind =>
+      PARKED_TRAFFIC_MIX[seed % PARKED_TRAFFIC_MIX.length] ?? 'car';
+    const movingKind = (seed: number): VehicleKind =>
+      MOVING_TRAFFIC_MIX[seed % MOVING_TRAFFIC_MIX.length] ?? 'car';
     const bodyRadius = (kind: VehicleKind): number => vehicleBodySpecForKind(kind).radius;
 
     const pushTrafficCar = (
@@ -949,7 +1028,8 @@ export class CityScene extends Phaser.Scene {
 
     const facilityVehiclePos = (facility: Facility, slot = 1): Vec2 => {
       const verticalRoad =
-        facility.roadSpawn.x < facility.building.x || facility.roadSpawn.x > facility.building.x + facility.building.w;
+        facility.roadSpawn.x < facility.building.x ||
+        facility.roadSpawn.x > facility.building.x + facility.building.w;
       const offset = slot * SERVICE_SPAWN_SPACING;
       const pos = verticalRoad
         ? vec2(facility.roadSpawn.x, facility.roadSpawn.y + offset)
@@ -979,7 +1059,11 @@ export class CityScene extends Phaser.Scene {
     spots.forEach((spot, i) => {
       if (i % stride !== 0) return;
       const kind = parkedKind(i);
-      pushTrafficCar({ pos: spot.pos, heading: spot.heading, speed: 0, radius: bodyRadius(kind) }, null, kind);
+      pushTrafficCar(
+        { pos: spot.pos, heading: spot.heading, speed: 0, radius: bodyRadius(kind) },
+        null,
+        kind,
+      );
       this.parkedSpots.push(spot);
     });
 
@@ -987,10 +1071,23 @@ export class CityScene extends Phaser.Scene {
     // the city rather than random yellow traffic.
     for (const depot of this.city.facilities.filter((facility) => facility.kind === 'taxiDepot')) {
       const verticalRoad =
-        depot.roadSpawn.x < depot.building.x || depot.roadSpawn.x > depot.building.x + depot.building.w;
+        depot.roadSpawn.x < depot.building.x ||
+        depot.roadSpawn.x > depot.building.x + depot.building.w;
       const depotPos = verticalRoad
-        ? vec2(tileCenter(spec, ...Object.values(tileCoord(spec, depot.roadSpawn)) as [number, number]).x, depot.roadSpawn.y)
-        : vec2(depot.roadSpawn.x, tileCenter(spec, ...Object.values(tileCoord(spec, depot.roadSpawn)) as [number, number]).y);
+        ? vec2(
+            tileCenter(
+              spec,
+              ...(Object.values(tileCoord(spec, depot.roadSpawn)) as [number, number]),
+            ).x,
+            depot.roadSpawn.y,
+          )
+        : vec2(
+            depot.roadSpawn.x,
+            tileCenter(
+              spec,
+              ...(Object.values(tileCoord(spec, depot.roadSpawn)) as [number, number]),
+            ).y,
+          );
       const { tx, ty } = tileCoord(spec, depotPos);
       const dir = openDirections(this.city, tx, ty)[0] ?? vec2(1, 0);
       pushTrafficCar(
@@ -1000,10 +1097,14 @@ export class CityScene extends Phaser.Scene {
       );
     }
 
-    for (const station of this.city.facilities.filter((facility) => facility.kind === 'policeStation')) {
+    for (const station of this.city.facilities.filter(
+      (facility) => facility.kind === 'policeStation',
+    )) {
       pushFacilityVehicle(station, 'police');
     }
-    for (const hospital of this.city.facilities.filter((facility) => facility.kind === 'hospital')) {
+    for (const hospital of this.city.facilities.filter(
+      (facility) => facility.kind === 'hospital',
+    )) {
       pushFacilityVehicle(hospital, 'ambulance');
     }
     for (const yard of this.city.facilities.filter((facility) => facility.kind === 'towYard')) {
@@ -1090,7 +1191,12 @@ export class CityScene extends Phaser.Scene {
       .map((f) => f.spawn);
     if (stations.length > 0) return stations;
     const { width, height } = this.city;
-    return [vec2(40, 40), vec2(width - 40, 40), vec2(40, height - 40), vec2(width - 40, height - 40)];
+    return [
+      vec2(40, 40),
+      vec2(width - 40, 40),
+      vec2(40, height - 40),
+      vec2(width - 40, height - 40),
+    ];
   }
 
   /** Ammo crates sit at road intersections around town. */
@@ -1220,7 +1326,6 @@ export class CityScene extends Phaser.Scene {
     for (const facility of this.city.facilities) {
       this.drawFacilityGarage(g, facility);
     }
-
   }
 
   private drawFacilityGarage(g: Phaser.GameObjects.Graphics, facility: Facility): void {
@@ -1237,7 +1342,8 @@ export class CityScene extends Phaser.Scene {
     const doorSpan = Math.min(42, Math.max(26, Math.min(b.w, b.h) * 0.45));
     const doorDepth = 12;
     const apronSpan = doorSpan + 14;
-    const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
+    const clamp = (value: number, min: number, max: number): number =>
+      Math.max(min, Math.min(max, value));
 
     if (road.x < b.x || road.x > b.x + b.w) {
       const side = road.x < b.x ? -1 : 1;
@@ -1322,7 +1428,9 @@ export class CityScene extends Phaser.Scene {
     for (let tx = 0; tx < cols; tx += block) {
       for (let ty = 0; ty < rows; ty += block) {
         if (this.city.isRoad(tx, ty) && !this.city.isWater(tx, ty)) {
-          centers.push(vec2(tx * tile + (roadWidth * tile) / 2, ty * tile + (roadWidth * tile) / 2));
+          centers.push(
+            vec2(tx * tile + (roadWidth * tile) / 2, ty * tile + (roadWidth * tile) / 2),
+          );
         }
       }
     }
@@ -1387,7 +1495,10 @@ export class CityScene extends Phaser.Scene {
     }));
 
     const p = this.world.player;
-    this.playerSprite = this.add.image(p.pos.x, p.pos.y, TEX.player).setDepth(10).setRotation(p.angle);
+    this.playerSprite = this.add
+      .image(p.pos.x, p.pos.y, TEX.player)
+      .setDepth(10)
+      .setRotation(p.angle);
 
     // A graphics layer for drawing explosion blasts above everything else.
     this.explosionGfx = this.add.graphics().setDepth(11);
@@ -1425,7 +1536,10 @@ export class CityScene extends Phaser.Scene {
     // Streetlights at every intersection (world space), hidden by day.
     this.nightLights = this.add.container(0, 0).setDepth(901).setAlpha(0);
     for (const c of this.intersectionCenters) {
-      const light = this.add.image(c.x, c.y, 'glow').setScale(0.7).setBlendMode(Phaser.BlendModes.ADD);
+      const light = this.add
+        .image(c.x, c.y, 'glow')
+        .setScale(0.7)
+        .setBlendMode(Phaser.BlendModes.ADD);
       this.nightLights.add(light);
     }
 
@@ -1509,10 +1623,18 @@ export class CityScene extends Phaser.Scene {
       g.fillCircle(car.pos.x, car.pos.y, car.radius * (1.05 + pulse * 0.18));
 
       g.fillStyle(COLORS.fireGlow, 0.75);
-      g.fillCircle(car.pos.x + jitterX * 0.35, car.pos.y + jitterY * 0.35, car.radius * (0.55 + pulse * 0.12));
+      g.fillCircle(
+        car.pos.x + jitterX * 0.35,
+        car.pos.y + jitterY * 0.35,
+        car.radius * (0.55 + pulse * 0.12),
+      );
 
       g.fillStyle(COLORS.fireCore, 0.85);
-      g.fillCircle(car.pos.x - jitterX * 0.2, car.pos.y - jitterY * 0.15, car.radius * (0.26 + pulse * 0.08));
+      g.fillCircle(
+        car.pos.x - jitterX * 0.2,
+        car.pos.y - jitterY * 0.15,
+        car.radius * (0.26 + pulse * 0.08),
+      );
     });
   }
 
@@ -1573,7 +1695,10 @@ export class CityScene extends Phaser.Scene {
       this.medicSprite?.setVisible(false);
       return;
     }
-    this.ambulanceSprite.setVisible(true).setPosition(amb.pos.x, amb.pos.y).setRotation(amb.heading);
+    this.ambulanceSprite
+      .setVisible(true)
+      .setPosition(amb.pos.x, amb.pos.y)
+      .setRotation(amb.heading);
 
     // The medic on foot, while the ambulance is parked fetching the body.
     if (amb.crew) {
@@ -1733,7 +1858,11 @@ export class CityScene extends Phaser.Scene {
     const counter = uiCounterScale(zoom);
 
     const place = (
-      obj: Phaser.GameObjects.Image | Phaser.GameObjects.Text | Phaser.GameObjects.Graphics | undefined,
+      obj:
+        | Phaser.GameObjects.Image
+        | Phaser.GameObjects.Text
+        | Phaser.GameObjects.Graphics
+        | undefined,
       screenX: number,
       screenY: number,
     ): void => {
@@ -1857,7 +1986,14 @@ export class CityScene extends Phaser.Scene {
     // A full-screen dimming overlay for the day/night cycle. Oversized and
     // centred so it covers the viewport at any camera zoom; depth below the HUD.
     this.dayNightOverlay = this.add
-      .rectangle(this.scale.width / 2, this.scale.height / 2, this.scale.width * 3, this.scale.height * 3, 0x0a0f24, 0)
+      .rectangle(
+        this.scale.width / 2,
+        this.scale.height / 2,
+        this.scale.width * 3,
+        this.scale.height * 3,
+        0x0a0f24,
+        0,
+      )
       .setScrollFactor(0)
       .setDepth(900);
   }
@@ -1955,10 +2091,10 @@ export class CityScene extends Phaser.Scene {
     if (!actor) return null;
     if (actor.kind === 'vehicleRoute') {
       const carIndex = this.storyScript.actorCarIndices[actor.actorId];
-      return carIndex !== undefined ? this.world.cars[carIndex]?.pos ?? null : null;
+      return carIndex !== undefined ? (this.world.cars[carIndex]?.pos ?? null) : null;
     }
     const pedIndex = this.storyScript.actorPedIndices[actor.actorId]?.[0];
-    return pedIndex !== undefined ? this.world.pedestrians[pedIndex]?.pos ?? null : null;
+    return pedIndex !== undefined ? (this.world.pedestrians[pedIndex]?.pos ?? null) : null;
   }
 
   private debugMinimapMarkers(): Array<{
@@ -1979,28 +2115,61 @@ export class CityScene extends Phaser.Scene {
     }> = [];
     if (this.selectingStoryMission()) {
       for (const choice of this.storyMissionChoiceTargets()) {
-        markers.push({ kind: 'choice', x: choice.target.x, y: choice.target.y, color: COLORS.mmTarget, style: 'stroke' });
+        markers.push({
+          kind: 'choice',
+          x: choice.target.x,
+          y: choice.target.y,
+          color: COLORS.mmTarget,
+          style: 'stroke',
+        });
       }
     }
     const objective = this.world.missionObjective;
     if (!this.selectingStoryMission() && objective?.kind === 'reach') {
-      markers.push({ kind: 'objective', x: objective.target.x, y: objective.target.y, color: COLORS.mmTarget, style: 'stroke' });
+      markers.push({
+        kind: 'objective',
+        x: objective.target.x,
+        y: objective.target.y,
+        color: COLORS.mmTarget,
+        style: 'stroke',
+      });
     } else if (!this.selectingStoryMission() && objective?.kind === 'route') {
-      const completed = this.world.mission?.objectiveState?.kind === 'route' ? this.world.mission.objectiveState.completed : 0;
+      const completed =
+        this.world.mission?.objectiveState?.kind === 'route'
+          ? this.world.mission.objectiveState.completed
+          : 0;
       const target = objective.targets[completed];
       if (target) {
-        markers.push({ kind: 'objective', x: target.x, y: target.y, color: COLORS.mmTarget, style: 'stroke' });
+        markers.push({
+          kind: 'objective',
+          x: target.x,
+          y: target.y,
+          color: COLORS.mmTarget,
+          style: 'stroke',
+        });
       }
     } else if (!this.selectingStoryMission()) {
       const storyTarget = this.storyMissionTargetPosition();
       if (storyTarget) {
-        markers.push({ kind: 'story-target', x: storyTarget.x, y: storyTarget.y, color: COLORS.mmTarget, style: 'stroke' });
+        markers.push({
+          kind: 'story-target',
+          x: storyTarget.x,
+          y: storyTarget.y,
+          color: COLORS.mmTarget,
+          style: 'stroke',
+        });
       }
     }
 
     const taxiTarget = this.world.taxiTarget;
     if (taxiTarget) {
-      markers.push({ kind: 'taxi', x: taxiTarget.x, y: taxiTarget.y, color: COLORS.mmTaxiTarget, style: 'stroke' });
+      markers.push({
+        kind: 'taxi',
+        x: taxiTarget.x,
+        y: taxiTarget.y,
+        color: COLORS.mmTaxiTarget,
+        style: 'stroke',
+      });
     }
 
     const serviceMission = this.world.serviceMission;
@@ -2017,16 +2186,29 @@ export class CityScene extends Phaser.Scene {
 
     for (const ped of this.world.pedestrians) {
       if (!ped.missionTarget) continue;
-      markers.push({ kind: 'mission-target', x: ped.pos.x, y: ped.pos.y, color: COLORS.mmTarget, style: 'fill', radius: 2 });
+      markers.push({
+        kind: 'mission-target',
+        x: ped.pos.x,
+        y: ped.pos.y,
+        color: COLORS.mmTarget,
+        style: 'fill',
+        radius: 2,
+      });
     }
     return markers;
   }
 
   private maybeStartSelectedStoryMission(): boolean {
     if (!this.selectingStoryMission() || !this.storyProgress) return false;
-    const choice = this.storyMissionChoiceTargets().find((entry) => distance(this.world.focus, entry.target) <= 24);
+    const choice = this.storyMissionChoiceTargets().find(
+      (entry) => distance(this.world.focus, entry.target) <= 24,
+    );
     if (!choice) return false;
-    const selected = selectStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress, choice.mission.id);
+    const selected = selectStoryMission(
+      STORY_MODE_PROTOTYPE,
+      this.storyProgress,
+      choice.mission.id,
+    );
     if (selected === this.storyProgress) return false;
     this.storyProgress = selected;
     this.skipPersistOnShutdown = true;
@@ -2037,7 +2219,10 @@ export class CityScene extends Phaser.Scene {
   update(_time: number, deltaMs: number): void {
     const touchSnapshot = this.touchInput_?.snapshot();
     const touchConfirmPressed =
-      !!touchSnapshot && this.touchEnabled && touchSnapshot.confirmPressed && !this.prevTouchConfirm;
+      !!touchSnapshot &&
+      this.touchEnabled &&
+      touchSnapshot.confirmPressed &&
+      !this.prevTouchConfirm;
     const acknowledgePressed = Phaser.Input.Keyboard.JustDown(this.storyAcknowledgeKey);
     this.syncTouchControls(touchSnapshot);
 
@@ -2179,7 +2364,11 @@ export class CityScene extends Phaser.Scene {
     if (!this.pauseTouchButton) return;
     const show = false;
     this.pauseTouchButton
-      .setText(this.touchEnabled ? 'Touch Controls: ON\nTap to disable' : 'Touch Controls: OFF\nTap to enable')
+      .setText(
+        this.touchEnabled
+          ? 'Touch Controls: ON\nTap to disable'
+          : 'Touch Controls: OFF\nTap to enable',
+      )
       .setVisible(show);
   }
 
@@ -2201,7 +2390,10 @@ export class CityScene extends Phaser.Scene {
   /** Persist the high score, play sounds, and announce mission changes. */
   private handleEvents(): void {
     const w = this.world;
-    const previousStoryChapter = this.mode === 'story' && this.storyProgress ? currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress) : null;
+    const previousStoryChapter =
+      this.mode === 'story' && this.storyProgress
+        ? currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress)
+        : null;
 
     // Save a new high score as soon as it is beaten.
     if (w.score.best > this.savedBest) {
@@ -2217,13 +2409,19 @@ export class CityScene extends Phaser.Scene {
     const objective = w.missionObjective?.description ?? '';
     if (this.mode === 'story' && this.storyProgress) {
       if (missionId !== this.prevMissionId && this.prevMissionId !== null) {
-        this.storyProgress = completeStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress, this.prevMissionId);
+        this.storyProgress = completeStoryMission(
+          STORY_MODE_PROTOTYPE,
+          this.storyProgress,
+          this.prevMissionId,
+        );
       }
       if (w.mission && this.storyProgress.current) {
         const authoredMission = currentStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress);
         this.storyProgress = setStoryObjectiveIndex(
           this.storyProgress,
-          authoredMission ? storyObjectiveIndexFromRuntime(authoredMission, w.mission.currentIndex) : w.mission.currentIndex,
+          authoredMission
+            ? storyObjectiveIndexFromRuntime(authoredMission, w.mission.currentIndex)
+            : w.mission.currentIndex,
         );
       }
     }
@@ -2233,8 +2431,12 @@ export class CityScene extends Phaser.Scene {
     if (w.missionComplete && !this.prevMissionComplete) {
       this.sfx.fanfare();
       if (this.mode === 'story') {
-        const nextMission = this.storyProgress ? currentStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress) : null;
-        const nextChapter = this.storyProgress ? currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress) : null;
+        const nextMission = this.storyProgress
+          ? currentStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress)
+          : null;
+        const nextChapter = this.storyProgress
+          ? currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress)
+          : null;
         this.persistGameState();
         if (nextMission?.prototypeRuntime && nextChapter) {
           this.showStoryPanel(
@@ -2284,7 +2486,10 @@ export class CityScene extends Phaser.Scene {
             ? 'AMBULANCE RUN\nRecover the body'
             : 'TOW JOB\nRecover the wreck',
       );
-    } else if (serviceMission?.kind === 'ambulance' && serviceMission.stage !== this.prevServiceStage) {
+    } else if (
+      serviceMission?.kind === 'ambulance' &&
+      serviceMission.stage !== this.prevServiceStage
+    ) {
       this.showBanner('AMBULANCE RUN\nReturn the body to the hospital');
     } else if (serviceMission?.kind === 'tow' && serviceMission.stage !== this.prevServiceStage) {
       this.showBanner('TOW JOB\nReturn the wreck to the tow yard');
@@ -2301,7 +2506,8 @@ export class CityScene extends Phaser.Scene {
     this.prevTaxiMissionId = taxiMission?.id ?? null;
     this.prevTaxiStage = taxiMission?.stage ?? '';
     this.prevServiceMissionId = serviceMission?.id ?? null;
-    this.prevServiceStage = serviceMission && serviceMission.kind !== 'police' ? serviceMission.stage : '';
+    this.prevServiceStage =
+      serviceMission && serviceMission.kind !== 'police' ? serviceMission.stage : '';
     this.prevExplosions = w.explosionsTriggered;
     this.prevDrivingCarIndex = w.drivingCarIndex;
   }
@@ -2385,7 +2591,10 @@ export class CityScene extends Phaser.Scene {
       this.showMissionBriefingPanel();
       return;
     }
-    const resolvedPreviousMission = resolveStoryMissionPlan(previousMission, this.storyProgress.branchOutcomes);
+    const resolvedPreviousMission = resolveStoryMissionPlan(
+      previousMission,
+      this.storyProgress.branchOutcomes,
+    );
     const summary = this.buildStoryMissionSummaryCard(resolvedPreviousMission, this.storyProgress);
     if (summary) {
       this.showPersistentStoryPanel(this.storyMissionSummaryText(summary));
@@ -2410,11 +2619,16 @@ export class CityScene extends Phaser.Scene {
     const resolvedPreviousMission = previousMission
       ? resolveStoryMissionPlan(previousMission, this.storyProgress.branchOutcomes)
       : null;
-    const leads = choices.map((mission, index) => `${index + 1}. ${mission.title}\n${mission.primaryGoal}`).join('\n\n');
+    const leads = choices
+      .map((mission, index) => `${index + 1}. ${mission.title}\n${mission.primaryGoal}`)
+      .join('\n\n');
     const header = resolvedPreviousMission
       ? `MISSION COMPLETE\n${resolvedPreviousMission.title}\n\n${resolvedPreviousMission.payoff}`
       : `CHAPTER ${chapter.order}\n${chapter.title}`;
-    this.showStoryPanel(`${header}\n\nChoose the next lead by driving into a mission marker.\n\n${leads}`, 6.2);
+    this.showStoryPanel(
+      `${header}\n\nChoose the next lead by driving into a mission marker.\n\n${leads}`,
+      6.2,
+    );
   }
 
   private showStoryBriefingIfNeeded(): void {
@@ -2436,7 +2650,11 @@ export class CityScene extends Phaser.Scene {
   }
 
   private storyChapterTitle(chapterId: string): string {
-    return STORY_MODE_PROTOTYPE.acts.flatMap((act) => act.chapters).find((chapter) => chapter.id === chapterId)?.title ?? chapterId;
+    return (
+      STORY_MODE_PROTOTYPE.acts
+        .flatMap((act) => act.chapters)
+        .find((chapter) => chapter.id === chapterId)?.title ?? chapterId
+    );
   }
 
   private syncStoryMissionSummaryBaseline(): void {
@@ -2472,20 +2690,36 @@ export class CityScene extends Phaser.Scene {
       0,
       this.world.kills - baseline.kills - (this.world.targetKills - baseline.targetKills),
     );
-    const vehicleLosses = Math.max(0, this.world.explosionsTriggered - baseline.explosionsTriggered);
-    const durationSeconds = Math.max(1, Math.round(this.world.elapsedSeconds - baseline.elapsedSeconds));
+    const vehicleLosses = Math.max(
+      0,
+      this.world.explosionsTriggered - baseline.explosionsTriggered,
+    );
+    const durationSeconds = Math.max(
+      1,
+      Math.round(this.world.elapsedSeconds - baseline.elapsedSeconds),
+    );
     const unlocked = nextProgress
-      ? nextProgress.unlockedChapterIds.filter((chapterId) => !baseline.unlockedChapterIds.includes(chapterId))
+      ? nextProgress.unlockedChapterIds.filter(
+          (chapterId) => !baseline.unlockedChapterIds.includes(chapterId),
+        )
       : [];
     const completed = nextProgress
-      ? nextProgress.completedChapterIds.filter((chapterId) => !baseline.completedChapterIds.includes(chapterId))
+      ? nextProgress.completedChapterIds.filter(
+          (chapterId) => !baseline.completedChapterIds.includes(chapterId),
+        )
       : [];
     const unlockLines = [
       ...completed.map((chapterId) => `Chapter complete: ${this.storyChapterTitle(chapterId)}`),
-      ...unlocked.filter((chapterId) => !completed.includes(chapterId)).map((chapterId) => `Unlocked: ${this.storyChapterTitle(chapterId)}`),
+      ...unlocked
+        .filter((chapterId) => !completed.includes(chapterId))
+        .map((chapterId) => `Unlocked: ${this.storyChapterTitle(chapterId)}`),
     ];
-    const nextChoices = nextProgress ? currentStoryMissionChoices(STORY_MODE_PROTOTYPE, nextProgress) : [];
-    const nextMission = nextProgress ? currentStoryMission(STORY_MODE_PROTOTYPE, nextProgress) : null;
+    const nextChoices = nextProgress
+      ? currentStoryMissionChoices(STORY_MODE_PROTOTYPE, nextProgress)
+      : [];
+    const nextMission = nextProgress
+      ? currentStoryMission(STORY_MODE_PROTOTYPE, nextProgress)
+      : null;
     const nextText = nextProgress?.current
       ? nextChoices.length > 0
         ? `Choose next lead: ${nextChoices.map((mission) => mission.title).join(' / ')}`
@@ -2589,10 +2823,7 @@ export class CityScene extends Phaser.Scene {
         sprite = this.add.image(ped.pos.x, ped.pos.y, this.pedTexture(ped)).setDepth(5);
         this.pedSprites[i] = sprite;
       }
-      sprite
-        .setTexture(this.pedTexture(ped))
-        .setVisible(true)
-        .setPosition(ped.pos.x, ped.pos.y);
+      sprite.setTexture(this.pedTexture(ped)).setVisible(true).setPosition(ped.pos.x, ped.pos.y);
       if (ped.missionTarget) {
         sprite.setTint(COLORS.marker);
       } else if (ped.taxiPassengerRole === 'playerFare') {
@@ -2668,13 +2899,17 @@ export class CityScene extends Phaser.Scene {
     } else if (objective && objective.kind === 'reach') {
       this.missionMarker.setVisible(true).setPosition(objective.target.x, objective.target.y);
     } else if (objective && objective.kind === 'route') {
-      const completed = this.world.mission?.objectiveState?.kind === 'route' ? this.world.mission.objectiveState.completed : 0;
+      const completed =
+        this.world.mission?.objectiveState?.kind === 'route'
+          ? this.world.mission.objectiveState.completed
+          : 0;
       const target = objective.targets[completed];
       if (target) this.missionMarker.setVisible(true).setPosition(target.x, target.y);
       else this.missionMarker.setVisible(false);
     } else {
       const storyTarget = this.storyMissionTargetPosition();
-      if (storyTarget) this.missionMarker.setVisible(true).setPosition(storyTarget.x, storyTarget.y);
+      if (storyTarget)
+        this.missionMarker.setVisible(true).setPosition(storyTarget.x, storyTarget.y);
       else this.missionMarker.setVisible(false);
     }
     const taxiTarget = this.world.taxiTarget;
@@ -2718,9 +2953,13 @@ export class CityScene extends Phaser.Scene {
     return p ? `  (${p.current}/${p.goal})` : '';
   }
 
-  private serviceDetail(mission: { kind: 'police' | 'ambulance' | 'tow'; stage?: 'pickup' | 'return' }): string {
+  private serviceDetail(mission: {
+    kind: 'police' | 'ambulance' | 'tow';
+    stage?: 'pickup' | 'return';
+  }): string {
     if (mission.kind === 'police') return 'Bust the suspect';
-    if (mission.kind === 'ambulance') return mission.stage === 'pickup' ? 'Recover the body' : 'Return to the hospital';
+    if (mission.kind === 'ambulance')
+      return mission.stage === 'pickup' ? 'Recover the body' : 'Return to the hospital';
     return mission.stage === 'pickup' ? 'Recover the wreck' : 'Return to the tow yard';
   }
 
@@ -2736,7 +2975,8 @@ export class CityScene extends Phaser.Scene {
     if (w.missionComplete) return 'ALL MISSIONS COMPLETE';
     if (this.selectingStoryMission()) {
       const choices = this.storyMissionChoices();
-      if (choices.length > 0) return `▶ Choose a lead: ${choices.map((mission) => mission.title).join(' / ')}`;
+      if (choices.length > 0)
+        return `▶ Choose a lead: ${choices.map((mission) => mission.title).join(' / ')}`;
     }
     if (!w.mission || !w.missionObjective) return '';
     const objective = w.missionObjective;
@@ -2748,7 +2988,8 @@ export class CityScene extends Phaser.Scene {
                 ? `Pick up ${w.taxiMission.passengerName}`
                 : `Drop off ${w.taxiMission.passengerName}`;
             }
-            if (w.serviceMission?.kind === objective.service) return this.serviceDetail(w.serviceMission);
+            if (w.serviceMission?.kind === objective.service)
+              return this.serviceDetail(w.serviceMission);
             if (w.drivingCarIndex !== null && w.carKind(w.drivingCarIndex) === objective.service) {
               return this.serviceUnavailableText(objective.service);
             }
@@ -2839,7 +3080,9 @@ export class CityScene extends Phaser.Scene {
       layout.action.center.y.toFixed(1),
       layout.fire.center.x.toFixed(1),
       layout.fire.center.y.toFixed(1),
-      confirm ? `${confirm.center.x.toFixed(1)},${confirm.center.y.toFixed(1)},${confirm.radius.toFixed(1)}` : 'none',
+      confirm
+        ? `${confirm.center.x.toFixed(1)},${confirm.center.y.toFixed(1)},${confirm.radius.toFixed(1)}`
+        : 'none',
       this.cameras.main.zoom.toFixed(3),
     ].join('|');
   }
@@ -2869,10 +3112,21 @@ export class CityScene extends Phaser.Scene {
 
     this.touchControlsGfx.lineStyle(3, TOUCH_STICK_STROKE, 0.52);
     this.touchControlsGfx.fillStyle(TOUCH_STICK_FILL, 0.22 * TOUCH_ALPHA);
-    this.touchControlsGfx.fillCircle(layout.move.center.x, layout.move.center.y, layout.move.radius);
-    this.touchControlsGfx.strokeCircle(layout.move.center.x, layout.move.center.y, layout.move.radius);
+    this.touchControlsGfx.fillCircle(
+      layout.move.center.x,
+      layout.move.center.y,
+      layout.move.radius,
+    );
+    this.touchControlsGfx.strokeCircle(
+      layout.move.center.x,
+      layout.move.center.y,
+      layout.move.radius,
+    );
 
-    this.touchControlsGfx.fillStyle(TOUCH_STICK_STROKE, snapshot.movePointer ? 0.42 * TOUCH_ALPHA : 0.28 * TOUCH_ALPHA);
+    this.touchControlsGfx.fillStyle(
+      TOUCH_STICK_STROKE,
+      snapshot.movePointer ? 0.42 * TOUCH_ALPHA : 0.28 * TOUCH_ALPHA,
+    );
     this.touchControlsGfx.fillCircle(snapshot.knob.x, snapshot.knob.y, layout.move.knobRadius);
 
     const drawButton = (center: Vec2, radius: number, color: number, pressed: boolean): void => {
@@ -2885,11 +3139,16 @@ export class CityScene extends Phaser.Scene {
     drawButton(layout.action.center, layout.action.radius, TOUCH_ACTION, snapshot.actionPressed);
     drawButton(layout.fire.center, layout.fire.radius, TOUCH_FIRE, snapshot.firePressed);
     if (layout.confirm) {
-      drawButton(layout.confirm.center, layout.confirm.radius, TOUCH_CONFIRM, snapshot.confirmPressed);
+      drawButton(
+        layout.confirm.center,
+        layout.confirm.radius,
+        TOUCH_CONFIRM,
+        snapshot.confirmPressed,
+      );
     }
 
     const drawPauseGlyph = (center: Vec2, radius: number): void => {
-        this.touchControlsDirty = true;
+      this.touchControlsDirty = true;
       const w = radius * 0.28;
       const h = radius * 0.78;
       this.touchControlsGfx.fillStyle(0xf8fafc, 0.9);
