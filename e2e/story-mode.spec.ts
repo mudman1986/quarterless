@@ -603,6 +603,7 @@ test('meter-running grouped leads record a branch outcome when the chosen lead s
         mission: { id: string };
         target: { x: number; y: number };
       }>;
+      maybeStartSelectedStoryMission?: () => boolean;
     };
     const target = scene
       ?.storyMissionChoiceTargets?.()
