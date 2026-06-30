@@ -55,6 +55,15 @@ export interface SurviveObjective {
   seconds: number;
 }
 
+/** Hold a fixed area continuously for a number of seconds. */
+export interface DefendObjective {
+  kind: 'defend';
+  description: string;
+  target: Vec2;
+  radius: number;
+  seconds: number;
+}
+
 /** Reach a given wanted-level star rating. */
 export interface WantedObjective {
   kind: 'wanted';
@@ -84,7 +93,13 @@ export interface RouteObjectiveState {
   completed: number;
 }
 
-export type ObjectiveState = RouteObjectiveState;
+export interface DefendObjectiveState {
+  kind: 'defend';
+  heldSeconds: number;
+  lastElapsed: number;
+}
+
+export type ObjectiveState = RouteObjectiveState | DefendObjectiveState;
 
 export type Objective =
   | ReachObjective
@@ -94,6 +109,7 @@ export type Objective =
   | TailObjective
   | CaptureObjective
   | SurviveObjective
+  | DefendObjective
   | WantedObjective
   | ServiceObjective;
 
@@ -174,6 +190,10 @@ function captureProgress(ctx: MissionContext, base: MissionBaseline): number {
   return (ctx.captureSeconds ?? 0) - (base.captureSeconds ?? 0);
 }
 
+function defendProgress(m?: Pick<Mission, 'objectiveState'> | null): number {
+  return m?.objectiveState?.kind === 'defend' ? m.objectiveState.heldSeconds : 0;
+}
+
 export interface MissionSpec {
   id: string;
   title: string;
@@ -214,6 +234,8 @@ function isObjectiveMet(obj: Objective, ctx: MissionContext, base: MissionBaseli
       return captureProgress(ctx, base) >= obj.seconds;
     case 'survive':
       return ctx.elapsed - base.elapsed >= obj.seconds;
+    case 'defend':
+      return false;
     case 'wanted':
       return ctx.wantedStars >= obj.stars;
     case 'service':
@@ -248,6 +270,30 @@ function advanceRouteObjective(m: Mission, obj: RouteObjective, ctx: MissionCont
   return { ...m, currentIndex: nextIndex, objectiveState: null };
 }
 
+function advanceDefendObjective(
+  m: Mission,
+  obj: DefendObjective,
+  ctx: MissionContext,
+  base: MissionBaseline,
+): Mission {
+  const holding = distance(ctx.playerPos, obj.target) <= obj.radius;
+  const previousElapsed = m.objectiveState?.kind === 'defend' ? m.objectiveState.lastElapsed : base.elapsed;
+  const dt = Math.max(0, ctx.elapsed - previousElapsed);
+  const nextHeldSeconds = holding ? defendProgress(m) + dt : 0;
+  if (nextHeldSeconds < obj.seconds) {
+    return {
+      ...m,
+      objectiveState: { kind: 'defend', heldSeconds: nextHeldSeconds, lastElapsed: ctx.elapsed },
+    };
+  }
+
+  const nextIndex = m.currentIndex + 1;
+  if (nextIndex >= m.objectives.length) {
+    return { ...m, currentIndex: m.objectives.length, objectiveState: null, status: 'completed' };
+  }
+  return { ...m, currentIndex: nextIndex, objectiveState: null };
+}
+
 /**
  * Advance the mission against the current context. Completes the active
  * objective when met and moves to the next; marks the mission completed after
@@ -258,6 +304,7 @@ export function updateMission(m: Mission, ctx: MissionContext, baseline: Mission
   const obj = currentObjective(m);
   if (!obj) return m;
   if (obj.kind === 'route') return advanceRouteObjective(m, obj, ctx, baseline);
+  if (obj.kind === 'defend') return advanceDefendObjective(m, obj, ctx, baseline);
   if (!isObjectiveMet(obj, ctx, baseline)) return m;
 
   const nextIndex = m.currentIndex + 1;
@@ -279,8 +326,8 @@ export interface ObjectiveProgress {
 
 /**
  * Numeric progress toward an objective, for HUD feedback (e.g. "3/8"). A
- * 'reach' objective has no count (it is shown by a map marker instead), so it
- * reports null. Pure.
+ * 'reach' objectives have no count (they are shown by a map marker), so they
+ * report null. Pure.
  */
 export function objectiveProgress(
   obj: Objective,
@@ -313,6 +360,11 @@ export function objectiveProgress(
     case 'survive':
       return {
         current: clamp(Math.floor(ctx.elapsed - base.elapsed), 0, obj.seconds),
+        goal: obj.seconds,
+      };
+    case 'defend':
+      return {
+        current: clamp(Math.floor(defendProgress(mission)), 0, obj.seconds),
         goal: obj.seconds,
       };
     case 'wanted':

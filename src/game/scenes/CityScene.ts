@@ -2143,7 +2143,7 @@ export class CityScene extends Phaser.Scene {
       }
     }
     const objective = this.world.missionObjective;
-    if (!this.selectingStoryMission() && objective?.kind === 'reach') {
+    if (!this.selectingStoryMission() && (objective?.kind === 'reach' || objective?.kind === 'defend')) {
       markers.push({
         kind: 'objective',
         x: objective.target.x,
@@ -2993,11 +2993,11 @@ export class CityScene extends Phaser.Scene {
       }
     }
 
-    // Mission marker: show the ring only while a 'reach' objective is active.
+    // Mission marker: show the ring while the active objective points to a fixed place.
     const objective = this.world.missionObjective;
     if (this.selectingStoryMission()) {
       this.missionMarker.setVisible(false);
-    } else if (objective && objective.kind === 'reach') {
+    } else if (objective && (objective.kind === 'reach' || objective.kind === 'defend')) {
       this.missionMarker.setVisible(true).setPosition(objective.target.x, objective.target.y);
     } else if (objective && objective.kind === 'route') {
       const completed =

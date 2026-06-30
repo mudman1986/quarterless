@@ -287,6 +287,7 @@ export function storyMissionStartPosition(
 ): Vec2 | null {
   const firstObjective = plan.prototypeRuntime?.objectives[0];
   if (firstObjective?.kind === 'reach') return firstObjective.target;
+  if (firstObjective?.kind === 'defend') return firstObjective.target;
   if (firstObjective?.kind === 'route') return firstObjective.targets[0] ?? null;
   return plan.prototypeScript
     ? storyActorStartPosition(storyPrimaryActor(plan.prototypeScript))
