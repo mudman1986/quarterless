@@ -34,6 +34,15 @@ export interface RouteObjective {
   timeLimitSeconds?: number;
 }
 
+/** Hit several sabotage points in sequence, optionally before a soft deadline. */
+export interface SabotageObjective {
+  kind: 'sabotage';
+  description: string;
+  targets: readonly Vec2[];
+  radius: number;
+  timeLimitSeconds?: number;
+}
+
 /** Follow a scripted target for a number of seconds without losing it. */
 export interface TailObjective {
   kind: 'tail';
@@ -106,6 +115,7 @@ export type Objective =
   | EliminateObjective
   | CollectObjective
   | RouteObjective
+  | SabotageObjective
   | TailObjective
   | CaptureObjective
   | SurviveObjective
@@ -227,6 +237,7 @@ function isObjectiveMet(obj: Objective, ctx: MissionContext, base: MissionBaseli
     case 'collect':
       return ctx.collected - base.collected >= obj.count;
     case 'route':
+    case 'sabotage':
       return false;
     case 'tail':
       return tailProgress(ctx, base) >= obj.seconds;
@@ -243,7 +254,12 @@ function isObjectiveMet(obj: Objective, ctx: MissionContext, base: MissionBaseli
   }
 }
 
-function advanceRouteObjective(m: Mission, obj: RouteObjective, ctx: MissionContext, base: MissionBaseline): Mission {
+function advanceOrderedTargetObjective(
+  m: Mission,
+  obj: RouteObjective | SabotageObjective,
+  ctx: MissionContext,
+  base: MissionBaseline,
+): Mission {
   const completed = routeProgress(m);
   if (obj.timeLimitSeconds !== undefined && ctx.elapsed - base.elapsed > obj.timeLimitSeconds) return m;
 
@@ -303,7 +319,8 @@ function advanceDefendObjective(
 export function updateMission(m: Mission, ctx: MissionContext, baseline: MissionBaseline): Mission {
   const obj = currentObjective(m);
   if (!obj) return m;
-  if (obj.kind === 'route') return advanceRouteObjective(m, obj, ctx, baseline);
+  if (obj.kind === 'route' || obj.kind === 'sabotage')
+    return advanceOrderedTargetObjective(m, obj, ctx, baseline);
   if (obj.kind === 'defend') return advanceDefendObjective(m, obj, ctx, baseline);
   if (!isObjectiveMet(obj, ctx, baseline)) return m;
 
@@ -343,6 +360,7 @@ export function objectiveProgress(
     case 'collect':
       return { current: clamp(ctx.collected - base.collected, 0, obj.count), goal: obj.count };
     case 'route':
+    case 'sabotage':
       return {
         current: clamp(routeProgress(mission), 0, obj.targets.length),
         goal: obj.targets.length,

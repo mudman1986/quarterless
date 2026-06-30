@@ -1,5 +1,6 @@
 import { distance, vec2, type Vec2 } from '../../core/vector';
 import type {
+  ActorVehicleConditionFailRule,
   EscortRadiusFailRule,
   LoseActorFailRule,
   PedestrianRouteActorScript,
@@ -39,6 +40,8 @@ export interface StoryScriptTickContext {
   wantedStars: number;
   dt: number;
   actorPositions: Record<string, Vec2 | null>;
+  actorVehicleHealth: Record<string, number | null>;
+  actorVehicleDisabled: Record<string, boolean>;
 }
 
 export interface StoryScriptTickResult {
@@ -165,6 +168,23 @@ function applyWantedPressureRule(
   };
 }
 
+function applyActorVehicleConditionRule(
+  rule: ActorVehicleConditionFailRule,
+  progress: StoryProgressState,
+  ctx: StoryScriptTickContext,
+): StoryScriptTickResult {
+  const key = `actor-vehicle-condition:${rule.actorId}`;
+  const health = ctx.actorVehicleHealth[rule.actorId] ?? null;
+  const disabled = ctx.actorVehicleDisabled[rule.actorId] ?? false;
+  const compromised = health === null || disabled || health < rule.minHealth;
+  const nextCounter = compromised ? (progress.failCounters[key] ?? 0) + ctx.dt : 0;
+  const failCounters = { ...progress.failCounters, [key]: nextCounter };
+  return {
+    progress: { ...progress, failCounters },
+    failureText: nextCounter >= rule.maxSeconds ? rule.failureText : null,
+  };
+}
+
 export function applyStoryFailRules(
   rules: readonly StoryFailRule[] | undefined,
   progress: StoryProgressState,
@@ -179,7 +199,9 @@ export function applyStoryFailRules(
         ? applyLoseActorRule(rule, next, ctx)
         : rule.kind === 'escortRadius'
           ? applyEscortRadiusRule(rule, next, ctx)
-          : applyWantedPressureRule(rule, next, ctx);
+          : rule.kind === 'wantedPressure'
+            ? applyWantedPressureRule(rule, next, ctx)
+            : applyActorVehicleConditionRule(rule, next, ctx);
     next = result.progress;
     if (result.failureText) return result;
   }

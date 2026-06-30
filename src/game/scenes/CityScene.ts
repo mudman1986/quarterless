@@ -886,10 +886,13 @@ export class CityScene extends Phaser.Scene {
 
     const stagePrimaryActorId = stage.primaryActorId ?? runtime.primaryActorId;
     const actorPositions: Record<string, Vec2 | null> = {};
+    const actorVehicleHealth: Record<string, number | null> = {};
+    const actorVehicleDisabled: Record<string, boolean> = {};
     const routeIndices: Record<string, number> = {};
     let primaryVehicleActor: VehicleRouteActorScript | null = null;
     let primaryVehiclePos: Vec2 | null = null;
     let primaryVehicleDisabled = false;
+    const carHealth = (this.world as unknown as { carHealth: number[] }).carHealth;
 
     for (const actor of stage.actors) {
       if (actor.kind === 'vehicleRoute') {
@@ -900,6 +903,8 @@ export class CityScene extends Phaser.Scene {
         );
         const pos = this.world.cars[state.carIndex]!.pos;
         actorPositions[actor.actorId] = pos;
+        actorVehicleHealth[actor.actorId] = carHealth[state.carIndex] ?? null;
+        actorVehicleDisabled[actor.actorId] = state.disabled;
         routeIndices[actor.actorId] = normalizeRouteCompletion(
           state.routeIndex,
           actor.route.length,
@@ -914,6 +919,8 @@ export class CityScene extends Phaser.Scene {
       if (actor.kind === 'pedestrianRoute') {
         const state = this.runPedestrianRouteActor(actor, dt);
         actorPositions[actor.actorId] = this.world.pedestrians[state.pedIndex]?.pos ?? null;
+        actorVehicleHealth[actor.actorId] = null;
+        actorVehicleDisabled[actor.actorId] = false;
         routeIndices[actor.actorId] = normalizeRouteCompletion(
           state.routeIndex,
           actor.route.length,
@@ -923,6 +930,8 @@ export class CityScene extends Phaser.Scene {
       const indices = this.runPedestrianSquadActor(actor);
       actorPositions[actor.actorId] =
         indices.length > 0 ? (this.world.pedestrians[indices[0]]?.pos ?? null) : null;
+      actorVehicleHealth[actor.actorId] = null;
+      actorVehicleDisabled[actor.actorId] = false;
       routeIndices[actor.actorId] = 0;
     }
 
@@ -943,6 +952,8 @@ export class CityScene extends Phaser.Scene {
           wantedStars: this.world.wantedStars,
           dt,
           actorPositions,
+          actorVehicleHealth,
+          actorVehicleDisabled,
         },
         primaryVehiclePos,
         primaryVehicleDisabled,
@@ -963,6 +974,8 @@ export class CityScene extends Phaser.Scene {
       wantedStars: this.world.wantedStars,
       dt,
       actorPositions,
+      actorVehicleHealth,
+      actorVehicleDisabled,
     });
     script.tailSeconds = fail.progress.tailSeconds;
     script.captureSeconds = fail.progress.captureSeconds;
@@ -2151,7 +2164,10 @@ export class CityScene extends Phaser.Scene {
         color: COLORS.mmTarget,
         style: 'stroke',
       });
-    } else if (!this.selectingStoryMission() && objective?.kind === 'route') {
+    } else if (
+      !this.selectingStoryMission() &&
+      (objective?.kind === 'route' || objective?.kind === 'sabotage')
+    ) {
       const completed =
         this.world.mission?.objectiveState?.kind === 'route'
           ? this.world.mission.objectiveState.completed
@@ -2999,7 +3015,7 @@ export class CityScene extends Phaser.Scene {
       this.missionMarker.setVisible(false);
     } else if (objective && (objective.kind === 'reach' || objective.kind === 'defend')) {
       this.missionMarker.setVisible(true).setPosition(objective.target.x, objective.target.y);
-    } else if (objective && objective.kind === 'route') {
+    } else if (objective && (objective.kind === 'route' || objective.kind === 'sabotage')) {
       const completed =
         this.world.mission?.objectiveState?.kind === 'route'
           ? this.world.mission.objectiveState.completed

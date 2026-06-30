@@ -207,9 +207,13 @@ export function selectStoryMission(
   const pending = storyChapterPendingMissionGroup(chapter, progress.completedMissionIds) ?? [];
   const mission = pending.find((candidate) => candidate.id === missionId);
   if (!mission) return progress;
-  const resolvedMission = resolveStoryMissionPlan(mission, progress.branchOutcomes);
+  const branchOutcomes = mission.branchOutcome
+    ? { ...progress.branchOutcomes, [mission.branchOutcome.branchId]: mission.branchOutcome.outcomeId }
+    : progress.branchOutcomes;
+  const resolvedMission = resolveStoryMissionPlan(mission, branchOutcomes);
   return {
     ...progress,
+    branchOutcomes,
     current: {
       actId: chapter.actId,
       chapterId: chapter.id,

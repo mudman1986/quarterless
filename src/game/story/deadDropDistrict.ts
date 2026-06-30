@@ -301,12 +301,14 @@ export const SPARE_PARTS_GOSPEL: StoryChapter = {
       title: 'The Empty Shell',
       hook: 'The stripped sedan is moving under light guard, which usually means the cargo matters more than the car.',
       primaryGoal:
-        'Intercept the sedan convoy and stay on it long enough to learn which yard is receiving the documents.',
+        'Stay on the stripped sedan convoy and keep the cargo car intact long enough to learn which yard is receiving the documents.',
       secondaryPressure:
-        'Rook needs to stay close without starting the fight too early or letting the convoy shake loose.',
-      failureState: 'Fail if the convoy route is lost before the receiving yard is identified.',
+        'Rook needs to stay close without starting the fight too early or letting the cargo sedan get hammered apart in traffic.',
+      failureState:
+        'Fail if the convoy route is lost or if the stripped sedan takes too much damage before the receiving yard is identified.',
       payoff:
         'The sedan leads Rook straight to the scrap plant that is laundering the evidence trail.',
+      requiredSystems: ['tail', 'vehicleCondition', 'scriptedEncounter'],
       prototypeRuntime: {
         id: 'the-empty-shell',
         title: 'The Empty Shell',
@@ -331,6 +333,15 @@ export const SPARE_PARTS_GOSPEL: StoryChapter = {
               summary:
                 'A decoy sedan peels away while the real shell heads toward the salvage lane.',
             },
+            failRules: [
+              {
+                kind: 'actorVehicleCondition',
+                actorId: 'empty-shell-sedan',
+                minHealth: 55,
+                maxSeconds: 0.5,
+                failureText: 'The stripped sedan was smashed before the cargo route could be read.',
+              },
+            ],
             actors: [
               {
                 kind: 'vehicleRoute',
@@ -368,6 +379,15 @@ export const SPARE_PARTS_GOSPEL: StoryChapter = {
               label: 'The real shell is slipping through the salvage gate',
               summary: 'Hold the tail until the receiving yard is unmistakable.',
             },
+            failRules: [
+              {
+                kind: 'actorVehicleCondition',
+                actorId: 'empty-shell-sedan',
+                minHealth: 55,
+                maxSeconds: 0.5,
+                failureText: 'The stripped sedan was smashed before the receiving yard was confirmed.',
+              },
+            ],
             actors: [
               {
                 kind: 'vehicleRoute',
@@ -393,11 +413,11 @@ export const SPARE_PARTS_GOSPEL: StoryChapter = {
       title: 'Crusher Feed',
       hook: 'Inside the scrap plant, the evidence is about to be flattened into anonymous metal.',
       primaryGoal:
-        'Crash the plant, take down the cleaners guarding the crusher lane, and get out before the yard seals.',
+        'Crash the plant, trip the crusher safeties in order, and get out before the yard seals.',
       secondaryPressure:
         'The player should feel pressure from both the plant interior and the exit lane instead of a static arena.',
       failureState:
-        'Fail if the plant guards hold the crusher lane long enough for the papers to vanish or if Rook is dropped inside the yard.',
+        'Fail if the crusher order breaks long enough for the papers to vanish or if Rook is dropped inside the yard.',
       payoff:
         'The plant records expose the dispatcher contact organizing the raids on the independent tow crews.',
       prototypeRuntime: {
@@ -411,14 +431,20 @@ export const SPARE_PARTS_GOSPEL: StoryChapter = {
             radius: 88,
           },
           {
-            kind: 'eliminate',
-            description: 'Take down 5 marked plant guards',
-            count: 5,
-            targetsOnly: true,
+            kind: 'sabotage',
+            description: 'Trip the crusher safeties in the plant order',
+            targets: [
+              { x: 3072, y: 2048 },
+              { x: 3200, y: 2112 },
+              { x: 3328, y: 2176 },
+            ],
+            radius: 84,
           },
           {
-            kind: 'survive',
+            kind: 'defend',
             description: 'Hold the lane for 12 seconds and get clear',
+            target: { x: 3136, y: 2112 },
+            radius: 120,
             seconds: 12,
           },
         ],
@@ -433,7 +459,6 @@ export const SPARE_PARTS_GOSPEL: StoryChapter = {
             center: { x: 3136, y: 2112 },
             count: 5,
             spread: 26,
-            missionTargets: true,
           },
         ],
       },
@@ -540,6 +565,72 @@ export const STATIC_ON_THE_HOSPITAL_BAND: StoryChapter = {
         ],
         reward: 2800,
       },
+      variants: [
+        {
+          branchId: 'double-booking',
+          outcomeId: 'save-passenger-a',
+          title: 'Cold Intake: Club Witness',
+          hook: 'The uptown tape trail points to a club-runner bleeding out beside the blackout fringe.',
+          primaryGoal:
+            'Reach the uptown witness lane first and hold the handoff long enough for the clinic runner to get them clear.',
+          secondaryPressure:
+            'The player should feel like the uptown lead bought a cleaner pickup window, not just a reordered mission list.',
+          failureState:
+            'Fail if the uptown witness lane is lost or if Rook is dropped before the safe handoff is secured.',
+          prototypeRuntime: {
+            id: 'cold-intake',
+            title: 'Cold Intake: Club Witness',
+            objectives: [
+              {
+                kind: 'reach',
+                description: 'Reach the uptown witness lane before the rival squad closes it',
+                target: { x: 960, y: 2624 },
+                radius: 88,
+              },
+              {
+                kind: 'defend',
+                description: 'Hold the uptown lane for 12 seconds until the clinic runner arrives',
+                target: { x: 960, y: 2624 },
+                radius: 120,
+                seconds: 12,
+              },
+            ],
+            reward: 2800,
+          },
+        },
+        {
+          branchId: 'double-booking',
+          outcomeId: 'save-passenger-b',
+          title: 'Cold Intake: River Witness',
+          hook: 'The riverfront lead points to a witness collapsing beside the service roads below the blackout ridge.',
+          primaryGoal:
+            'Reach the river witness lane first and hold the handoff long enough for the clinic runner to get them clear.',
+          secondaryPressure:
+            'The player should feel the river lead pushing the pickup into a rougher service corridor with less cover.',
+          failureState:
+            'Fail if the river witness lane is lost or if Rook is dropped before the safe handoff is secured.',
+          prototypeRuntime: {
+            id: 'cold-intake',
+            title: 'Cold Intake: River Witness',
+            objectives: [
+              {
+                kind: 'reach',
+                description: 'Reach the river witness lane before the rival squad closes it',
+                target: { x: 1344, y: 3008 },
+                radius: 88,
+              },
+              {
+                kind: 'defend',
+                description: 'Hold the river lane for 12 seconds until the clinic runner arrives',
+                target: { x: 1344, y: 3008 },
+                radius: 120,
+                seconds: 12,
+              },
+            ],
+            reward: 2800,
+          },
+        },
+      ],
     },
     {
       id: 'flatline-gap',
@@ -914,6 +1005,10 @@ export const METER_RUNNING: StoryChapter = {
         ],
         reward: 3300,
       },
+      branchOutcome: {
+        branchId: 'double-booking',
+        outcomeId: 'save-passenger-a',
+      },
     },
     {
       id: 'red-light-choir',
@@ -925,7 +1020,11 @@ export const METER_RUNNING: StoryChapter = {
         'Rook has to stay close enough to track the route without losing the host in traffic.',
       failureState: "Fail if the host's route is lost before the producer's car is identified.",
       payoff: 'The tape reveals where the dying dispatcher is trying to make their last call.',
-      requiredSystems: ['tail', 'scriptedEncounter', 'districtState', 'branching'],
+      branchOutcome: {
+        branchId: 'double-booking',
+        outcomeId: 'save-passenger-b',
+      },
+      requiredSystems: ['tail', 'scriptedEncounter', 'districtState'],
       prototypeRuntime: {
         id: 'red-light-choir',
         title: 'Red Light Choir',
@@ -1231,6 +1330,116 @@ export const METER_RUNNING: StoryChapter = {
         ],
         reward: 3900,
       },
+      variants: [
+        {
+          branchId: 'double-booking',
+          outcomeId: 'save-passenger-a',
+          title: 'Meter Burn: Uptown Slip',
+          hook: 'The uptown lead leaves one clean fare lane still threading the club strip.',
+          primaryGoal:
+            'Keep the uptown fare lane moving through the club checkpoint strip long enough to clear the sweep.',
+          secondaryPressure:
+            'The route should feel like the earlier club lead bought tighter but cleaner cover through the district.',
+          prototypeRuntime: {
+            id: 'meter-burn',
+            title: 'Meter Burn: Uptown Slip',
+            objectives: [
+              {
+                kind: 'route',
+                description: 'Clear the uptown fare route through the checkpoint strip',
+                targets: [
+                  { x: 1920, y: 1216 },
+                  { x: 2496, y: 1152 },
+                  { x: 3072, y: 1216 },
+                ],
+                radius: 84,
+                timeLimitSeconds: 70,
+              },
+            ],
+            reward: 3900,
+          },
+          prototypeScript: {
+            primaryActorId: 'meter-burn-route',
+            actors: [],
+            stages: [
+              {
+                id: 'meter-burn-route',
+                title: 'Keep the meter cold',
+                districtState: {
+                  label: 'Club-strip readers are squeezing the uptown fare lane',
+                  summary:
+                    'The club lead still gives you cover, but the checkpoint sweep is crawling uphill behind the taxi route.',
+                  trafficSpeedMultiplier: 0.65,
+                  wantedPressureBonus: 1,
+                },
+                actors: [],
+                failRules: [
+                  {
+                    kind: 'wantedPressure',
+                    minStars: 2,
+                    maxSeconds: 2,
+                    failureText: 'The uptown fare was burned once the checkpoint strip got a full read.',
+                  },
+                ],
+              },
+            ],
+          },
+        },
+        {
+          branchId: 'double-booking',
+          outcomeId: 'save-passenger-b',
+          title: 'Meter Burn: River Slip',
+          hook: 'The river lead leaves one darker fare lane still open along the wall roads.',
+          primaryGoal:
+            'Keep the river fare lane moving through the checkpoint strip long enough to clear the sweep.',
+          secondaryPressure:
+            'The route should feel like the river lead bought more speed but less cover through the sweep.',
+          prototypeRuntime: {
+            id: 'meter-burn',
+            title: 'Meter Burn: River Slip',
+            objectives: [
+              {
+                kind: 'route',
+                description: 'Clear the river fare route through the checkpoint strip',
+                targets: [
+                  { x: 1856, y: 1792 },
+                  { x: 2560, y: 1856 },
+                  { x: 3264, y: 1792 },
+                ],
+                radius: 84,
+                timeLimitSeconds: 70,
+              },
+            ],
+            reward: 3900,
+          },
+          prototypeScript: {
+            primaryActorId: 'meter-burn-route',
+            actors: [],
+            stages: [
+              {
+                id: 'meter-burn-route',
+                title: 'Keep the meter cold',
+                districtState: {
+                  label: 'River-wall readers are sweeping the darker fare lane',
+                  summary:
+                    'The river lead leaves fewer witnesses, but the open wall road gives the checkpoint sweep a cleaner line of sight.',
+                  trafficSpeedMultiplier: 0.7,
+                  wantedPressureBonus: 1,
+                },
+                actors: [],
+                failRules: [
+                  {
+                    kind: 'wantedPressure',
+                    minStars: 2,
+                    maxSeconds: 2,
+                    failureText: 'The river fare was burned once the checkpoint strip got a full read.',
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
       prototypeScript: {
         primaryActorId: 'meter-burn-route',
         actors: [],
@@ -1290,6 +1499,68 @@ export const METER_RUNNING: StoryChapter = {
         ],
         reward: 4300,
       },
+      variants: [
+        {
+          branchId: 'double-booking',
+          outcomeId: 'save-passenger-a',
+          title: 'Farewell Signal: Club Exit',
+          hook: 'The radio-host tape sends the dying dispatcher toward a club-service back lane instead of the river blocks.',
+          primaryGoal:
+            'Reach the club back-lane pickup, protect the dispatcher long enough to secure the final clue, and clear the block alive.',
+          failureState:
+            'Fail if the club pickup lane is overrun before the dispatcher can hand over the clue.',
+          prototypeRuntime: {
+            id: 'farewell-signal',
+            title: 'Farewell Signal: Club Exit',
+            objectives: [
+              {
+                kind: 'reach',
+                description: 'Reach the club pickup lane before the assassins close it',
+                target: { x: 3392, y: 1472 },
+                radius: 88,
+              },
+              {
+                kind: 'defend',
+                description: 'Hold the club lane for 15 seconds while the dispatcher talks',
+                target: { x: 3392, y: 1472 },
+                radius: 120,
+                seconds: 15,
+              },
+            ],
+            reward: 4300,
+          },
+        },
+        {
+          branchId: 'double-booking',
+          outcomeId: 'save-passenger-b',
+          title: 'Farewell Signal: River Exit',
+          hook: 'The river tape forces the dying dispatcher into a pickup lane under the wall roads before the killers close it.',
+          primaryGoal:
+            'Reach the river pickup lane, protect the dispatcher long enough to secure the final clue, and clear the block alive.',
+          failureState:
+            'Fail if the river pickup lane is overrun before the dispatcher can hand over the clue.',
+          prototypeRuntime: {
+            id: 'farewell-signal',
+            title: 'Farewell Signal: River Exit',
+            objectives: [
+              {
+                kind: 'reach',
+                description: 'Reach the river pickup lane before the assassins close it',
+                target: { x: 3840, y: 1984 },
+                radius: 88,
+              },
+              {
+                kind: 'defend',
+                description: 'Hold the river lane for 15 seconds while the dispatcher talks',
+                target: { x: 3840, y: 1984 },
+                radius: 120,
+                seconds: 15,
+              },
+            ],
+            reward: 4300,
+          },
+        },
+      ],
     },
   ],
 };

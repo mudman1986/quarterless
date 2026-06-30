@@ -374,6 +374,33 @@ test('location-based story missions keep their start and route targets on the mi
   expect(
     await routeMarkers.evaluate((markers) => markers.some((marker) => marker.kind === 'objective')),
   ).toBe(true);
+
+  const sabotageMarkers = await missionMarkers({
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'spare-parts-gospel',
+      missionId: 'crusher-feed',
+      objectiveIndex: 1,
+    },
+    unlockedChapterIds: ['dead-drop-district', 'spare-parts-gospel'],
+    completedChapterIds: ['dead-drop-district'],
+    completedMissionIds: [
+      'night-ferry-run',
+      'burned-locker',
+      'wreck-before-dawn',
+      'false-ambulance',
+      'last-call-at-pier-9',
+      'yard-talk',
+      'hook-chain',
+      'the-empty-shell',
+    ],
+    branchOutcomes: {},
+  });
+  expect(
+    await sabotageMarkers.evaluate((markers) => markers.some((marker) => marker.kind === 'objective')),
+  ).toBe(true);
 });
 
 test('story combat and chase missions keep NPC target markers on the minimap', async ({ page }) => {
@@ -503,6 +530,7 @@ test('grouped chapter leads show simultaneous mission markers and start the chos
       .__game;
     const scene = game?.scene.getScene('City') as {
       world: { player: { pos: { x: number; y: number } } };
+      maybeStartSelectedStoryMission?: () => boolean;
       storyMissionChoiceTargets?: () => Array<{
         mission: { id: string };
         target: { x: number; y: number };
@@ -527,6 +555,86 @@ test('grouped chapter leads show simultaneous mission markers and start the chos
       scene?.storyProgress?.current?.objectiveIndex === -1 &&
       scene?.world.mission?.id === 'the-empty-shell'
     );
+  });
+});
+
+test('meter-running grouped leads record a branch outcome when the chosen lead starts', async ({
+  page,
+}) => {
+  await launchStoryMode(page);
+
+  await restartIntoStoryProgress(page, {
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'meter-running',
+      missionId: 'double-booking',
+      objectiveIndex: -2,
+    },
+    unlockedChapterIds: UNLOCKED_THROUGH_METER_RUNNING,
+    completedChapterIds: [
+      'dead-drop-district',
+      'spare-parts-gospel',
+      'static-on-the-hospital-band',
+    ],
+    completedMissionIds: [...COMPLETED_THROUGH_WARD_6_EXIT, 'ward-6-exit', 'ghost-fare'],
+    branchOutcomes: {},
+  });
+
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      storyMissionChoiceTargets?: () => Array<{
+        mission: { id: string };
+        target: { x: number; y: number };
+      }>;
+    };
+    return (scene?.storyMissionChoiceTargets?.() ?? []).length >= 2;
+  });
+
+  await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      world: { player: { pos: { x: number; y: number } } };
+      storyMissionChoiceTargets?: () => Array<{
+        mission: { id: string };
+        target: { x: number; y: number };
+      }>;
+    };
+    const target = scene
+      ?.storyMissionChoiceTargets?.()
+      .find((choice) => choice.mission.id === 'red-light-choir');
+    if (!scene || !target) throw new Error('Missing meter-running mission choice target');
+    scene.world.player = { ...scene.world.player, pos: target.target };
+    scene.maybeStartSelectedStoryMission?.();
+  });
+
+  const branch = await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      storyProgress?: {
+        current: { missionId: string; objectiveIndex: number } | null;
+        branchOutcomes: Record<string, string>;
+      } | null;
+      world: { mission?: { id: string; title: string } | null };
+    };
+    if (scene?.storyProgress?.current?.missionId !== 'red-light-choir') return null;
+    if (scene.storyProgress.branchOutcomes['double-booking'] !== 'save-passenger-b') return null;
+    return {
+      objectiveIndex: scene.storyProgress.current.objectiveIndex,
+      branch: scene.storyProgress.branchOutcomes['double-booking'] ?? '',
+      title: scene.world.mission?.title ?? '',
+    };
+  });
+
+  expect(await branch.jsonValue()).toEqual({
+    objectiveIndex: -1,
+    branch: 'save-passenger-b',
+    title: 'Red Light Choir: River Lead',
   });
 });
 
@@ -567,6 +675,81 @@ test('the empty shell uses staged scripted district-state beats after mission st
   });
 
   expect(await stateLabel.jsonValue()).toContain('Decoy wrecks are dragging the chase east');
+});
+
+test('the empty shell fails when the cargo sedan is too damaged', async ({ page }) => {
+  await launchStoryMode(page);
+
+  await restartIntoStoryProgress(page, {
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'spare-parts-gospel',
+      missionId: 'the-empty-shell',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: ['dead-drop-district', 'spare-parts-gospel'],
+    completedChapterIds: ['dead-drop-district'],
+    completedMissionIds: [
+      'night-ferry-run',
+      'burned-locker',
+      'wreck-before-dawn',
+      'false-ambulance',
+      'last-call-at-pier-9',
+      'yard-talk',
+    ],
+    branchOutcomes: {},
+  });
+
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      storyScript?: { actorCarIndices: Record<string, number> } | null;
+    };
+    return scene?.storyScript?.actorCarIndices?.['empty-shell-sedan'] !== undefined;
+  });
+
+  const failure = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      storyScript?: { actorCarIndices: Record<string, number> } | null;
+      pendingStoryRestart?: unknown;
+      storyPanel?: { text: string; visible: boolean };
+      storyProgress?: { current: { objectiveIndex: number } | null } | null;
+      syncStoryScript?: (dt?: number) => void;
+      world: unknown;
+    };
+    const carIndex = scene?.storyScript?.actorCarIndices?.['empty-shell-sedan'];
+    if (carIndex === undefined || typeof scene?.syncStoryScript !== 'function') {
+      throw new Error('Missing empty shell vehicle hooks');
+    }
+    const world = scene.world as {
+      carHealth: number[];
+      wreckedCars: boolean[];
+    };
+    world.carHealth[carIndex] = 40;
+    world.wreckedCars[carIndex] = false;
+    scene.syncStoryScript(0.6);
+    return {
+      pendingRestart: !!scene.pendingStoryRestart,
+      text: scene.storyPanel?.text ?? '',
+      objectiveIndex: scene.storyProgress?.current?.objectiveIndex ?? null,
+      visible: !!scene.storyPanel?.visible,
+    };
+  });
+
+  expect(failure).toEqual({
+    pendingRestart: true,
+    text:
+      'MISSION FAILED\n\n' +
+      'The stripped sedan was smashed before the cargo route could be read.\n\n' +
+      'Retrying The Empty Shell...',
+    objectiveIndex: 0,
+    visible: true,
+  });
 });
 
 test('scripted district-state missions announce stage shifts and update the active district label', async ({
@@ -790,6 +973,59 @@ test('story mode resolves branch-dependent mission variants from saved outcomes'
     title: 'Red Light Choir: Uptown Lead',
     objective: 'Tail the radio host through the uptown club strip',
     state: 'DISTRICT STATE\nThe host is still circling the uptown clubs',
+  });
+});
+
+test('story mode carries grouped-lead outcomes into later mission setup', async ({ page }) => {
+  await launchStoryMode(page);
+
+  await restartIntoStoryProgress(page, {
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'meter-running',
+      missionId: 'meter-burn',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: UNLOCKED_THROUGH_METER_RUNNING,
+    completedChapterIds: [
+      'dead-drop-district',
+      'spare-parts-gospel',
+      'static-on-the-hospital-band',
+    ],
+    completedMissionIds: [
+      ...COMPLETED_THROUGH_WARD_6_EXIT,
+      'ward-6-exit',
+      'ghost-fare',
+      'double-booking',
+      'red-light-choir',
+    ],
+    branchOutcomes: { 'double-booking': 'save-passenger-b' },
+  });
+
+  const variant = await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      world: {
+        mission?: { id: string; title: string } | null;
+        missionObjective?: { description: string } | null;
+      };
+      storyStateText?: { text: string };
+    };
+    if (scene?.world?.mission?.id !== 'meter-burn') return null;
+    return {
+      title: scene.world.mission?.title ?? '',
+      objective: scene.world.missionObjective?.description ?? '',
+      state: scene.storyStateText?.text ?? '',
+    };
+  });
+
+  expect(await variant.jsonValue()).toEqual({
+    title: 'Meter Burn: River Slip',
+    objective: 'Clear the river fare route through the checkpoint strip',
+    state: 'DISTRICT STATE\nRiver-wall readers are sweeping the darker fare lane',
   });
 });
 

@@ -47,6 +47,11 @@ export interface StoryMissionVariant extends StoryMissionVariantOverride {
   outcomeId: string;
 }
 
+export interface StoryMissionBranchOutcome {
+  branchId: string;
+  outcomeId: string;
+}
+
 export interface StoryMissionPlan {
   id: string;
   title: string;
@@ -55,6 +60,7 @@ export interface StoryMissionPlan {
   secondaryPressure: string;
   failureState: string;
   payoff: string;
+  branchOutcome?: StoryMissionBranchOutcome;
   requiredSystems?: readonly StorySystem[];
   prototypeRuntime?: MissionSpec;
   prototypeScript?: StoryRuntimeScript;
@@ -129,7 +135,19 @@ export interface WantedPressureFailRule {
   failureText: string;
 }
 
-export type StoryFailRule = LoseActorFailRule | EscortRadiusFailRule | WantedPressureFailRule;
+export interface ActorVehicleConditionFailRule {
+  kind: 'actorVehicleCondition';
+  actorId: string;
+  minHealth: number;
+  maxSeconds: number;
+  failureText: string;
+}
+
+export type StoryFailRule =
+  | LoseActorFailRule
+  | EscortRadiusFailRule
+  | WantedPressureFailRule
+  | ActorVehicleConditionFailRule;
 
 export interface RouteCompleteStageTransition {
   kind: 'routeComplete';
@@ -288,7 +306,8 @@ export function storyMissionStartPosition(
   const firstObjective = plan.prototypeRuntime?.objectives[0];
   if (firstObjective?.kind === 'reach') return firstObjective.target;
   if (firstObjective?.kind === 'defend') return firstObjective.target;
-  if (firstObjective?.kind === 'route') return firstObjective.targets[0] ?? null;
+  if (firstObjective?.kind === 'route' || firstObjective?.kind === 'sabotage')
+    return firstObjective.targets[0] ?? null;
   return plan.prototypeScript
     ? storyActorStartPosition(storyPrimaryActor(plan.prototypeScript))
     : null;

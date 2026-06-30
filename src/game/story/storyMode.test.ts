@@ -109,6 +109,20 @@ describe('compileStoryChapterRuntimeCampaign', () => {
     });
     expect(missions?.[0] ? currentObjective(missions[0])?.description : null).toBe('Tail the radio host through the uptown club strip');
   });
+
+  it('resolves later mission variants from a recorded grouped-lead outcome', () => {
+    const chapter = STORY_MODE_PROTOTYPE.acts[0]!.chapters[3]!;
+    const resolved = resolveStoryMissionPlan(chapter.missions[3]!, { 'double-booking': 'save-passenger-b' });
+
+    expect(resolved.title).toBe('Meter Burn: River Slip');
+    expect(resolved.prototypeRuntime?.objectives[0]).toMatchObject({
+      kind: 'route',
+      description: 'Clear the river fare route through the checkpoint strip',
+    });
+    expect(resolved.prototypeScript?.stages?.[0]?.districtState?.label).toBe(
+      'River-wall readers are sweeping the darker fare lane',
+    );
+  });
 });
 
 describe('buildSandboxCampaigns', () => {

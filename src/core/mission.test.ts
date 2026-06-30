@@ -148,6 +148,35 @@ describe('updateMission — route objective', () => {
   });
 });
 
+describe('updateMission — sabotage objective', () => {
+  const sabotageMission = () =>
+    createMission({
+      id: 'sab',
+      title: 'Crusher Feed',
+      objectives: [
+        {
+          kind: 'sabotage',
+          description: 'Trip 3 crusher safeties in order',
+          targets: [vec2(10, 0), vec2(20, 0), vec2(30, 0)],
+          radius: 5,
+          timeLimitSeconds: 60,
+        },
+      ],
+    });
+
+  it('tracks sequential sabotage progress before completing', () => {
+    let m = updateMission(sabotageMission(), ctx({ playerPos: vec2(10, 0) }), base());
+    expect(isComplete(m)).toBe(false);
+    expect(m.objectiveState).toEqual({ kind: 'route', completed: 1 });
+
+    m = updateMission(m, ctx({ playerPos: vec2(20, 0) }), base());
+    expect(m.objectiveState).toEqual({ kind: 'route', completed: 2 });
+
+    m = updateMission(m, ctx({ playerPos: vec2(30, 0) }), base());
+    expect(isComplete(m)).toBe(true);
+  });
+});
+
 describe('updateMission — tail objective', () => {
   const tailMission = () =>
     createMission({
@@ -304,6 +333,21 @@ describe('objectiveProgress', () => {
     });
     const started = updateMission(route, ctx({ playerPos: vec2(1, 0) }), base());
     expect(objectiveProgress(started.objectives[0]!, ctx(), base(), started)).toEqual({ current: 1, goal: 2 });
+  });
+
+  it('reports sequential sabotage progress from mission state', () => {
+    const sabotage = createMission({
+      id: 'sab',
+      title: 'Sabotage',
+      objectives: [
+        { kind: 'sabotage', description: 'Trip 2 switches', targets: [vec2(1, 0), vec2(2, 0)], radius: 5 },
+      ],
+    });
+    const started = updateMission(sabotage, ctx({ playerPos: vec2(1, 0) }), base());
+    expect(objectiveProgress(started.objectives[0]!, ctx(), base(), started)).toEqual({
+      current: 1,
+      goal: 2,
+    });
   });
 
   it('reports survive progress in whole seconds and wanted progress in stars', () => {

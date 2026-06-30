@@ -164,6 +164,54 @@ describe('story progress helpers', () => {
     expect(mission?.prototypeScript?.stages?.[0]?.districtState?.label).toBe('The host is sweeping the riverfront lanes');
   });
 
+  it('records a branch outcome when the player picks a grouped lead', () => {
+    const selected = selectStoryMission(
+      STORY_MODE_PROTOTYPE,
+      {
+        ...createStoryProgress(STORY_MODE_PROTOTYPE),
+        current: {
+          actId: 'find-the-missing-dispatcher',
+          chapterId: 'meter-running',
+          missionId: 'double-booking',
+          objectiveIndex: -2,
+        },
+        unlockedChapterIds: [
+          'dead-drop-district',
+          'spare-parts-gospel',
+          'static-on-the-hospital-band',
+          'meter-running',
+        ],
+        completedChapterIds: [
+          'dead-drop-district',
+          'spare-parts-gospel',
+          'static-on-the-hospital-band',
+        ],
+        completedMissionIds: [
+          'night-ferry-run',
+          'burned-locker',
+          'wreck-before-dawn',
+          'false-ambulance',
+          'last-call-at-pier-9',
+          'yard-talk',
+          'hook-chain',
+          'the-empty-shell',
+          'crusher-feed',
+          'towline-oath',
+          'cold-intake',
+          'flatline-gap',
+          'clean-sheets',
+          'crash-cart',
+          'ward-6-exit',
+          'ghost-fare',
+        ],
+      },
+      'red-light-choir',
+    );
+
+    expect(selected.branchOutcomes).toEqual({ 'double-booking': 'save-passenger-b' });
+    expect(currentStoryMission(STORY_MODE_PROTOTYPE, selected)?.title).toBe('Red Light Choir: River Lead');
+  });
+
   it('parks the player at a mission-choice state when a chapter group has several pending leads', () => {
     const story = {
       ...TWO_CHAPTER_STORY,

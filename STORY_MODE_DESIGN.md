@@ -424,21 +424,20 @@ Implemented now:
 Prototype limitations right now:
 
 - Chapter 1 through Chapter 9 missions are playable approximations, not fully scripted bespoke set pieces.
-- Tail, capture, escort, stealth, defend, and district-state behavior are still represented by simpler linear objective chains where needed.
-- The mission-actor layer now covers route-driven vehicles, staged convoy handoffs, escorts, decoy splits, named mission-target squads, district-state labels, service-lane blocks, traffic slowdowns, NPC-driving suppression, checkpoint pressure, stealth-pressure fail rules, defend holds, and simple fail rules, but it still lacks richer custom encounter scripting beyond those patterns.
+- Tail, capture, escort, stealth, defend, vehicle-condition, sabotage-order, and district-state behavior are still represented by simpler linear objective chains where needed.
+- The mission-actor layer now covers route-driven vehicles, staged convoy handoffs, escorts, decoy splits, named mission-target squads, district-state labels, service-lane blocks, traffic slowdowns, NPC-driving suppression, checkpoint pressure, stealth-pressure fail rules, defend holds, protected-vehicle fail rules, sabotage-order targets, and simple fail rules, but it still lacks richer custom encounter scripting beyond those patterns.
 - The launcher now has a stronger chapter-map style board and recent mission scorecards, but the story presentation is still a compact production prototype rather than a final authored front end.
-- The grouped free-order model is now live across multiple chapters, but the branching is still shallow: it chooses order, not consequences.
+- The grouped free-order model now also records choice outcomes, and the meter-running leads can carry different taxi / hospital setups forward, but the consequence chains are still limited to a few authored slices instead of the full story.
 - The new mission summary card now surfaces vehicle-condition deltas, service-lane state, and branch-driven faction shifts, but it still summarizes those outcomes in text rather than fully bespoke visual widgets.
 
 ## Next Steps From Here
 
 Remaining priorities after the regression pass:
 
-1. Expand the mission runtime beyond route/tail/capture by implementing stronger bespoke systems such as vehicle-condition and sabotage-order objectives.
-2. Add consequence-carrying branch outcomes on top of the new grouped mission order so chapter choices change later mission setup instead of only sequencing.
-3. Add more bespoke presentation to chapter-map, mission-summary, and scorecard surfaces once the broader story slice stabilizes.
-4. If needed after that, push district-state choreography beyond the current traffic/checkpoint hooks into deeper blackout, light-state, and route-reservation behavior.
-5. Only after the base systems above are finished, continue authoring Chapter 10 and beyond on top of the broader actor layer.
+1. Add more bespoke presentation to chapter-map, mission-summary, and scorecard surfaces once the broader story slice stabilizes.
+2. If the current branch, protected-vehicle, and sabotage slices still feel too narrow after more play, broaden them into more bespoke consequence chains, raid beats, and fragile-cargo encounters instead of more generic timer chains.
+3. If needed after that, push district-state choreography beyond the current traffic/checkpoint hooks into deeper blackout, light-state, and route-reservation behavior.
+4. Only after the base systems above are finished, continue authoring Chapter 10 and beyond on top of the broader actor layer.
 
 ## Grounded Implementation Plan
 
@@ -620,8 +619,7 @@ What is still missing before it counts as a full slice:
 
 Recommended next production steps:
 
-1. Expand bespoke mission scripting beyond the current actor/stage layer with stronger vehicle-condition, sabotage-order, and raid-style encounters.
-2. Add consequence-carrying branch outcomes so grouped chapter leads change later mission setup instead of only sequencing.
-3. Upgrade the chapter-map, mission-summary, and scorecard surfaces from text-first prototype panels into more bespoke presentation once the wider story slice stabilizes.
-4. If the current traffic/checkpoint district-state layer still feels too shallow, deepen it into more visual blackout and route-reservation behavior.
-5. Only after the base systems above are finished, continue authoring Chapter 10 and later story chapters on top of the broader actor layer.
+1. Upgrade the chapter-map, mission-summary, and scorecard surfaces from text-first prototype panels into more bespoke presentation once the wider story slice stabilizes.
+2. If the current branch, protected-vehicle, and sabotage slices still feel too thin, broaden them into more bespoke consequence chains, raid beats, and fragile-cargo encounters instead of more generic timer chains.
+3. If the current traffic/checkpoint district-state layer still feels too shallow, deepen it into more visual blackout and route-reservation behavior.
+4. Only after the base systems above are finished, continue authoring Chapter 10 and later story chapters on top of the broader actor layer.

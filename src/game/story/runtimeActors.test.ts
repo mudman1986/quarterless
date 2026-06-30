@@ -74,7 +74,15 @@ describe('updateTailCaptureProgress', () => {
     const next = updateTailCaptureProgress(
       actor,
       progress,
-      { playerPos: vec2(0, 0), playerSpeed: 0, wantedStars: 0, dt: 1, actorPositions: {} },
+      {
+        playerPos: vec2(0, 0),
+        playerSpeed: 0,
+        wantedStars: 0,
+        dt: 1,
+        actorPositions: {},
+        actorVehicleHealth: {},
+        actorVehicleDisabled: {},
+      },
       vec2(10, 0),
     );
     expect(next.tailSeconds).toBe(1);
@@ -104,7 +112,15 @@ describe('updateTailCaptureProgress', () => {
     const next = updateTailCaptureProgress(
       actor,
       progress,
-      { playerPos: vec2(100, 0), playerSpeed: 25, wantedStars: 0, dt: 1, actorPositions: {} },
+      {
+        playerPos: vec2(100, 0),
+        playerSpeed: 25,
+        wantedStars: 0,
+        dt: 1,
+        actorPositions: {},
+        actorVehicleHealth: {},
+        actorVehicleDisabled: {},
+      },
       vec2(10, 0),
     );
 
@@ -134,7 +150,15 @@ describe('updateTailCaptureProgress', () => {
     const next = updateTailCaptureProgress(
       actor,
       progress,
-      { playerPos: vec2(100, 0), playerSpeed: 25, wantedStars: 0, dt: 1, actorPositions: {} },
+      {
+        playerPos: vec2(100, 0),
+        playerSpeed: 25,
+        wantedStars: 0,
+        dt: 1,
+        actorPositions: {},
+        actorVehicleHealth: {},
+        actorVehicleDisabled: {},
+      },
       vec2(10, 0),
       true,
     );
@@ -162,6 +186,8 @@ describe('applyStoryFailRules', () => {
         wantedStars: 0,
         dt: 2.1,
         actorPositions: { escort: vec2(100, 0) },
+        actorVehicleHealth: {},
+        actorVehicleDisabled: {},
       },
     );
     expect(result.failureText).toBe('Escort lost');
@@ -177,6 +203,8 @@ describe('applyStoryFailRules', () => {
         wantedStars: 0,
         dt: 1.6,
         actorPositions: { van: null },
+        actorVehicleHealth: {},
+        actorVehicleDisabled: {},
       },
     );
 
@@ -194,11 +222,40 @@ describe('applyStoryFailRules', () => {
         wantedStars: 2,
         dt: 2.1,
         actorPositions: {},
+        actorVehicleHealth: {},
+        actorVehicleDisabled: {},
       },
     );
 
     expect(result.failureText).toBe('Stealth blown');
     expect(result.progress.failCounters['wanted-pressure:2:Stealth blown']).toBeCloseTo(2.1);
+  });
+
+  it('fails when a protected story vehicle stays below its minimum condition', () => {
+    const result = applyStoryFailRules(
+      [
+        {
+          kind: 'actorVehicleCondition',
+          actorId: 'shell',
+          minHealth: 55,
+          maxSeconds: 0.5,
+          failureText: 'Cargo wrecked',
+        },
+      ],
+      { tailSeconds: 0, captureSeconds: 0, tailLostSeconds: 0, failCounters: {} },
+      {
+        playerPos: vec2(0, 0),
+        playerSpeed: 0,
+        wantedStars: 0,
+        dt: 0.6,
+        actorPositions: { shell: vec2(10, 0) },
+        actorVehicleHealth: { shell: 40 },
+        actorVehicleDisabled: { shell: false },
+      },
+    );
+
+    expect(result.failureText).toBe('Cargo wrecked');
+    expect(result.progress.failCounters['actor-vehicle-condition:shell']).toBeCloseTo(0.6);
   });
 });
 
