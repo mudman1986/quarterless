@@ -70,6 +70,7 @@ import type {
   StoryRuntimeStage,
   VehicleRouteActorScript,
 } from '../story/storyMode';
+import { pushStoryMissionScorecard } from '../story/storyMissionScorecards';
 import {
   advancePedestrianRouteActor,
   advanceVehicleRouteActor,
@@ -264,6 +265,7 @@ interface StoryScriptState {
 }
 
 interface StoryMissionSummaryBaseline {
+  chapterId: string;
   missionId: string;
   kills: number;
   targetKills: number;
@@ -271,15 +273,21 @@ interface StoryMissionSummaryBaseline {
   elapsedSeconds: number;
   unlockedChapterIds: string[];
   completedChapterIds: string[];
+  branchOutcomes: Record<string, string>;
+  playerVehicleHealth: number | null;
 }
 
 interface StoryMissionSummaryCard {
+  chapterTitle: string;
   title: string;
   reward: number;
   outcome: string;
   durationSeconds: number;
   collateralIncidents: number;
   vehicleLosses: number;
+  vehicleConditionText: string;
+  serviceLaneText: string;
+  factionEffectText: string;
   unlockText: string;
   nextText: string;
 }
@@ -634,11 +642,13 @@ export class CityScene extends Phaser.Scene {
     if (this.mode !== 'story' || !this.storyProgress?.current) {
       this.storyScript = null;
       this.world.setStoryObjectiveProgress(null);
+      this.world.setStoryDistrictStateEffects(null);
       return;
     }
     if (this.storyProgress.current.objectiveIndex < 0) {
       this.storyScript = null;
       this.world.setStoryObjectiveProgress(null);
+      this.world.setStoryDistrictStateEffects(null);
       this.syncStoryStateText();
       return;
     }
@@ -648,6 +658,7 @@ export class CityScene extends Phaser.Scene {
     if (!chapter || !mission) {
       this.storyScript = null;
       this.world.setStoryObjectiveProgress(null);
+      this.world.setStoryDistrictStateEffects(null);
       return;
     }
 
@@ -861,12 +872,17 @@ export class CityScene extends Phaser.Scene {
       script.tailSeconds = 0;
       script.captureSeconds = 0;
       script.stageLabel = '';
+      this.world.setStoryDistrictStateEffects(null);
       return;
     }
 
     const stage = this.activeStoryStage(runtime);
-    if (!stage) return;
+    if (!stage) {
+      this.world.setStoryDistrictStateEffects(null);
+      return;
+    }
     script.stageLabel = stage.districtState?.label ?? stage.title;
+    this.world.setStoryDistrictStateEffects(stage.districtState ?? null);
 
     const stagePrimaryActorId = stage.primaryActorId ?? runtime.primaryActorId;
     const actorPositions: Record<string, Vec2 | null> = {};
@@ -2597,6 +2613,23 @@ export class CityScene extends Phaser.Scene {
     );
     const summary = this.buildStoryMissionSummaryCard(resolvedPreviousMission, this.storyProgress);
     if (summary) {
+      pushStoryMissionScorecard(this.store, {
+        chapterTitle: summary.chapterTitle,
+        missionTitle: summary.title,
+        reward: summary.reward,
+        outcome: summary.outcome,
+        durationSeconds: summary.durationSeconds,
+        collateralText:
+          summary.collateralIncidents === 0 && summary.vehicleLosses === 0
+            ? 'Clean run'
+            : `${summary.collateralIncidents} bystander incidents • ${summary.vehicleLosses} vehicle losses`,
+        unlockText: summary.unlockText,
+        nextText: summary.nextText,
+        vehicleConditionText: summary.vehicleConditionText,
+        serviceLaneText: summary.serviceLaneText,
+        factionEffectText: summary.factionEffectText,
+        recordedAt: Date.now(),
+      });
       this.showPersistentStoryPanel(this.storyMissionSummaryText(summary));
       return;
     }
@@ -2657,18 +2690,64 @@ export class CityScene extends Phaser.Scene {
     );
   }
 
+  private currentPlayerVehicleHealth(): number | null {
+    const carIndex = this.world.drivingCarIndex;
+    if (carIndex === null) return null;
+    const carHealth = (this.world as unknown as { carHealth: number[] }).carHealth;
+    return carHealth[carIndex] ?? null;
+  }
+
+  private storyServiceLaneSummary(previousMission: StoryMissionPlan): string {
+    const blocked = new Set<string>();
+    previousMission.prototypeScript?.stages?.forEach((stage) =>
+      stage.districtState?.serviceLaneBlocks?.forEach((kind) => blocked.add(kind)),
+    );
+    if (blocked.size === 0) return 'No service-lane shifts';
+    return `Paused: ${[...blocked].join(' / ')}`;
+  }
+
+  private storyFactionEffectSummary(
+    baseline: StoryMissionSummaryBaseline,
+    nextProgress: StoryProgressSnapshot | null,
+  ): string {
+    if (!nextProgress) return 'No chapter-wide shifts';
+    const changed = Object.entries(nextProgress.branchOutcomes).filter(
+      ([branchId, outcomeId]) => baseline.branchOutcomes[branchId] !== outcomeId,
+    );
+    if (changed.length === 0) return 'No chapter-wide shifts';
+    return changed
+      .map(([branchId, outcomeId]) => this.storyBranchOutcomeLabel(branchId, outcomeId))
+      .join(' • ');
+  }
+
+  private storyBranchOutcomeLabel(branchId: string, outcomeId: string): string {
+    for (const act of STORY_MODE_PROTOTYPE.acts) {
+      for (const chapter of act.chapters) {
+        for (const mission of chapter.missions) {
+          const variant = mission.variants?.find(
+            (entry) => entry.branchId === branchId && entry.outcomeId === outcomeId,
+          );
+          if (variant) return variant.title ?? `${branchId}: ${outcomeId}`;
+        }
+      }
+    }
+    return `${branchId}: ${outcomeId}`;
+  }
+
   private syncStoryMissionSummaryBaseline(): void {
     if (this.mode !== 'story' || !this.storyProgress || this.selectingStoryMission()) {
       this.storyMissionSummaryBaseline = null;
       return;
     }
+    const chapter = currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress);
     const mission = currentStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress);
-    if (!mission) {
+    if (!chapter || !mission) {
       this.storyMissionSummaryBaseline = null;
       return;
     }
     if (this.storyMissionSummaryBaseline?.missionId === mission.id) return;
     this.storyMissionSummaryBaseline = {
+      chapterId: chapter.id,
       missionId: mission.id,
       kills: this.world.kills,
       targetKills: this.world.targetKills,
@@ -2676,6 +2755,8 @@ export class CityScene extends Phaser.Scene {
       elapsedSeconds: this.world.elapsedSeconds,
       unlockedChapterIds: [...this.storyProgress.unlockedChapterIds],
       completedChapterIds: [...this.storyProgress.completedChapterIds],
+      branchOutcomes: { ...this.storyProgress.branchOutcomes },
+      playerVehicleHealth: this.currentPlayerVehicleHealth(),
     };
   }
 
@@ -2725,13 +2806,27 @@ export class CityScene extends Phaser.Scene {
         ? `Choose next lead: ${nextChoices.map((mission) => mission.title).join(' / ')}`
         : `Next: ${nextMission?.title ?? 'Continue story'}`
       : 'Story complete';
+    const startHealth = baseline.playerVehicleHealth;
+    const endHealth = this.currentPlayerVehicleHealth();
+    const vehicleConditionText =
+      startHealth === null && endHealth === null
+        ? 'No tracked player vehicle'
+        : startHealth === null
+          ? `Vehicle swap • ended at ${Math.round(endHealth ?? 0)}%`
+          : endHealth === null
+            ? `Vehicle lost • started at ${Math.round(startHealth)}%`
+            : `${Math.round(startHealth)}% → ${Math.round(endHealth)}%`;
     return {
+      chapterTitle: this.storyChapterTitle(baseline.chapterId),
       title: previousMission.title,
       reward,
       outcome: previousMission.payoff,
       durationSeconds,
       collateralIncidents,
       vehicleLosses,
+      vehicleConditionText,
+      serviceLaneText: this.storyServiceLaneSummary(previousMission),
+      factionEffectText: this.storyFactionEffectSummary(baseline, nextProgress),
       unlockText: unlockLines.length > 0 ? unlockLines.join(' • ') : 'No new unlocks',
       nextText,
     };
@@ -2746,10 +2841,14 @@ export class CityScene extends Phaser.Scene {
       'MISSION SUMMARY',
       card.title,
       '',
+      `Chapter: ${card.chapterTitle}`,
       `Reward: $${card.reward}`,
       `Objective Outcome: ${card.outcome}`,
       `Duration: ${card.durationSeconds}s`,
       `Damage / Collateral: ${collateralText}`,
+      `Vehicle Condition: ${card.vehicleConditionText}`,
+      `Service Lanes: ${card.serviceLaneText}`,
+      `Faction Effects: ${card.factionEffectText}`,
       `Story Changes: ${card.unlockText}`,
       card.nextText,
     ].join('\n');

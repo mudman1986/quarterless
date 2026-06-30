@@ -1,4 +1,16 @@
-import { type Vec2, vec2, add, sub, scale, normalize, length, distance, dot, fromAngle, angle } from './vector';
+import {
+  type Vec2,
+  vec2,
+  add,
+  sub,
+  scale,
+  normalize,
+  length,
+  distance,
+  dot,
+  fromAngle,
+  angle,
+} from './vector';
 import {
   type Rect,
   resolveCircleRects,
@@ -19,7 +31,13 @@ import {
   collideCars,
 } from './vehicle';
 import { type OnFootActor, walk } from './entity';
-import { ARRIVE_RADIUS, PANIC_RADIUS, type Pedestrian, stepPedestrian, wanderTarget } from './pedestrianAI';
+import {
+  ARRIVE_RADIUS,
+  PANIC_RADIUS,
+  type Pedestrian,
+  stepPedestrian,
+  wanderTarget,
+} from './pedestrianAI';
 import { type Police, policeSpeedFor, stepPolice, stepPoliceCar, hasCaught } from './policeAI';
 import {
   type TrafficAI,
@@ -31,13 +49,14 @@ import {
   isIntersection,
   openDirections,
 } from './trafficAI';
-import { type RoadVehicle, stepRoadVehicle, seekChooser, nearestCardinal, laneCross } from './roadVehicle';
 import {
-  type TrafficLights,
-  createTrafficLights,
-  tickLights,
-  hasGreen,
-} from './trafficLight';
+  type RoadVehicle,
+  stepRoadVehicle,
+  seekChooser,
+  nearestCardinal,
+  laneCross,
+} from './roadVehicle';
+import { type TrafficLights, createTrafficLights, tickLights, hasGreen } from './trafficLight';
 import { type City, tileCenter } from './city';
 import {
   type NavGrid,
@@ -75,6 +94,7 @@ import {
   type MissionBaseline,
   type ObjectiveProgress,
   type ServiceCompletionCounts,
+  type ServiceObjectiveKind,
   currentObjective,
   updateMission,
   isComplete,
@@ -259,7 +279,16 @@ const TAXI_COOLDOWN_MIN = 3;
 const TAXI_COOLDOWN_MAX = 7;
 const TAXI_REWARD_BASE = 250;
 const TAXI_REWARD_PER_PIXEL = 0.35;
-const TAXI_PASSENGER_NAMES = ['Ava', 'Milo', 'Nina', 'Theo', 'Jules', 'Sana', 'Omar', 'Ivy'] as const;
+const TAXI_PASSENGER_NAMES = [
+  'Ava',
+  'Milo',
+  'Nina',
+  'Theo',
+  'Jules',
+  'Sana',
+  'Omar',
+  'Ivy',
+] as const;
 const PLAYER_POLICE_MIN_TARGET_DISTANCE = 180;
 const PLAYER_POLICE_BUST_RADIUS = 42;
 const PLAYER_POLICE_REWARD = 300;
@@ -321,15 +350,36 @@ const CIVILIAN_CAR_PROFILES: Record<CivilianProfileKind, CivilianCarProfile> = {
   },
   sports: {
     trafficSpeed: 160,
-    tuning: { enginePower: 292, brakePower: 350, drag: 96, maxSpeed: 392, turnRate: 3.2, gripSpeed: 60 },
+    tuning: {
+      enginePower: 292,
+      brakePower: 350,
+      drag: 96,
+      maxSpeed: 392,
+      turnRate: 3.2,
+      gripSpeed: 60,
+    },
   },
   pickup: {
     trafficSpeed: 114,
-    tuning: { enginePower: 188, maxSpeed: 248, reversePower: 132, drag: 150, turnRate: 1.95, gripSpeed: 112 },
+    tuning: {
+      enginePower: 188,
+      maxSpeed: 248,
+      reversePower: 132,
+      drag: 150,
+      turnRate: 1.95,
+      gripSpeed: 112,
+    },
   },
   van: {
     trafficSpeed: 114,
-    tuning: { enginePower: 190, maxSpeed: 248, reversePower: 140, drag: 140, turnRate: 2.05, gripSpeed: 102 },
+    tuning: {
+      enginePower: 190,
+      maxSpeed: 248,
+      reversePower: 140,
+      drag: 140,
+      turnRate: 2.05,
+      gripSpeed: 102,
+    },
   },
   limo: {
     trafficSpeed: 126,
@@ -377,7 +427,10 @@ export function vehicleBodySpecForKind(kind: VehicleKind): Readonly<VehicleBodyS
   return VEHICLE_BODY_SPECS[kind];
 }
 
-export function carTuningForKind(kind: VehicleKind, base: CarTuning = DEFAULT_CAR_TUNING): CarTuning {
+export function carTuningForKind(
+  kind: VehicleKind,
+  base: CarTuning = DEFAULT_CAR_TUNING,
+): CarTuning {
   const profile = CIVILIAN_CAR_PROFILES[kind as CivilianProfileKind];
   return profile ? { ...base, ...profile.tuning } : base;
 }
@@ -480,8 +533,22 @@ export type PlayerServiceStage = 'pickup' | 'return';
 
 export type PlayerServiceMission =
   | { id: number; kind: 'police'; reward: number; suspectId: number }
-  | { id: number; kind: 'ambulance'; stage: PlayerServiceStage; reward: number; pickup: Vec2; returnTo: Vec2 }
-  | { id: number; kind: 'tow'; stage: PlayerServiceStage; reward: number; targetCar: number; returnTo: Vec2 };
+  | {
+      id: number;
+      kind: 'ambulance';
+      stage: PlayerServiceStage;
+      reward: number;
+      pickup: Vec2;
+      returnTo: Vec2;
+    }
+  | {
+      id: number;
+      kind: 'tow';
+      stage: PlayerServiceStage;
+      reward: number;
+      targetCar: number;
+      returnTo: Vec2;
+    };
 
 type DamageableVehicleRef =
   | { kind: 'car'; index: number }
@@ -705,7 +772,18 @@ export class World {
     captureSeconds: 0,
   };
   /** Scene-owned scripted mission progress fed into tail/capture objectives. */
-  private storyObjectiveProgress: { tailSeconds: number; captureSeconds: number } = { tailSeconds: 0, captureSeconds: 0 };
+  private storyObjectiveProgress: { tailSeconds: number; captureSeconds: number } = {
+    tailSeconds: 0,
+    captureSeconds: 0,
+  };
+  /** Story-driven ambient service-lane blocks applied by scripted district states. */
+  private storyServiceLaneBlocks = new Set<ServiceObjectiveKind>();
+  /** Story-driven ambient traffic slowdown applied by scripted district states. */
+  private storyTrafficSpeedMultiplier = 1;
+  /** Story-driven suppression of ambient parked-car NPC driving. */
+  private storyNpcDrivingSuppressed = false;
+  /** Story-driven checkpoint pressure added on top of live wanted stars. */
+  private storyWantedPressureBonus = 0;
   /** Seconds elapsed in the current run (drives survive objectives). */
   private elapsed = 0;
   /** The currently active player taxi fare, if the player is driving a cab. */
@@ -718,7 +796,12 @@ export class World {
   private nextTaxiPassengerId = 1;
   private nextServiceMissionId = 1;
   private nextPoliceSuspectId = 1;
-  private completedServiceJobs: ServiceCompletionCounts = { police: 0, ambulance: 0, tow: 0, taxi: 0 };
+  private completedServiceJobs: ServiceCompletionCounts = {
+    police: 0,
+    ambulance: 0,
+    tow: 0,
+    taxi: 0,
+  };
 
   constructor(opts: WorldOptions) {
     this.player = opts.player;
@@ -737,8 +820,10 @@ export class World {
     this.sidewalks = opts.sidewalks ?? this.city?.sidewalks ?? [];
     this.crosswalks = this.city?.crosswalks ?? [];
     this.wallSpatial = this.walls.length > 0 ? this.buildRectSpatialHash(this.walls) : undefined;
-    this.sidewalkSpatial = this.sidewalks.length > 0 ? this.buildRectSpatialHash(this.sidewalks) : undefined;
-    this.crosswalkSpatial = this.crosswalks.length > 0 ? this.buildRectSpatialHash(this.crosswalks) : undefined;
+    this.sidewalkSpatial =
+      this.sidewalks.length > 0 ? this.buildRectSpatialHash(this.sidewalks) : undefined;
+    this.crosswalkSpatial =
+      this.crosswalks.length > 0 ? this.buildRectSpatialHash(this.crosswalks) : undefined;
     this.viewRadius = opts.viewRadius ?? DEFAULT_VIEW_RADIUS;
     this.enterRadius = opts.enterRadius ?? 28;
     this.tuning = opts.carTuning ?? DEFAULT_CAR_TUNING;
@@ -749,7 +834,9 @@ export class World {
     this.spawn = opts.spawn ?? opts.player.pos;
     this.carDrivers = this.cars.map((_, i) => opts.carDrivers?.[i] ?? null);
     this.carKinds = this.cars.map((_, i) => opts.carKinds?.[i] ?? 'car');
-    this.taxiStates = this.cars.map((_, i) => (this.carKinds[i] === 'taxi' ? this.createTaxiState() : null));
+    this.taxiStates = this.cars.map((_, i) =>
+      this.carKinds[i] === 'taxi' ? this.createTaxiState() : null,
+    );
     this.carRespawnsAtTow = this.cars.map((_, i) => opts.carRespawnsAtTow?.[i] ?? true);
     this.carHealth = this.cars.map(() => CAR_MAX_HEALTH);
     this.carBurnTimers = this.cars.map(() => 0);
@@ -986,7 +1073,9 @@ export class World {
   get taxiTarget(): Vec2 | null {
     const fare = this.playerTaxiMission;
     if (!fare) return null;
-    return fare.stage === 'pickup' ? (this.findTaxiPassenger(fare.passengerId)?.pos ?? fare.pickup) : fare.dropoff;
+    return fare.stage === 'pickup'
+      ? (this.findTaxiPassenger(fare.passengerId)?.pos ?? fare.pickup)
+      : fare.dropoff;
   }
 
   /** The player's active police / ambulance / tow side mission, if any. */
@@ -1001,20 +1090,63 @@ export class World {
     if (mission.kind === 'police') return this.findPoliceSuspect(mission.suspectId)?.pos ?? null;
     if (mission.kind === 'ambulance') {
       if (mission.stage === 'return') return mission.returnTo;
-      return this.corpses.some((corpse) => distance(corpse.pos, mission.pickup) <= AMBULANCE_PICKUP_RADIUS)
+      return this.corpses.some(
+        (corpse) => distance(corpse.pos, mission.pickup) <= AMBULANCE_PICKUP_RADIUS,
+      )
         ? mission.pickup
         : null;
     }
     if (mission.stage === 'return') return mission.returnTo;
-    return this.playerTowTargetAvailable(mission.targetCar) ? this.cars[mission.targetCar]?.pos ?? null : null;
+    return this.playerTowTargetAvailable(mission.targetCar)
+      ? (this.cars[mission.targetCar]?.pos ?? null)
+      : null;
   }
 
   /** Scene-owned scripted progress for story-only tail/capture objectives. */
-  setStoryObjectiveProgress(progress: { tailSeconds?: number; captureSeconds?: number } | null): void {
+  setStoryObjectiveProgress(
+    progress: { tailSeconds?: number; captureSeconds?: number } | null,
+  ): void {
     this.storyObjectiveProgress = {
       tailSeconds: Math.max(0, progress?.tailSeconds ?? 0),
       captureSeconds: Math.max(0, progress?.captureSeconds ?? 0),
     };
+  }
+
+  setStoryDistrictStateEffects(
+    effects: {
+      serviceLaneBlocks?: readonly ServiceObjectiveKind[];
+      trafficSpeedMultiplier?: number;
+      suppressNpcDriving?: boolean;
+      wantedPressureBonus?: number;
+    } | null,
+  ): void {
+    this.storyServiceLaneBlocks = new Set(effects?.serviceLaneBlocks ?? []);
+    this.storyTrafficSpeedMultiplier = Math.max(0.25, effects?.trafficSpeedMultiplier ?? 1);
+    this.storyNpcDrivingSuppressed = !!effects?.suppressNpcDriving;
+    this.storyWantedPressureBonus = Math.max(0, Math.floor(effects?.wantedPressureBonus ?? 0));
+    if (this.storyServiceLaneBlocked('taxi')) {
+      if (this.playerTaxiMission) this.cancelPlayerTaxiMission(this.focus);
+      for (let i = 0; i < this.cars.length; i++) {
+        if (this.carKind(i) === 'taxi') this.clearNpcTaxiFare(i, this.cars[i].pos);
+      }
+    }
+    if (this.storyServiceLaneBlocked('ambulance') && this.ambulance) {
+      this.ambulance = this.departServiceVehicle(this.ambulance);
+    }
+    if (this.storyServiceLaneBlocked('tow') && this.tows.length > 0) {
+      this.tows = this.tows.map((tow) => this.departTowTruck(tow));
+    }
+    if (this.playerServiceMission && this.storyServiceLaneBlocked(this.playerServiceMission.kind)) {
+      this.clearPlayerServiceMission();
+    }
+  }
+
+  private storyServiceLaneBlocked(kind: ServiceObjectiveKind): boolean {
+    return this.storyServiceLaneBlocks.has(kind);
+  }
+
+  private storyWantedPressure(): number {
+    return Math.min(6, this.wantedStars + this.storyWantedPressureBonus);
   }
 
   /** Advance the simulation by `dt` seconds. */
@@ -1101,7 +1233,10 @@ export class World {
 
   /** Cars solid enough to block actors on foot (a faster car runs them over). */
   private blockingCars(): readonly Car[] {
-    return this.cars.filter((car, i) => !(this.wreckedCars[i] && this.towedCars[i]) && Math.abs(car.speed) < RUN_OVER_SPEED);
+    return this.cars.filter(
+      (car, i) =>
+        !(this.wreckedCars[i] && this.towedCars[i]) && Math.abs(car.speed) < RUN_OVER_SPEED,
+    );
   }
 
   /** Wrecks that still physically exist in the world and block movement. */
@@ -1112,8 +1247,14 @@ export class World {
   private nearestCrewedServiceVehicle(
     p: Vec2,
     within: number,
-  ): { kind: 'ambulance'; vehicle: Ambulance } | { kind: 'tow'; vehicle: TowTruck; index: number } | null {
-    let best: { kind: 'ambulance'; vehicle: Ambulance } | { kind: 'tow'; vehicle: TowTruck; index: number } | null = null;
+  ):
+    | { kind: 'ambulance'; vehicle: Ambulance }
+    | { kind: 'tow'; vehicle: TowTruck; index: number }
+    | null {
+    let best:
+      | { kind: 'ambulance'; vehicle: Ambulance }
+      | { kind: 'tow'; vehicle: TowTruck; index: number }
+      | null = null;
     let bestDist = within;
     if (this.ambulance?.crew) {
       const d = distance(p, this.ambulance.pos);
@@ -1200,10 +1341,7 @@ export class World {
     const blockingCars = this.blockingCars();
     const hazardVehicles = this.hazardVehicles();
     const fireThreats = this.burningCarThreats();
-    const civilianThreats = [
-      ...fireThreats,
-      ...this.gunfireThreats,
-    ];
+    const civilianThreats = [...fireThreats, ...this.gunfireThreats];
     return { blockingCars, hazardVehicles, fireThreats, civilianThreats };
   }
 
@@ -1368,7 +1506,12 @@ export class World {
       hazards.push({ pos: a.pos, radius: a.radius, speed: Math.abs(a.speed), byPlayer: false });
     }
     for (const tow of this.tows) {
-      hazards.push({ pos: tow.pos, radius: tow.radius, speed: Math.abs(tow.speed), byPlayer: false });
+      hazards.push({
+        pos: tow.pos,
+        radius: tow.radius,
+        speed: Math.abs(tow.speed),
+        byPlayer: false,
+      });
     }
     return hazards;
   }
@@ -1393,9 +1536,11 @@ export class World {
     const obstacles = this.yieldObstacles();
     for (let i = 0; i < this.cars.length; i++) {
       const ai = this.carDrivers[i];
-      if (!ai || i === this.drivingCarIndex || this.wreckedCars[i] || this.carIsBurning(i)) continue;
+      if (!ai || i === this.drivingCarIndex || this.wreckedCars[i] || this.carIsBurning(i))
+        continue;
       const car = this.cars[i];
-      const cruiseSpeed = trafficCruiseSpeedForKind(this.carKind(i));
+      const cruiseSpeed =
+        trafficCruiseSpeedForKind(this.carKind(i)) * this.storyTrafficSpeedMultiplier;
 
       let dir = ai.dir;
       let blocked = ai.blocked ?? 0;
@@ -1451,7 +1596,14 @@ export class World {
         blocked = 0; // path cleared
       }
 
-      const out = stepTraffic(car, { dir, blocked, laneTarget, escapeTarget, routeTarget }, this.city, dt, speed, this.rng);
+      const out = stepTraffic(
+        car,
+        { dir, blocked, laneTarget, escapeTarget, routeTarget },
+        this.city,
+        dt,
+        speed,
+        this.rng,
+      );
       const turned = out.ai.dir.x !== ai.dir.x || out.ai.dir.y !== ai.dir.y;
       this.cars[i] = out.car;
       this.carDrivers[i] = turned ? { ...out.ai, laneTarget: undefined } : out.ai;
@@ -1479,6 +1631,7 @@ export class World {
    * off, joining the flow of traffic — a little extra life on the streets. */
   private updateNpcDriving(dt: number): void {
     if (!this.city) return;
+    if (this.storyNpcDrivingSuppressed) return;
     if (this.rng() >= NPC_DRIVE_CHANCE * dt) return; // usually nobody bothers this tick
     for (let pi = 0; pi < this.pedestrians.length; pi++) {
       if (this.pedestrians[pi].state !== 'wander') continue;
@@ -1497,7 +1650,13 @@ export class World {
   /** Index of a parked (driverless, intact) car within reach of a point, or null. */
   private parkedCarNear(p: Vec2): number | null {
     for (let i = 0; i < this.cars.length; i++) {
-      if (i === this.drivingCarIndex || this.carDrivers[i] || this.wreckedCars[i] || this.carIsBurning(i)) continue;
+      if (
+        i === this.drivingCarIndex ||
+        this.carDrivers[i] ||
+        this.wreckedCars[i] ||
+        this.carIsBurning(i)
+      )
+        continue;
       if (!this.isCivilianRoadCar(i)) continue;
       if (distance(p, this.cars[i].pos) <= PED_ENTER_RADIUS + this.cars[i].radius) return i;
     }
@@ -1816,7 +1975,8 @@ export class World {
       return false;
     });
     this.police = this.police.filter((cop) => {
-      if (cop.kind !== 'foot' || distance(center, cop.pos) > EXPLOSION_RADIUS + cop.radius) return true;
+      if (cop.kind !== 'foot' || distance(center, cop.pos) > EXPLOSION_RADIUS + cop.radius)
+        return true;
       this.killOnFootNpc(cop.pos, 'police', byPlayer);
       return false;
     });
@@ -1833,7 +1993,10 @@ export class World {
       }
     }
     if (distance(center, this.focus) <= EXPLOSION_RADIUS + this.player.radius) {
-      if (this.isDriving && distance(center, this.drivingCar!.pos) <= EXPLOSION_RADIUS + this.drivingCar!.radius) {
+      if (
+        this.isDriving &&
+        distance(center, this.drivingCar!.pos) <= EXPLOSION_RADIUS + this.drivingCar!.radius
+      ) {
         this.drivingCarIndex = null; // thrown clear of the wreck they were driving
         this.player = { ...this.player, pos: center };
       }
@@ -1873,11 +2036,13 @@ export class World {
    * map has no hospital (e.g. tiny ad hoc tests), fall back to the old general
    * sidewalk wandering spawn so the world still repopulates. */
   private respawnPedestrian(target: Vec2): void {
-    const pos = this.nearestFacility('hospital', target)?.spawn ?? wanderTarget(
-      { threats: [], bounds: this.bounds, sidewalks: this.sidewalks },
-      this.spawn,
-      this.rng,
-    );
+    const pos =
+      this.nearestFacility('hospital', target)?.spawn ??
+      wanderTarget(
+        { threats: [], bounds: this.bounds, sidewalks: this.sidewalks },
+        this.spawn,
+        this.rng,
+      );
     this.pedestrians.push({ pos, heading: 0, radius: 7, state: 'wander', target: pos });
   }
 
@@ -1908,6 +2073,7 @@ export class World {
    * body and sends a medic out on foot to fetch it before driving away. */
   private updateAmbulance(dt: number): void {
     if (!this.city) return; // service vehicles need roads to drive
+    if (this.storyServiceLaneBlocked('ambulance')) return;
     if (!this.ambulance) {
       const corpse = this.corpses.find((c) => c.inFrameFor >= AMBULANCE_DISPATCH_DELAY);
       if (!corpse) return;
@@ -1919,9 +2085,7 @@ export class World {
     // Crew on foot: the medic is walking out to the body or carrying it back.
     if (amb.crew) {
       this.ambulance = this.stepCrew(amb, dt, (loaded) => {
-        const idx = this.corpses.findIndex(
-          (c) => distance(c.pos, job) <= AMBULANCE_PICKUP_RADIUS,
-        );
+        const idx = this.corpses.findIndex((c) => distance(c.pos, job) <= AMBULANCE_PICKUP_RADIUS);
         if (idx !== -1) {
           const corpse = this.corpses[idx];
           this.corpses.splice(idx, 1); // body loaded aboard
@@ -1955,7 +2119,9 @@ export class World {
       };
     } else if (!this.corpses.some((c) => distance(c.pos, job) <= AMBULANCE_PICKUP_RADIUS)) {
       const nextCorpse = this.nearestCorpse(driven.pos);
-      this.ambulance = nextCorpse ? this.redirectServiceVehicle(driven, nextCorpse.pos) : this.departServiceVehicle(driven);
+      this.ambulance = nextCorpse
+        ? this.redirectServiceVehicle(driven, nextCorpse.pos)
+        : this.departServiceVehicle(driven);
     }
   }
 
@@ -1967,7 +2133,10 @@ export class World {
    */
   private updateTow(dt: number): void {
     if (!this.city) return;
-    this.towDispatchCooldowns = this.towDispatchCooldowns.map((cooldown) => Math.max(0, cooldown - dt));
+    if (this.storyServiceLaneBlocked('tow')) return;
+    this.towDispatchCooldowns = this.towDispatchCooldowns.map((cooldown) =>
+      Math.max(0, cooldown - dt),
+    );
 
     // Advance the trucks already on the job, reaping those that finish or give up.
     const alive: TowTruck[] = [];
@@ -2035,7 +2204,13 @@ export class World {
     let best = -1;
     let bestDist = Infinity;
     for (let i = 0; i < this.cars.length; i++) {
-      if (!this.wreckedCars[i] || this.towedCars[i] || claimed.has(i) || this.towDispatchCooldowns[i] > 0) continue;
+      if (
+        !this.wreckedCars[i] ||
+        this.towedCars[i] ||
+        claimed.has(i) ||
+        this.towDispatchCooldowns[i] > 0
+      )
+        continue;
       const d = distance(this.focus, this.cars[i].pos);
       if (d < bestDist) {
         bestDist = d;
@@ -2049,7 +2224,13 @@ export class World {
     let best = -1;
     let bestDist = Infinity;
     for (let i = 0; i < this.cars.length; i++) {
-      if (!this.wreckedCars[i] || this.towedCars[i] || claimed.has(i) || this.towDispatchCooldowns[i] > 0) continue;
+      if (
+        !this.wreckedCars[i] ||
+        this.towedCars[i] ||
+        claimed.has(i) ||
+        this.towDispatchCooldowns[i] > 0
+      )
+        continue;
       const d = distance(from, this.cars[i].pos);
       if (d < bestDist) {
         bestDist = d;
@@ -2061,7 +2242,9 @@ export class World {
 
   private nearestCorpse(from: Vec2): Corpse | null {
     if (this.corpses.length === 0) return null;
-    return this.corpses.reduce((best, corpse) => (distance(corpse.pos, from) < distance(best.pos, from) ? corpse : best));
+    return this.corpses.reduce((best, corpse) =>
+      distance(corpse.pos, from) < distance(best.pos, from) ? corpse : best,
+    );
   }
 
   private redirectServiceVehicle<T extends ServiceVehicle>(vehicle: T, job: Vec2): T {
@@ -2103,14 +2286,17 @@ export class World {
   }
 
   private nextTowTruckJob(vehicle: TowTruck): TowTruck {
-    if (vehicle.completedWrecks >= MAX_WRECKS_PER_TOW_RUN) return this.returnTowTruckToDepot(vehicle);
+    if (vehicle.completedWrecks >= MAX_WRECKS_PER_TOW_RUN)
+      return this.returnTowTruckToDepot(vehicle);
     const claimed = new Set(
       this.tows
         .filter((other) => other.phase !== 'depart' && other.targetCar !== vehicle.targetCar)
         .map((other) => other.targetCar),
     );
     const nextTarget = this.nearestUntowedWreckFrom(vehicle.pos, claimed);
-    return nextTarget === -1 ? this.returnTowTruckToDepot(vehicle) : this.redirectTowTruck(vehicle, nextTarget);
+    return nextTarget === -1
+      ? this.returnTowTruckToDepot(vehicle)
+      : this.redirectTowTruck(vehicle, nextTarget);
   }
 
   private departTowTruck(vehicle: TowTruck): TowTruck {
@@ -2125,7 +2311,8 @@ export class World {
     facilityKind: 'hospital' | 'towYard',
     slot = 0,
   ): ServiceVehicle {
-    const pos = this.serviceSpawnPoint(facilityKind, target, slot) ?? this.nearestCornerTile(target);
+    const pos =
+      this.serviceSpawnPoint(facilityKind, target, slot) ?? this.nearestCornerTile(target);
     const approach = this.nearestRoadPoint(target) ?? target;
     const kind = facilityKind === 'hospital' ? 'ambulance' : 'tow';
     return {
@@ -2314,7 +2501,9 @@ export class World {
    * opposite half of the band; narrow roads keep the original pickup radius. */
   private serviceStopRadius(vehicleRadius: number): number {
     const roadWidth = Math.max(1, Math.min(this.city!.spec.block, this.city!.spec.roadWidth ?? 1));
-    return vehicleRadius + Math.max(AMBULANCE_PICKUP_RADIUS, (roadWidth * this.city!.spec.tile) / 2);
+    return (
+      vehicleRadius + Math.max(AMBULANCE_PICKUP_RADIUS, (roadWidth * this.city!.spec.tile) / 2)
+    );
   }
 
   /** Centres of the four corner road tiles (always on the road network). */
@@ -2492,7 +2681,10 @@ export class World {
       const body = this.vehicleBody(ref);
       if (!body) continue;
       const offWrecks = this.resolveVehicleAgainstWrecks(body);
-      this.setVehicleBody(ref, this.resolveSlowVehicleAgainstOnFootActors(offWrecks, footObstacles));
+      this.setVehicleBody(
+        ref,
+        this.resolveSlowVehicleAgainstOnFootActors(offWrecks, footObstacles),
+      );
     }
   }
 
@@ -2520,7 +2712,8 @@ export class World {
       if (distance(this.focus, pickup.pos) <= reach) {
         this.weapon = giveAmmo(this.weapon, pickup.amount);
         this.collected += 1;
-        if (this.ammoRespawnPoints.length > 0) this.ammoRespawns.push({ pickup, cooldown: AMMO_RESPAWN_DELAY });
+        if (this.ammoRespawnPoints.length > 0)
+          this.ammoRespawns.push({ pickup, cooldown: AMMO_RESPAWN_DELAY });
       } else {
         remaining.push(pickup);
       }
@@ -2570,7 +2763,9 @@ export class World {
     const isFree = (pos: Vec2) => occupied.every((other) => distance(pos, other) > 1);
     const moved = (pos: Vec2) => distance(pos, collected.pos) > 1;
     const offCamera = (pos: Vec2) => !this.inFrame(pos);
-    const options = this.ammoRespawnPoints.filter((pos) => moved(pos) && offCamera(pos) && isFree(pos));
+    const options = this.ammoRespawnPoints.filter(
+      (pos) => moved(pos) && offCamera(pos) && isFree(pos),
+    );
     const fallback = this.ammoRespawnPoints.filter((pos) => moved(pos) && isFree(pos));
     const pool = options.length > 0 ? options : fallback;
     if (pool.length === 0) return null;
@@ -2630,7 +2825,8 @@ export class World {
   private randomTaxiStop(awayFrom: Vec2, minDistance: number): Vec2 {
     const sample = (): Vec2 => {
       if (this.sidewalks.length > 0) {
-        const strip = this.sidewalks[Math.floor(this.rng() * this.sidewalks.length)] ?? this.sidewalks[0];
+        const strip =
+          this.sidewalks[Math.floor(this.rng() * this.sidewalks.length)] ?? this.sidewalks[0];
         return randomPointInRect(strip, this.rng);
       }
       return vec2(this.rng() * this.bounds.width, this.rng() * this.bounds.height);
@@ -2729,7 +2925,12 @@ export class World {
   }
 
   private playerTowTargetAvailable(targetCar: number): boolean {
-    return targetCar >= 0 && targetCar < this.cars.length && this.wreckedCars[targetCar] && !this.towedCars[targetCar];
+    return (
+      targetCar >= 0 &&
+      targetCar < this.cars.length &&
+      this.wreckedCars[targetCar] &&
+      !this.towedCars[targetCar]
+    );
   }
 
   private nearestPlayerTowTarget(from: Vec2): number {
@@ -2759,7 +2960,10 @@ export class World {
     };
   }
 
-  private startPlayerServiceMission(kind: PlayerServiceMissionKind, from: Vec2): PlayerServiceMission | null {
+  private startPlayerServiceMission(
+    kind: PlayerServiceMissionKind,
+    from: Vec2,
+  ): PlayerServiceMission | null {
     const mission =
       kind === 'police'
         ? this.startPlayerPoliceMission(from)
@@ -2831,8 +3035,17 @@ export class World {
   }
 
   private updateTaxiSystems(): void {
+    if (this.storyServiceLaneBlocked('taxi')) {
+      if (this.playerTaxiMission) this.cancelPlayerTaxiMission(this.focus);
+      return;
+    }
     const idx = this.drivingCarIndex;
-    if (idx === null || this.carKind(idx) !== 'taxi' || this.wreckedCars[idx] || this.carIsBurning(idx)) {
+    if (
+      idx === null ||
+      this.carKind(idx) !== 'taxi' ||
+      this.wreckedCars[idx] ||
+      this.carIsBurning(idx)
+    ) {
       if (this.playerTaxiMission) this.cancelPlayerTaxiMission(this.focus);
       return;
     }
@@ -2868,10 +3081,19 @@ export class World {
   private updatePlayerServiceMissions(dt: number): void {
     const idx = this.drivingCarIndex;
     const kind = idx === null ? null : this.carKind(idx);
-    if (idx === null || (kind !== 'police' && kind !== 'ambulance' && kind !== 'tow') || this.wreckedCars[idx] || this.carIsBurning(idx)) {
+    if (this.playerServiceMission && this.storyServiceLaneBlocked(this.playerServiceMission.kind)) {
+      this.clearPlayerServiceMission();
+    }
+    if (
+      idx === null ||
+      (kind !== 'police' && kind !== 'ambulance' && kind !== 'tow') ||
+      this.wreckedCars[idx] ||
+      this.carIsBurning(idx)
+    ) {
       if (this.playerServiceMission) this.clearPlayerServiceMission();
       return;
     }
+    if (this.storyServiceLaneBlocked(kind)) return;
 
     const car = this.cars[idx];
     if (!this.playerServiceMission || this.playerServiceMission.kind !== kind) {
@@ -2894,7 +3116,10 @@ export class World {
         this.playerServiceMission = this.startPlayerPoliceMission(car.pos);
         return;
       }
-      if (Math.abs(car.speed) > TAXI_SERVICE_SPEED_MAX || distance(car.pos, suspect.pos) > PLAYER_POLICE_BUST_RADIUS) {
+      if (
+        Math.abs(car.speed) > TAXI_SERVICE_SPEED_MAX ||
+        distance(car.pos, suspect.pos) > PLAYER_POLICE_BUST_RADIUS
+      ) {
         return;
       }
       const busted = this.removePoliceSuspect(mission.suspectId);
@@ -2905,19 +3130,26 @@ export class World {
       }
       this.score = award(this.score, mission.reward);
       this.recordCompletedServiceJob('police');
-      this.spawnCivilianPedestrian(this.nearestFacility('policeStation', busted.pos)?.spawn ?? busted.pos);
+      this.spawnCivilianPedestrian(
+        this.nearestFacility('policeStation', busted.pos)?.spawn ?? busted.pos,
+      );
       this.playerServiceMission = this.startPlayerPoliceMission(car.pos);
       return;
     }
 
     if (mission.kind === 'ambulance') {
       if (mission.stage === 'pickup') {
-        const corpseIndex = this.corpses.findIndex((corpse) => distance(corpse.pos, mission.pickup) <= AMBULANCE_PICKUP_RADIUS);
+        const corpseIndex = this.corpses.findIndex(
+          (corpse) => distance(corpse.pos, mission.pickup) <= AMBULANCE_PICKUP_RADIUS,
+        );
         if (corpseIndex === -1) {
           this.playerServiceMission = this.startPlayerAmbulanceMission(car.pos);
           return;
         }
-        if (Math.abs(car.speed) > TAXI_SERVICE_SPEED_MAX || distance(car.pos, this.corpses[corpseIndex].pos) > AMBULANCE_PICKUP_RADIUS) {
+        if (
+          Math.abs(car.speed) > TAXI_SERVICE_SPEED_MAX ||
+          distance(car.pos, this.corpses[corpseIndex].pos) > AMBULANCE_PICKUP_RADIUS
+        ) {
           return;
         }
         const [corpse] = this.corpses.splice(corpseIndex, 1);
@@ -2926,7 +3158,10 @@ export class World {
         return;
       }
 
-      if (Math.abs(car.speed) > TAXI_SERVICE_SPEED_MAX || distance(car.pos, mission.returnTo) > TAXI_STOP_RADIUS) {
+      if (
+        Math.abs(car.speed) > TAXI_SERVICE_SPEED_MAX ||
+        distance(car.pos, mission.returnTo) > TAXI_STOP_RADIUS
+      ) {
         return;
       }
       this.respawnPedestrian(mission.pickup);
@@ -2942,7 +3177,10 @@ export class World {
         return;
       }
       const wreck = this.cars[mission.targetCar];
-      if (Math.abs(car.speed) > TAXI_SERVICE_SPEED_MAX || distance(car.pos, wreck.pos) > AMBULANCE_PICKUP_RADIUS) {
+      if (
+        Math.abs(car.speed) > TAXI_SERVICE_SPEED_MAX ||
+        distance(car.pos, wreck.pos) > AMBULANCE_PICKUP_RADIUS
+      ) {
         return;
       }
       this.towedCars[mission.targetCar] = true;
@@ -2950,7 +3188,10 @@ export class World {
       return;
     }
 
-    if (Math.abs(car.speed) > TAXI_SERVICE_SPEED_MAX || distance(car.pos, mission.returnTo) > TAXI_STOP_RADIUS) {
+    if (
+      Math.abs(car.speed) > TAXI_SERVICE_SPEED_MAX ||
+      distance(car.pos, mission.returnTo) > TAXI_STOP_RADIUS
+    ) {
       return;
     }
     this.respawnCarAtTowYard(mission.targetCar);
@@ -2960,7 +3201,14 @@ export class World {
   }
 
   private isEligibleTaxiPassenger(ped: Pedestrian): boolean {
-    return ped.state === 'wander' && !ped.returningTo && !ped.uniform && !ped.missionTarget && !ped.taxiPassengerRole && !ped.policeSuspectId;
+    return (
+      ped.state === 'wander' &&
+      !ped.returningTo &&
+      !ped.uniform &&
+      !ped.missionTarget &&
+      !ped.taxiPassengerRole &&
+      !ped.policeSuspectId
+    );
   }
 
   private findTaxiHailPassengerIndex(near: Vec2): number | null {
@@ -3015,9 +3263,17 @@ export class World {
     state.cooldown = this.nextTaxiCooldown();
   }
 
-  private planTaxiTraffic(index: number, car: Car, dt: number): { hold: boolean; routeTarget: Vec2 | undefined } {
+  private planTaxiTraffic(
+    index: number,
+    car: Car,
+    dt: number,
+  ): { hold: boolean; routeTarget: Vec2 | undefined } {
     const state = this.taxiStates[index];
     if (!state) return { hold: false, routeTarget: undefined };
+    if (this.storyServiceLaneBlocked('taxi')) {
+      this.clearNpcTaxiFare(index, car.pos);
+      return { hold: false, routeTarget: undefined };
+    }
 
     let fare = state.fare;
     if (!fare) {
@@ -3079,7 +3335,10 @@ export class World {
     const car = this.cars[idx];
 
     if (actionPressed) {
-      const offset = fromAngle(car.heading + Math.PI / 2, car.radius + this.player.radius + EXIT_GAP);
+      const offset = fromAngle(
+        car.heading + Math.PI / 2,
+        car.radius + this.player.radius + EXIT_GAP,
+      );
       this.player = { ...this.player, pos: add(car.pos, offset), angle: car.heading };
       if (this.carKind(idx) === 'taxi') this.cancelPlayerTaxiMission(add(car.pos, offset));
       this.cars[idx] = { ...car, speed: 0 };
@@ -3103,11 +3362,10 @@ export class World {
     const blockers = tickSpatial?.blockingCars ?? this.blockingCars();
     const hazards = tickSpatial?.hazardVehicles ?? this.hazardVehicles();
     const fireThreats = tickSpatial?.fireThreats ?? this.burningCarThreats();
-    const civilianThreats =
-      tickSpatial?.civilianThreats ?? [
-        ...fireThreats,
-        ...this.gunfireThreats,
-      ];
+    const civilianThreats = tickSpatial?.civilianThreats ?? [
+      ...fireThreats,
+      ...this.gunfireThreats,
+    ];
     const survivors: Pedestrian[] = [];
 
     for (const ped of this.pedestrians) {
@@ -3132,7 +3390,9 @@ export class World {
       }
       const homeTarget = (() => {
         if (!returningTo) return ped.target;
-        const sightBlocked = this.walls.some((wll) => segmentIntersectsRect(ped.pos, returningTo, wll));
+        const sightBlocked = this.walls.some((wll) =>
+          segmentIntersectsRect(ped.pos, returningTo, wll),
+        );
         if (!sightBlocked || !this.navGrid) return returningTo;
         const route = this.routePedestrianTo(ped, this.navGrid, returningTo);
         routeCache = route.cache;
@@ -3169,7 +3429,11 @@ export class World {
       // Pedestrians cannot walk through cars too slow to have run them over
       // (handled above); buildings are resolved last so they stay authoritative.
       const offCars = resolveCircleCircles(stepped.pos, stepped.radius, blockers);
-      let pos = resolveCircleRects(offCars, stepped.radius, this.nearbyWalls(offCars, stepped.radius));
+      let pos = resolveCircleRects(
+        offCars,
+        stepped.radius,
+        this.nearbyWalls(offCars, stepped.radius),
+      );
       // When calm, a pedestrian keeps to the pavement and only steps onto the
       // road at a crosswalk; a fleeing pedestrian will bolt across anywhere.
       if (!returningTo && stepped.state === 'wander' && this.onForbiddenRoad(pos)) {
@@ -3187,7 +3451,11 @@ export class World {
         if (blocked && stepped.state === 'wander') {
           return returningTo
             ? returningTo
-            : wanderTarget({ threats, bounds: this.bounds, sidewalks: this.sidewalks }, pos, this.rng);
+            : wanderTarget(
+                { threats, bounds: this.bounds, sidewalks: this.sidewalks },
+                pos,
+                this.rng,
+              );
         }
         return stepped.target;
       })();
@@ -3362,7 +3630,10 @@ export class World {
         spatial.cars,
         stepped.pos,
         MAX_BULLET_TARGET_RADIUS,
-        (i) => !this.wreckedCars[i] && i !== this.drivingCarIndex && bulletHits(stepped, this.cars[i].pos, this.cars[i].radius),
+        (i) =>
+          !this.wreckedCars[i] &&
+          i !== this.drivingCarIndex &&
+          bulletHits(stepped, this.cars[i].pos, this.cars[i].radius),
       );
       if (carIdx !== -1) {
         this.redirectNpcDriverFromShot(carIdx, stepped.velocity);
@@ -3379,7 +3650,12 @@ export class World {
     if (!this.city) return;
     const panicRadius = PANIC_RADIUS / 2 + MAX_BULLET_TARGET_RADIUS;
     const visitCar = (i: number): void => {
-      if (i === this.drivingCarIndex || this.wreckedCars[i] || this.carIsBurning(i) || !this.isCivilianRoadCar(i)) {
+      if (
+        i === this.drivingCarIndex ||
+        this.wreckedCars[i] ||
+        this.carIsBurning(i) ||
+        !this.isCivilianRoadCar(i)
+      ) {
         return;
       }
       const driver = this.carDrivers[i];
@@ -3443,7 +3719,10 @@ export class World {
     if (kind === 'taxi') {
       this.clearNpcTaxiFare(idx, this.cars[idx].pos);
       if (idx === this.drivingCarIndex) this.cancelPlayerTaxiMission(this.cars[idx].pos);
-    } else if (idx === this.drivingCarIndex && (kind === 'police' || kind === 'ambulance' || kind === 'tow')) {
+    } else if (
+      idx === this.drivingCarIndex &&
+      (kind === 'police' || kind === 'ambulance' || kind === 'tow')
+    ) {
       this.clearPlayerServiceMission();
     }
     this.towedCars[idx] = false;
@@ -3627,7 +3906,9 @@ export class World {
   /** Police station nearest a point, or null on atypical maps without any. */
   private nearestPoliceSpawn(p: Vec2): Vec2 | null {
     if (this.policeSpawns.length === 0) return null;
-    return this.policeSpawns.reduce((best, spawn) => (distance(p, spawn) < distance(p, best) ? spawn : best));
+    return this.policeSpawns.reduce((best, spawn) =>
+      distance(p, spawn) < distance(p, best) ? spawn : best,
+    );
   }
 
   /** Home station a police unit returns to once the wanted level is gone. */
@@ -3687,8 +3968,12 @@ export class World {
 
     const speed = policeSpeedFor(cop.kind, 1);
     const fireThreat = this.nearestThreat(cop.pos, this.burningCarThreats(), PANIC_RADIUS);
-    const sightBlocked = !fireThreat && this.walls.some((wll) => segmentIntersectsRect(cop.pos, home, wll));
-    const homeFlow = !fireThreat && sightBlocked && this.navGrid ? computeFlowField(this.navGrid, home) : undefined;
+    const sightBlocked =
+      !fireThreat && this.walls.some((wll) => segmentIntersectsRect(cop.pos, home, wll));
+    const homeFlow =
+      !fireThreat && sightBlocked && this.navGrid
+        ? computeFlowField(this.navGrid, home)
+        : undefined;
     const waypoint = fireThreat
       ? this.panicTarget(cop.pos, fireThreat)
       : sightBlocked && this.navGrid && homeFlow
@@ -3717,8 +4002,12 @@ export class World {
       return;
     }
 
-    const desired = this.wantedStars;
-    while (this.police.filter((cop) => !cop.returningHome).length < desired && this.policeSpawns.length > 0) {
+    const pressureStars = this.storyWantedPressure();
+    const desired = pressureStars;
+    while (
+      this.police.filter((cop) => !cop.returningHome).length < desired &&
+      this.policeSpawns.length > 0
+    ) {
       const spawn = this.policeSpawns[this.police.length % this.policeSpawns.length];
       // Alternate between officers on foot and patrol cars.
       const kind: 'foot' | 'car' = this.police.length % 2 === 0 ? 'foot' : 'car';
@@ -3751,7 +4040,7 @@ export class World {
       }
       if (cop.kind === 'car' && this.city) {
         if (arrestable && this.patrolAtDeployRange(cop)) return [{ ...cop, speed: 0 }]; // pull up, don't ram
-        const speed = policeSpeedFor('car', this.wantedStars);
+        const speed = policeSpeedFor('car', pressureStars);
         return [{ ...stepPoliceCar(cop, this.focus, this.city, dt, speed), speed }];
       }
       // An officer on foot charges straight at the player whenever no building
@@ -3760,14 +4049,17 @@ export class World {
       // on the pavement, whose tile sits off the walkable nav-grid (so a flow-
       // field-only officer is steered to a road tile and never quite reaches).
       const fireThreat = this.nearestThreat(cop.pos, this.burningCarThreats(), PANIC_RADIUS);
-      const sightBlocked = !fireThreat && this.walls.some((wll) => segmentIntersectsRect(cop.pos, this.focus, wll));
+      const sightBlocked =
+        !fireThreat && this.walls.some((wll) => segmentIntersectsRect(cop.pos, this.focus, wll));
       const waypoint = fireThreat
         ? this.panicTarget(cop.pos, fireThreat)
         : sightBlocked && this.navGrid && this.copFlow
           ? (flowWaypoint(this.navGrid, this.copFlow, cop.pos) ?? this.focus)
           : this.focus;
-      const stepped = stepPolice(cop, waypoint, dt, policeSpeedFor(cop.kind, this.wantedStars));
-      return [{ ...stepped, pos: resolveCircleRects(stepped.pos, stepped.radius, this.walls), speed: 0 }];
+      const stepped = stepPolice(cop, waypoint, dt, policeSpeedFor(cop.kind, pressureStars));
+      return [
+        { ...stepped, pos: resolveCircleRects(stepped.pos, stepped.radius, this.walls), speed: 0 },
+      ];
     });
 
     this.updatePoliceShooting(dt);
@@ -3794,7 +4086,7 @@ export class World {
 
   /** At a high wanted level, officers on foot open fire on the player. */
   private updatePoliceShooting(dt: number): void {
-    const shooting = this.wantedStars >= POLICE_SHOOT_MIN_STARS;
+    const shooting = this.storyWantedPressure() >= POLICE_SHOOT_MIN_STARS;
     const target = this.focus;
     this.police = this.police.map((cop) => {
       if (cop.kind !== 'foot' || cop.returningHome) return cop;
@@ -3829,7 +4121,10 @@ export class World {
         spatial.cars,
         stepped.pos,
         MAX_BULLET_TARGET_RADIUS,
-        (i) => !this.wreckedCars[i] && i !== this.drivingCarIndex && bulletHits(stepped, this.cars[i].pos, this.cars[i].radius),
+        (i) =>
+          !this.wreckedCars[i] &&
+          i !== this.drivingCarIndex &&
+          bulletHits(stepped, this.cars[i].pos, this.cars[i].radius),
       );
       if (carIdx !== -1) {
         this.redirectNpcDriverFromShot(carIdx, stepped.velocity);

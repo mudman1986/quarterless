@@ -291,6 +291,57 @@ button {
   margin-top: 14px;
 }
 
+.story-scorecard-block {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.story-scorecard-block h3 {
+  margin: 0;
+  color: #eef7ff;
+  font-size: 0.9rem;
+  text-transform: uppercase;
+}
+
+.story-scorecard-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.story-scorecard-item,
+.story-scorecard-empty {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #293342;
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(9, 12, 18, 0.92);
+}
+
+.story-scorecard-kicker {
+  color: #9fb0c4;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.story-scorecard-title {
+  color: #eef7ff;
+  font-size: 0.95rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.story-scorecard-copy,
+.story-scorecard-empty {
+  color: #b8c3d1;
+  line-height: 1.4;
+}
+
 .story-slot-card {
   display: grid;
   gap: 6px;
@@ -313,6 +364,10 @@ button {
 .story-chapter-grid {
   display: grid;
   gap: 10px;
+}
+
+.story-chapter-grid--map {
+  gap: 12px;
 }
 
 .story-act-section {
@@ -376,19 +431,43 @@ button {
 .story-chapter-card {
   display: grid;
   gap: 4px;
+  position: relative;
   border: 1px solid #344153;
   border-radius: 8px;
-  padding: 14px;
+  padding: 14px 14px 14px 32px;
   background: rgba(9, 12, 18, 0.92);
   color: #eef7ff;
   text-align: left;
   cursor: pointer;
 }
 
+.story-chapter-node {
+  position: absolute;
+  left: 12px;
+  top: 18px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #47d7ff;
+  box-shadow: 0 0 0 4px rgba(71, 215, 255, 0.16);
+}
+
 .story-chapter-card:hover,
 .story-chapter-card:focus-visible {
   border-color: #47d7ff;
   outline: none;
+}
+
+.story-chapter-card--current {
+  border-color: #47d7ff;
+  box-shadow:
+    0 0 0 1px rgba(71, 215, 255, 0.35),
+    0 16px 40px rgba(18, 55, 73, 0.28);
+}
+
+.story-chapter-card--completed .story-chapter-node {
+  background: #7ee787;
+  box-shadow: 0 0 0 4px rgba(126, 231, 135, 0.16);
 }
 
 .story-chapter-card--locked {
@@ -407,6 +486,11 @@ button {
   font-size: 1rem;
   font-weight: 700;
   text-transform: uppercase;
+}
+
+.story-chapter-copy {
+  color: #b8c3d1;
+  line-height: 1.45;
 }
 
 @media (max-width: 900px) {
@@ -515,8 +599,7 @@ button {
   border-radius: 10px;
   padding: 20px;
   background:
-    linear-gradient(180deg, rgba(18, 25, 35, 0.98), rgba(9, 12, 18, 0.98)),
-    var(--accent, #47d7ff);
+    linear-gradient(180deg, rgba(18, 25, 35, 0.98), rgba(9, 12, 18, 0.98)), var(--accent, #47d7ff);
   box-shadow: 0 28px 80px rgba(0, 0, 0, 0.46);
 }
 

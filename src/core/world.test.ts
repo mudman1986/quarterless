@@ -49,7 +49,8 @@ const laneCenteredFacilityRoadSpawn = (
   facility: ReturnType<typeof buildCity>['facilities'][number],
 ) => {
   const verticalRoad =
-    facility.roadSpawn.x < facility.building.x || facility.roadSpawn.x > facility.building.x + facility.building.w;
+    facility.roadSpawn.x < facility.building.x ||
+    facility.roadSpawn.x > facility.building.x + facility.building.w;
   const { tx, ty } = tileCoord(city.spec, facility.roadSpawn);
   const center = tileCenter(city.spec, tx, ty);
   return verticalRoad ? vec2(center.x, facility.roadSpawn.y) : vec2(facility.roadSpawn.x, center.y);
@@ -69,7 +70,9 @@ describe('World on foot', () => {
     const pickup = carTuningForKind('pickup');
     expect(sports.maxSpeed).toBeGreaterThan(pickup.maxSpeed);
     expect(sports.turnRate).toBeGreaterThan(pickup.turnRate);
-    expect(trafficCruiseSpeedForKind('sports')).toBeGreaterThan(trafficCruiseSpeedForKind('pickup'));
+    expect(trafficCruiseSpeedForKind('sports')).toBeGreaterThan(
+      trafficCruiseSpeedForKind('pickup'),
+    );
   });
 
   it('gives sports cars a smaller footprint than trucks and vans', () => {
@@ -115,7 +118,9 @@ describe('World entering and exiting a car', () => {
     }
 
     expect(sports.drivingCar!.speed).toBeGreaterThan(pickup.drivingCar!.speed);
-    expect(Math.abs(sports.drivingCar!.heading)).toBeGreaterThan(Math.abs(pickup.drivingCar!.heading));
+    expect(Math.abs(sports.drivingCar!.heading)).toBeGreaterThan(
+      Math.abs(pickup.drivingCar!.heading),
+    );
   });
 
   it('enters a nearby car when action is pressed', () => {
@@ -282,6 +287,87 @@ describe('World story objective progress', () => {
     expect(w.mission).toBeNull();
     expect(w.score.current).toBe(900);
   });
+
+  it('lets story district states block ambulance and taxi service lanes', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    const w = new World({
+      player: player(),
+      cars: [carAt(20, 0)],
+      carKinds: ['taxi'],
+      city,
+      bounds: { width: city.width, height: city.height },
+    });
+    (
+      w as unknown as {
+        corpses: { pos: ReturnType<typeof vec2>; offscreenFor: number; inFrameFor: number }[];
+      }
+    ).corpses = [{ pos: vec2(0, 0), offscreenFor: 0, inFrameFor: AMBULANCE_DISPATCH_DELAY }];
+
+    w.setStoryDistrictStateEffects({ serviceLaneBlocks: ['ambulance', 'taxi'] });
+    w.tick(controls({ action: true }), 1 / 60);
+    advance(w, 3);
+
+    expect(w.ambulance).toBeNull();
+    expect(w.taxiMission).toBeNull();
+  });
+
+  it('slows ambient traffic under story district pressure', () => {
+    const city = buildCity({
+      cols: 18,
+      rows: 18,
+      tile: 64,
+      block: 6,
+      roadWidth: 4,
+    });
+    const start = tileCenter(city.spec, 1, 4);
+    const base = new World({
+      player: player(),
+      cars: [{ pos: start, heading: Math.PI / 2, speed: 0, radius: 12 }],
+      city,
+      carDrivers: [{ dir: vec2(0, 1) }],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+    const slowed = new World({
+      player: player(),
+      cars: [{ pos: start, heading: Math.PI / 2, speed: 0, radius: 12 }],
+      city,
+      carDrivers: [{ dir: vec2(0, 1) }],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+    slowed.setStoryDistrictStateEffects({ trafficSpeedMultiplier: 0.4 });
+
+    advance(base, 1);
+    advance(slowed, 1);
+
+    expect(base.cars[0].pos.y).toBeGreaterThan(slowed.cars[0].pos.y);
+  });
+
+  it('adds checkpoint pressure on top of live wanted stars', () => {
+    const base = new World({
+      player: player(),
+      cars: [carAt(20, 0)],
+      pedestrians: [pedAt(60, 0)],
+      policeSpawns: [vec2(800, 800), vec2(832, 800), vec2(864, 800)],
+    });
+    const pressured = new World({
+      player: player(),
+      cars: [carAt(20, 0)],
+      pedestrians: [pedAt(60, 0)],
+      policeSpawns: [vec2(800, 800), vec2(832, 800), vec2(864, 800)],
+    });
+
+    pressured.setStoryDistrictStateEffects({ wantedPressureBonus: 1 });
+    base.tick(controls({ action: true }), 1 / 60);
+    pressured.tick(controls({ action: true }), 1 / 60);
+    for (let i = 0; i < 120; i++) {
+      base.tick(controls({ up: true }), 1 / 60);
+      pressured.tick(controls({ up: true }), 1 / 60);
+    }
+
+    expect(pressured.police.length).toBeGreaterThan(base.police.length);
+  });
 });
 
 describe('World police and wanted level', () => {
@@ -400,7 +486,9 @@ describe('World police service missions', () => {
     const mission = w.serviceMission;
     expect(mission?.kind).toBe('police');
     if (!mission || mission.kind !== 'police') throw new Error('expected an active police mission');
-    expect(w.pedestrians.find((ped) => ped.policeSuspectId === mission.suspectId)?.pos.x).toBeGreaterThan(400);
+    expect(
+      w.pedestrians.find((ped) => ped.policeSuspectId === mission.suspectId)?.pos.x,
+    ).toBeGreaterThan(400);
   });
 
   it('keeps the active suspect from fleeing the stolen patrol car before the bust radius', () => {
@@ -428,7 +516,9 @@ describe('World police service missions', () => {
     expect(mission?.kind).toBe('police');
     if (!mission || mission.kind !== 'police') throw new Error('expected an active police mission');
 
-    const suspectIndex = w.pedestrians.findIndex((ped) => ped.policeSuspectId === mission.suspectId);
+    const suspectIndex = w.pedestrians.findIndex(
+      (ped) => ped.policeSuspectId === mission.suspectId,
+    );
     expect(suspectIndex).toBeGreaterThanOrEqual(0);
 
     w.cars[w.drivingCarIndex!] = { ...w.cars[w.drivingCarIndex!], pos: vec2(150, 0), speed: 0 };
@@ -493,7 +583,11 @@ describe('World NPC traffic', () => {
     const npcCar: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 };
     const shooter = vec2(npcCar.pos.x + 120, npcCar.pos.y + 40);
     const w = new World({
-      player: { pos: shooter, angle: Math.atan2(npcCar.pos.y - shooter.y, npcCar.pos.x - shooter.x), radius: 8 },
+      player: {
+        pos: shooter,
+        angle: Math.atan2(npcCar.pos.y - shooter.y, npcCar.pos.x - shooter.x),
+        radius: 8,
+      },
       cars: [npcCar],
       city,
       carDrivers: [{ dir: vec2(1, 0) }],
@@ -510,7 +604,12 @@ describe('World NPC traffic', () => {
 
   it('makes an NPC driver flee when police gunfire passes close to the car', () => {
     const city = miniCity();
-    const npcCar: Car = { pos: tileCenter(city.spec, 2, 4), heading: Math.PI, speed: 0, radius: 12 };
+    const npcCar: Car = {
+      pos: tileCenter(city.spec, 2, 4),
+      heading: Math.PI,
+      speed: 0,
+      radius: 12,
+    };
     const w = new World({
       player: player(),
       cars: [npcCar],
@@ -521,7 +620,12 @@ describe('World NPC traffic', () => {
     });
     w.wanted = addHeat(createWanted(), CRIME_HEAT.hitPolice); // keep police bullets active this tick
     w.policeBullets = [
-      { pos: vec2(npcCar.pos.x - 24, npcCar.pos.y + 28), velocity: vec2(240, 0), life: 1, damage: 0 },
+      {
+        pos: vec2(npcCar.pos.x - 24, npcCar.pos.y + 28),
+        velocity: vec2(240, 0),
+        life: 1,
+        damage: 0,
+      },
     ];
 
     const startX = w.cars[0].pos.x;
@@ -533,7 +637,12 @@ describe('World NPC traffic', () => {
 
   it('runs a red light to flee after being shot at', () => {
     const city = miniCity();
-    const npc: Car = { pos: tileCenter(city.spec, 4, 2), heading: Math.PI / 2, speed: 0, radius: 12 };
+    const npc: Car = {
+      pos: tileCenter(city.spec, 4, 2),
+      heading: Math.PI / 2,
+      speed: 0,
+      radius: 12,
+    };
     const shooter = vec2(npc.pos.x, npc.pos.y - 120);
     const w = new World({
       player: { pos: shooter, angle: Math.PI / 2, radius: 8 },
@@ -655,7 +764,10 @@ describe('World police obey buildings', () => {
       w.tick(controls(), 1 / 60);
       const c = w.police[0];
       const inside =
-        c.pos.x > wall.x && c.pos.x < wall.x + wall.w && c.pos.y > wall.y && c.pos.y < wall.y + wall.h;
+        c.pos.x > wall.x &&
+        c.pos.x < wall.x + wall.w &&
+        c.pos.y > wall.y &&
+        c.pos.y < wall.y + wall.h;
       expect(inside).toBe(false);
     }
   });
@@ -982,7 +1094,9 @@ describe('World traffic rerouting and lights', () => {
 
     expect(w.ambulance).not.toBeNull();
     expect(w.ambulance!.speed).toBe(0);
-    expect(distance(w.ambulance!.pos, queued.pos)).toBeGreaterThan(w.ambulance!.radius + queued.radius + 8);
+    expect(distance(w.ambulance!.pos, queued.pos)).toBeGreaterThan(
+      w.ambulance!.radius + queued.radius + 8,
+    );
     expect(w.explosionsTriggered).toBe(0);
   });
 
@@ -990,7 +1104,12 @@ describe('World traffic rerouting and lights', () => {
     const city = miniCity();
     // Southbound car approaching the intersection at (4,4); horizontal has the
     // green, so this car's (vertical) light is red.
-    const npc: Car = { pos: tileCenter(city.spec, 4, 2), heading: Math.PI / 2, speed: 0, radius: 12 };
+    const npc: Car = {
+      pos: tileCenter(city.spec, 4, 2),
+      heading: Math.PI / 2,
+      speed: 0,
+      radius: 12,
+    };
     const w = new World({
       player: player(), // far away at the origin
       cars: [npc],
@@ -1176,11 +1295,16 @@ describe('World traffic rerouting and lights', () => {
     const cars: Car[] = [];
     const drivers: (TrafficAI | null)[] = [];
     for (let tx = 6; tx < 18; tx += 6) {
-      cars.push({ pos: tileCenter(city.spec, tx + 3, 7), heading: Math.PI / 2, speed: 0, radius: 14 });
+      cars.push({
+        pos: tileCenter(city.spec, tx + 3, 7),
+        heading: Math.PI / 2,
+        speed: 0,
+        radius: 14,
+      });
       drivers.push({ dir: vec2(0, 1) });
     }
     let seed = 7;
-    const rng = (): number => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const rng = (): number => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
     const w = new World({
       player: { pos: vec2(-9999, -9999), angle: 0, radius: 8 },
       cars,
@@ -1256,7 +1380,7 @@ describe('World traffic rerouting and lights', () => {
       target: pos,
     }));
     let seed = 11;
-    const rng = (): number => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const rng = (): number => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
     const w = new World({
       player: player(),
       city,
@@ -1305,7 +1429,7 @@ describe('World traffic rerouting and lights', () => {
     }));
     const starts = spawns.map((c) => ({ ...c }));
     let seed = 5;
-    const rng = (): number => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const rng = (): number => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
     const w = new World({
       player: player(),
       city,
@@ -1410,7 +1534,12 @@ describe('World living world', () => {
 
   it('lets a pedestrian get into a parked car and drive away', () => {
     const city = miniCity();
-    const parked: Car = { pos: tileCenter(city.spec, 0, 4), heading: Math.PI / 2, speed: 0, radius: 12 };
+    const parked: Car = {
+      pos: tileCenter(city.spec, 0, 4),
+      heading: Math.PI / 2,
+      speed: 0,
+      radius: 12,
+    };
     const start = { ...parked.pos };
     const beside: Pedestrian = {
       pos: vec2(parked.pos.x + 18, parked.pos.y),
@@ -1441,7 +1570,8 @@ describe('World living world', () => {
       bounds: { width: 1000, height: 1000 },
       rng: () => 0.5,
     });
-    for (let i = 0; i < 30 && w.pedestrians.length > 0; i++) w.tick(controls({ fire: true }), 1 / 60);
+    for (let i = 0; i < 30 && w.pedestrians.length > 0; i++)
+      w.tick(controls({ fire: true }), 1 / 60);
     expect(w.pedestrians).toHaveLength(0);
     expect(w.corpses).toHaveLength(1);
   });
@@ -1485,7 +1615,9 @@ describe('World living world', () => {
     w.tick(controls(), 1 / 60);
 
     expect(w.pedestrians[0].state).toBe('flee');
-    expect(distance(w.pedestrians[0].pos, vec2(40, 58))).toBeGreaterThan(distance(before, vec2(40, 58)));
+    expect(distance(w.pedestrians[0].pos, vec2(40, 58))).toBeGreaterThan(
+      distance(before, vec2(40, 58)),
+    );
   });
 
   it('clears a corpse left out of frame and respawns a pedestrian', () => {
@@ -1542,7 +1674,11 @@ describe('World living world', () => {
     }
     expect(dispatched).toBe(true); // an ambulance was sent
     expect(w.corpses).toHaveLength(0); // and it took the body away
-    expect(w.pedestrians.some((ped) => ped.pos.x === hospital!.spawn.x && ped.pos.y === hospital!.spawn.y)).toBe(true);
+    expect(
+      w.pedestrians.some(
+        (ped) => ped.pos.x === hospital!.spawn.x && ped.pos.y === hospital!.spawn.y,
+      ),
+    ).toBe(true);
   });
 
   it('dispatches the ambulance from the nearest hospital building', () => {
@@ -1557,9 +1693,7 @@ describe('World living world', () => {
       city,
       bounds: { width: city.width, height: city.height },
     });
-    w.corpses = [
-      { pos: corpsePos, offscreenFor: 0, inFrameFor: AMBULANCE_DISPATCH_DELAY },
-    ];
+    w.corpses = [{ pos: corpsePos, offscreenFor: 0, inFrameFor: AMBULANCE_DISPATCH_DELAY }];
 
     w.tick(controls(), 0); // dispatch without advancing away from the spawn point
     expect(w.ambulance?.pos).toEqual(laneCenteredFacilityRoadSpawn(city, hospital!));
@@ -1577,9 +1711,7 @@ describe('World living world', () => {
       city,
       bounds: { width: city.width, height: city.height },
     });
-    w.corpses = [
-      { pos: corpsePos, offscreenFor: 0, inFrameFor: AMBULANCE_DISPATCH_DELAY },
-    ];
+    w.corpses = [{ pos: corpsePos, offscreenFor: 0, inFrameFor: AMBULANCE_DISPATCH_DELAY }];
     w.tick(controls(), 0);
 
     w.ambulance = { ...w.ambulance!, age: SERVICE_TIMEOUT };
@@ -1624,7 +1756,9 @@ describe('World road deaths', () => {
     for (let i = 0; i < 60; i++) w.tick(controls({ up: true }), 1 / 60);
 
     expect(w.isWasted).toBe(false);
-    expect(distance(w.player.pos, w.cars[0].pos)).toBeGreaterThanOrEqual(w.player.radius + w.cars[0].radius - 1);
+    expect(distance(w.player.pos, w.cars[0].pos)).toBeGreaterThanOrEqual(
+      w.player.radius + w.cars[0].radius - 1,
+    );
   });
 
   it('respawns the player at the start after being run over', () => {
@@ -2064,7 +2198,6 @@ describe('World busts a player on the sidewalk', () => {
   });
 });
 
-
 describe('World car explosions', () => {
   it('sets a shot-up car on fire before it explodes into a wreck', () => {
     const w = new World({
@@ -2149,7 +2282,11 @@ describe('World car explosions', () => {
     });
 
     w.tick(controls({ action: true }), 1 / 60); // get into the car
-    const state = w as unknown as { carHealth: number[]; carBurnTimers: number[]; carBurnByPlayer: boolean[] };
+    const state = w as unknown as {
+      carHealth: number[];
+      carBurnTimers: number[];
+      carBurnByPlayer: boolean[];
+    };
     state.carHealth[0] = 0;
     state.carBurnTimers[0] = VEHICLE_BURN_DURATION;
     state.carBurnByPlayer[0] = false;
@@ -2236,7 +2373,11 @@ describe('World car explosions', () => {
       cars: [carAt(60, 0), carAt(110, 0)],
       bounds: { width: 4000, height: 4000 },
     });
-    const state = w as unknown as { carHealth: number[]; carBurnTimers: number[]; carBurnByPlayer: boolean[] };
+    const state = w as unknown as {
+      carHealth: number[];
+      carBurnTimers: number[];
+      carBurnByPlayer: boolean[];
+    };
     state.carHealth[0] = 0;
     state.carBurnTimers[0] = 1 / 60;
     state.carBurnByPlayer[0] = false;
@@ -2370,7 +2511,16 @@ describe('World car explosions', () => {
     const w = new World({
       player: { pos: tileCenter(city.spec, 0, 4), angle: 0, radius: 8 },
       city,
-      police: [{ pos: tileCenter(city.spec, 3, 4), heading: Math.PI, radius: 14, kind: 'car', home: station!.spawn, health: 1 }],
+      police: [
+        {
+          pos: tileCenter(city.spec, 3, 4),
+          heading: Math.PI,
+          radius: 14,
+          kind: 'car',
+          home: station!.spawn,
+          health: 1,
+        },
+      ],
       bounds: { width: city.width, height: city.height },
     });
     w.wanted = addHeat(createWanted(), CRIME_HEAT.hitPolice); // keep the patrol car active
@@ -2402,7 +2552,16 @@ describe('World car explosions', () => {
     const w = new World({
       player: { pos: tileCenter(city.spec, 0, 4), angle: 0, radius: 8 },
       city,
-      police: [{ pos: tileCenter(city.spec, 3, 4), heading: Math.PI, radius: 14, kind: 'car', home: station!.spawn, health: 1 }],
+      police: [
+        {
+          pos: tileCenter(city.spec, 3, 4),
+          heading: Math.PI,
+          radius: 14,
+          kind: 'car',
+          home: station!.spawn,
+          health: 1,
+        },
+      ],
       bounds: { width: city.width, height: city.height },
     });
     w.wanted = addHeat(createWanted(), CRIME_HEAT.hitPolice);
@@ -2590,7 +2749,7 @@ describe('World tow truck', () => {
 
     w.tick(controls(), 0); // process the respawn without letting the new car drive away
     expect(w.wreckedCars[0]).toBe(false);
-  expect(w.cars[0].pos).toEqual(laneCenteredFacilityRoadSpawn(city, towYard!));
+    expect(w.cars[0].pos).toEqual(laneCenteredFacilityRoadSpawn(city, towYard!));
   });
 });
 
@@ -2802,7 +2961,7 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
       }
     }
     expect(medicWalkedOut).toBe(true); // a medic got out and walked to the body
-      w.cars[0] = { ...w.cars[0], pos: vec2(-1000, -1000), speed: 0 };
+    w.cars[0] = { ...w.cars[0], pos: vec2(-1000, -1000), speed: 0 };
     expect(parkedBesideBody).toBe(true); // the ambulance waited, stationary, beside it
     expect(w.corpses).toHaveLength(0); // and the medic picked the body up
 
@@ -2849,7 +3008,15 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
   });
 
   it('reaches a corpse on a wide live-style sidewalk instead of timing out circling it', () => {
-    const city = buildCity({ cols: 21, rows: 21, tile: 64, block: 7, roadWidth: 4, margin: 42, sidewalkWidth: 42 });
+    const city = buildCity({
+      cols: 21,
+      rows: 21,
+      tile: 64,
+      block: 7,
+      roadWidth: 4,
+      margin: 42,
+      sidewalkWidth: 42,
+    });
     const strip = city.sidewalks[0]!;
     const bodyPos = vec2(strip.x + strip.w / 2, strip.y + strip.h / 2);
     const w = new World({
@@ -2898,12 +3065,13 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     );
     const sideStreetTarget = tileCenter(city.spec, sideStreetTx!, sideStreetTy);
     const bottomSidewalk = city.sidewalks
-      .filter((sidewalk) => sidewalk.y >= (bottomRoadStart + (city.spec.roadWidth ?? 1)) * city.spec.tile)
+      .filter(
+        (sidewalk) => sidewalk.y >= (bottomRoadStart + (city.spec.roadWidth ?? 1)) * city.spec.tile,
+      )
       .sort(
         (a, b) =>
           distance(vec2(a.x + a.w / 2, a.y + a.h / 2), sideStreetTarget) -
-            distance(vec2(b.x + b.w / 2, b.y + b.h / 2), sideStreetTarget) ||
-          a.y - b.y,
+            distance(vec2(b.x + b.w / 2, b.y + b.h / 2), sideStreetTarget) || a.y - b.y,
       )[0];
     expect(bottomSidewalk).toBeDefined();
     const bottomSidewalkTarget = vec2(
@@ -2971,12 +3139,13 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
       bottomRoadTy,
     );
     const bottomSidewalk = city.sidewalks
-      .filter((sidewalk) => sidewalk.y >= (bottomRoadStart + (city.spec.roadWidth ?? 1)) * city.spec.tile)
+      .filter(
+        (sidewalk) => sidewalk.y >= (bottomRoadStart + (city.spec.roadWidth ?? 1)) * city.spec.tile,
+      )
       .sort(
         (a, b) =>
           distance(vec2(a.x + a.w / 2, a.y + a.h / 2), sideStreetTarget) -
-            distance(vec2(b.x + b.w / 2, b.y + b.h / 2), sideStreetTarget) ||
-          a.y - b.y,
+            distance(vec2(b.x + b.w / 2, b.y + b.h / 2), sideStreetTarget) || a.y - b.y,
       )[0];
     expect(bottomSidewalk).toBeDefined();
     const bottomSidewalkTarget = vec2(
@@ -3014,7 +3183,9 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     const city = miniCity();
     const parkedPos = tileCenter(city.spec, 3, 4);
     const bodyPos = tileCenter(city.spec, 2, 4);
-    const policeSpawns = city.facilities.filter((f) => f.kind === 'policeStation').map((f) => f.spawn);
+    const policeSpawns = city.facilities
+      .filter((f) => f.kind === 'policeStation')
+      .map((f) => f.spawn);
     const w = new World({
       player: player(),
       cars: [{ pos: vec2(4000, 4000), heading: 0, speed: 0, radius: 12 }],
@@ -3086,7 +3257,9 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     w.tick(controls(), 0);
     expect(w.ambulance).not.toBeNull();
 
-    w.corpses = w.corpses.filter((corpse) => corpse.pos.x !== firstBody.x || corpse.pos.y !== firstBody.y);
+    w.corpses = w.corpses.filter(
+      (corpse) => corpse.pos.x !== firstBody.x || corpse.pos.y !== firstBody.y,
+    );
     w.tick(controls(), 1 / 60);
 
     expect(w.ambulance).not.toBeNull();
@@ -3355,7 +3528,9 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     const city = miniCity();
     const wreck: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 };
     const parkedPos = tileCenter(city.spec, 3, 4);
-    const policeSpawns = city.facilities.filter((f) => f.kind === 'policeStation').map((f) => f.spawn);
+    const policeSpawns = city.facilities
+      .filter((f) => f.kind === 'policeStation')
+      .map((f) => f.spawn);
     const w = new World({
       player: player(),
       cars: [wreck],
@@ -3403,7 +3578,9 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     expect(w.wantedStars).toBeGreaterThan(0);
     expect(w.police.length).toBeGreaterThan(0);
     expect(w.pedestrians).toHaveLength(1);
-    expect(distance(w.pedestrians[0].pos, operatorPos)).toBeLessThan(distance(w.pedestrians[0].pos, parked.pos));
+    expect(distance(w.pedestrians[0].pos, operatorPos)).toBeLessThan(
+      distance(w.pedestrians[0].pos, parked.pos),
+    );
     expect((w.pedestrians[0] as { uniform?: string }).uniform).toBe('towWorker');
 
     const startDistance = distance(w.pedestrians[0].pos, towYard.spawn);
@@ -3504,20 +3681,33 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
 
     for (let i = 0; i < 120 && w.ambulance; i++) w.tick(controls({ fire: true }), 1 / 60);
     const medic = w.pedestrians.find((ped) => ped.uniform === 'medic');
-    const burningIdx = w.cars.findIndex((_, i) => w.carKind(i) === 'ambulance' && w.carIsBurning(i));
+    const burningIdx = w.cars.findIndex(
+      (_, i) => w.carKind(i) === 'ambulance' && w.carIsBurning(i),
+    );
     expect(medic).toBeDefined();
     expect(burningIdx).toBeGreaterThanOrEqual(0);
 
     const before = distance(medic!.pos, w.cars[burningIdx].pos);
     w.tick(controls(), 1 / 60);
-    const after = distance(w.pedestrians.find((ped) => ped.uniform === 'medic')!.pos, w.cars[burningIdx].pos);
+    const after = distance(
+      w.pedestrians.find((ped) => ped.uniform === 'medic')!.pos,
+      w.cars[burningIdx].pos,
+    );
     expect(after).toBeGreaterThan(before);
   });
 });
 
 describe('World mission', () => {
   it('starts looping taxi fares after the player steals a taxi', () => {
-    const city = buildCity({ cols: 20, rows: 20, tile: 64, block: 5, roadWidth: 4, margin: 20, sidewalkWidth: 20 });
+    const city = buildCity({
+      cols: 20,
+      rows: 20,
+      tile: 64,
+      block: 5,
+      roadWidth: 4,
+      margin: 20,
+      sidewalkWidth: 20,
+    });
     const depot = city.facilities.find((facility) => facility.kind === 'taxiDepot');
     expect(depot).toBeDefined();
 
@@ -3567,7 +3757,17 @@ describe('World mission', () => {
     const w = new World({
       player: { ...player(), pos: patrolPos },
       city,
-      police: [{ pos: patrolPos, heading: 0, radius: 14, kind: 'car', home: station!.spawn, speed: 0, health: 60 }],
+      police: [
+        {
+          pos: patrolPos,
+          heading: 0,
+          radius: 14,
+          kind: 'car',
+          home: station!.spawn,
+          speed: 0,
+          health: 60,
+        },
+      ],
       policeSpawns: [station!.spawn],
       pedestrians: [pedAt(farSuspect.x, farSuspect.y), pedAt(backupSuspect.x, backupSuspect.y)],
       walls: city.buildings,
@@ -3623,7 +3823,9 @@ describe('World mission', () => {
     expect(w.corpses).toHaveLength(0);
     expect(w.score.current).toBe(0);
     expect(w.serviceMission?.kind).toBe('ambulance');
-    expect(w.serviceMission && w.serviceMission.kind === 'ambulance' ? w.serviceMission.stage : null).toBe('return');
+    expect(
+      w.serviceMission && w.serviceMission.kind === 'ambulance' ? w.serviceMission.stage : null,
+    ).toBe('return');
     expect(w.serviceTarget).toEqual(hospitalRoad);
     expect(w.pedestrians).toHaveLength(0);
 
@@ -3669,7 +3871,9 @@ describe('World mission', () => {
     expect(w.wreckedCars[1]).toBe(true);
     expect(w.score.current).toBe(0);
     expect(w.serviceMission?.kind).toBe('tow');
-    expect(w.serviceMission && w.serviceMission.kind === 'tow' ? w.serviceMission.stage : null).toBe('return');
+    expect(
+      w.serviceMission && w.serviceMission.kind === 'tow' ? w.serviceMission.stage : null,
+    ).toBe('return');
     expect(w.serviceTarget).toEqual(towYardRoad);
 
     w.cars[0] = { ...w.cars[0], pos: towYardRoad, speed: 0 };
@@ -3722,7 +3926,12 @@ describe('World mission', () => {
         id: 'svc',
         title: 'Body Run',
         objectives: [
-          { kind: 'service', description: 'Steal an ambulance and complete 1 recovery', service: 'ambulance', count: 1 },
+          {
+            kind: 'service',
+            description: 'Steal an ambulance and complete 1 recovery',
+            service: 'ambulance',
+            count: 1,
+          },
         ],
       }),
     });
@@ -3741,7 +3950,15 @@ describe('World mission', () => {
   });
 
   it('advances a taxi objective after the player completes a fare', () => {
-    const city = buildCity({ cols: 20, rows: 20, tile: 64, block: 5, roadWidth: 4, margin: 20, sidewalkWidth: 20 });
+    const city = buildCity({
+      cols: 20,
+      rows: 20,
+      tile: 64,
+      block: 5,
+      roadWidth: 4,
+      margin: 20,
+      sidewalkWidth: 20,
+    });
     const depot = city.facilities.find((facility) => facility.kind === 'taxiDepot');
     expect(depot).toBeDefined();
     const w = new World({
@@ -3757,7 +3974,14 @@ describe('World mission', () => {
       mission: createMission({
         id: 'cab',
         title: 'Cab Shift',
-        objectives: [{ kind: 'service', description: 'Steal a taxi and complete 1 fare', service: 'taxi', count: 1 }],
+        objectives: [
+          {
+            kind: 'service',
+            description: 'Steal a taxi and complete 1 fare',
+            service: 'taxi',
+            count: 1,
+          },
+        ],
       }),
     });
 
@@ -3812,7 +4036,14 @@ describe('World mission', () => {
       mission: createMission({
         id: 'm-targets',
         title: 'Takedown',
-        objectives: [{ kind: 'eliminate', description: 'Take out 2 marked targets', count: 2, targetsOnly: true }],
+        objectives: [
+          {
+            kind: 'eliminate',
+            description: 'Take out 2 marked targets',
+            count: 2,
+            targetsOnly: true,
+          },
+        ],
         reward: 500,
       }),
     });
@@ -4066,7 +4297,7 @@ describe('World pedestrian navigation performance', () => {
     }
     expect(peds.length).toBeGreaterThan(100);
     let seed = 99;
-    const rng = (): number => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const rng = (): number => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
     const w = new World({
       player: player(),
       city,

@@ -152,6 +152,7 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
               label: 'Stop the fake ambulance before it reaches the chop garage',
               summary:
                 'Box it in anywhere on the route or blow it up before the crew reaches the garage.',
+              serviceLaneBlocks: ['ambulance'],
             },
             actors: [
               {
@@ -578,6 +579,9 @@ export const STATIC_ON_THE_HOSPITAL_BAND: StoryChapter = {
               label: 'The blackout pockets are still narrow enough for a runner',
               summary:
                 'A clinic runner is still threading the first dead zones before the jammer vans close them for good.',
+              trafficSpeedMultiplier: 0.7,
+              suppressNpcDriving: true,
+              serviceLaneBlocks: ['taxi'],
             },
             actors: [
               {
@@ -612,6 +616,9 @@ export const STATIC_ON_THE_HOSPITAL_BAND: StoryChapter = {
               label: 'A jammer van is trying to reseal the route behind you',
               summary:
                 'The last relay sites will stay open only while the jammer van is still moving to close them.',
+              trafficSpeedMultiplier: 0.55,
+              suppressNpcDriving: true,
+              serviceLaneBlocks: ['ambulance', 'taxi'],
             },
             actors: [
               {
@@ -694,6 +701,24 @@ export const STATIC_ON_THE_HOSPITAL_BAND: StoryChapter = {
           },
         ],
         reward: 3900,
+      },
+      prototypeScript: {
+        primaryActorId: 'meter-burn-checkpoint-strip',
+        actors: [],
+        stages: [
+          {
+            id: 'meter-burn-checkpoint-strip',
+            title: 'Checkpoint strip',
+            districtState: {
+              label: 'Checkpoint traffic is bunching the fare lane',
+              summary:
+                'The checkpoint strip is slowing the whole avenue and pushing extra police pressure into the corridor.',
+              trafficSpeedMultiplier: 0.6,
+              wantedPressureBonus: 1,
+            },
+            actors: [],
+          },
+        ],
       },
     },
     {
@@ -2063,6 +2088,25 @@ export const NEON_COURIERS: StoryChapter = {
           },
         ],
         reward: 5400,
+      },
+      prototypeScript: {
+        primaryActorId: 'lamps-out-blackout-grid',
+        actors: [],
+        stages: [
+          {
+            id: 'lamps-out-blackout-grid',
+            title: 'Hold the blackout',
+            districtState: {
+              label: 'The boulevard blackout is choking traffic flow',
+              summary:
+                'Dark intersections are slowing the avenue to a crawl while the courier sweep threads the stalled lanes.',
+              trafficSpeedMultiplier: 0.45,
+              suppressNpcDriving: true,
+              serviceLaneBlocks: ['taxi'],
+            },
+            actors: [],
+          },
+        ],
       },
     },
   ],
