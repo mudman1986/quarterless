@@ -542,6 +542,10 @@ export class CityScene extends Phaser.Scene {
     this.pauseKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.P);
     this.storyAcknowledgeKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER);
     this.newGameKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.N);
+    const handleStoryAcknowledge = (): void => {
+      if (this.storyPanelRequiresAcknowledge) this.acknowledgeStoryPanel();
+    };
+    kb.on('keydown-ENTER', handleStoryAcknowledge);
     this.paused = false;
     if (typeof window !== 'undefined') {
       window.addEventListener('beforeunload', this.beforeUnloadHandler);
@@ -558,6 +562,7 @@ export class CityScene extends Phaser.Scene {
       }
     });
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      kb.off('keydown-ENTER', handleStoryAcknowledge);
       if (typeof window !== 'undefined') {
         window.removeEventListener('beforeunload', this.beforeUnloadHandler);
       }
@@ -681,8 +686,6 @@ export class CityScene extends Phaser.Scene {
     const script = this.storyScript!;
     const existing = script.actorCarIndices[actorId];
     if (existing !== undefined && this.world.cars[existing]) {
-      const car = this.world.cars[existing]!;
-      this.world.cars[existing] = { ...car, pos };
       return existing;
     }
     const index = this.world.cars.length;

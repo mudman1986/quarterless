@@ -10,6 +10,69 @@ const authoredMissions = STORY_MODE_PROTOTYPE.acts.flatMap((act) =>
   ),
 );
 
+const scriptedRouteVehicleCases = [
+  {
+    actId: 'find-the-missing-dispatcher',
+    chapterId: 'dead-drop-district',
+    missionId: 'false-ambulance',
+    actorId: 'false-ambulance-van',
+  },
+  {
+    actId: 'find-the-missing-dispatcher',
+    chapterId: 'precinct-ashes',
+    missionId: 'suspect-carousel',
+    actorId: 'framed-convoy-car',
+  },
+] as const;
+
+async function restartIntoStoryMission(
+  page: import('@playwright/test').Page,
+  target: { actId: string; chapterId: string; missionId: string; objectiveIndex: number },
+): Promise<void> {
+  await page.evaluate(({ actId, chapterId, missionId, objectiveIndex }) => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      scene: { restart(data: unknown): void };
+    };
+    scene?.scene.restart({
+      skipResume: true,
+      mode: 'story',
+      storyProgress: {
+        version: 1,
+        storyId: 'sindicate-story-mode',
+        current: {
+          actId,
+          chapterId,
+          missionId,
+          objectiveIndex,
+        },
+        unlockedChapterIds: ['dead-drop-district', 'spare-parts-gospel', 'static-on-the-hospital-band', 'meter-running', 'precinct-ashes', 'the-switchboard-name', 'freight-union-morning', 'neon-couriers', 'glass-towers-empty-floors'],
+        completedChapterIds: [],
+        completedMissionIds: [],
+        branchOutcomes: {},
+      },
+    });
+  }, target);
+}
+
+async function acknowledgeStoryPanel(page: import('@playwright/test').Page): Promise<void> {
+  await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      acknowledgeStoryPanel?: () => void;
+    };
+    scene?.acknowledgeStoryPanel?.();
+  });
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      paused: boolean;
+      storyPanel?: { visible: boolean };
+    };
+    return scene?.paused === false && !scene?.storyPanel?.visible;
+  });
+}
+
 test.afterEach(async ({ page }) => {
   await page.evaluate(() => {
     localStorage.removeItem('sindicate.gameState');
@@ -23,30 +86,7 @@ test('every authored runtime mission boots into the expected mission shell', asy
 
   for (const entry of authoredMissions) {
     const objectiveIndex = entry.mission.prototypeScript ? 0 : entry.mission.prototypeRuntime?.objectives[0]?.kind === 'reach' || entry.mission.prototypeRuntime?.objectives[0]?.kind === 'route' ? -1 : 0;
-    await page.evaluate(({ actId, chapterId, missionId, objectiveIndex }) => {
-      const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
-      const scene = game?.scene.getScene('City') as {
-        scene: { restart(data: unknown): void };
-      };
-      scene?.scene.restart({
-        skipResume: true,
-        mode: 'story',
-        storyProgress: {
-          version: 1,
-          storyId: 'sindicate-story-mode',
-          current: {
-            actId,
-            chapterId,
-            missionId,
-            objectiveIndex,
-          },
-          unlockedChapterIds: ['dead-drop-district', 'spare-parts-gospel', 'static-on-the-hospital-band', 'meter-running', 'precinct-ashes', 'the-switchboard-name', 'freight-union-morning', 'neon-couriers', 'glass-towers-empty-floors'],
-          completedChapterIds: [],
-          completedMissionIds: [],
-          branchOutcomes: {},
-        },
-      });
-    }, {
+    await restartIntoStoryMission(page, {
       actId: entry.actId,
       chapterId: entry.chapter.id,
       missionId: entry.mission.id,
@@ -85,5 +125,51 @@ test('every authored runtime mission boots into the expected mission shell', asy
       expect(value.storyStateVisible).toBe(true);
       expect(value.storyStateText.length).toBeGreaterThan(0);
     }
+  }
+});
+
+test('scripted route vehicles advance instead of snapping back to their spawn point', async ({ page }) => {
+  await launchSindicate(page);
+
+  for (const target of scriptedRouteVehicleCases) {
+    await restartIntoStoryMission(page, { ...target, objectiveIndex: 0 });
+    await acknowledgeStoryPanel(page);
+
+    const initial = await page.waitForFunction(({ missionId, actorId }) => {
+      const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+      const scene = game?.scene.getScene('City') as {
+        storyScript?: { actorCarIndices: Record<string, number> } | null;
+        world: { mission?: { id: string } | null; cars: Array<{ pos: { x: number; y: number } }> };
+      };
+      if (scene?.world?.mission?.id !== missionId) return null;
+      const carIndex = scene.storyScript?.actorCarIndices?.[actorId];
+      if (carIndex === undefined) return null;
+      const car = scene.world.cars[carIndex];
+      return car ? { x: car.pos.x, y: car.pos.y } : null;
+    }, target);
+
+    const start = (await initial.jsonValue()) as { x: number; y: number };
+
+    const moved = await page.waitForFunction(
+      ({ missionId, actorId, start }) => {
+        const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+        const scene = game?.scene.getScene('City') as {
+          storyScript?: { actorCarIndices: Record<string, number> } | null;
+          world: { mission?: { id: string } | null; cars: Array<{ pos: { x: number; y: number } }> };
+        };
+        if (scene?.world?.mission?.id !== missionId) return null;
+        const carIndex = scene.storyScript?.actorCarIndices?.[actorId];
+        if (carIndex === undefined) return null;
+        const car = scene.world.cars[carIndex];
+        if (!car) return null;
+        const dx = car.pos.x - start.x;
+        const dy = car.pos.y - start.y;
+        return Math.hypot(dx, dy) > 8 ? { x: car.pos.x, y: car.pos.y } : null;
+      },
+      { missionId: target.missionId, actorId: target.actorId, start },
+      { timeout: 3000 },
+    );
+
+    expect(await moved.jsonValue()).not.toBeNull();
   }
 });
