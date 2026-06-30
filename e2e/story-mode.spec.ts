@@ -1008,6 +1008,62 @@ test('scripted escort fail rules restart the current story mission', async ({ pa
   expect(restartedValue.text).toContain('Ward 6 Exit');
 });
 
+test('story mode fails quiet-route missions when the wanted level stays hot', async ({ page }) => {
+  await launchStoryMode(page);
+  await restartIntoStoryProgress(page, {
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'meter-running',
+      missionId: 'ghost-fare',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: UNLOCKED_THROUGH_METER_RUNNING,
+    completedChapterIds: [
+      'dead-drop-district',
+      'spare-parts-gospel',
+      'static-on-the-hospital-band',
+    ],
+    completedMissionIds: COMPLETED_THROUGH_WARD_6_EXIT,
+    branchOutcomes: {},
+  });
+  await acknowledgeStoryPanel(page);
+
+  const failure = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      world: { wanted: { heat: number } };
+      pendingStoryRestart?: unknown;
+      storyPanel?: { text: string; visible: boolean };
+      storyProgress?: { current: { objectiveIndex: number } | null } | null;
+      syncStoryScript?: (dt?: number) => void;
+    };
+    if (!scene?.world || typeof scene.syncStoryScript !== 'function') {
+      throw new Error('Missing quiet-route fail hooks');
+    }
+
+    scene.world.wanted.heat = 200;
+    scene.syncStoryScript(2.1);
+    return {
+      pendingRestart: !!scene.pendingStoryRestart,
+      text: scene.storyPanel?.text ?? '',
+      objectiveIndex: scene.storyProgress?.current?.objectiveIndex ?? null,
+      visible: !!scene.storyPanel?.visible,
+    };
+  });
+
+  expect(failure).toEqual({
+    pendingRestart: true,
+    text:
+      'MISSION FAILED\n\n' +
+      'The ghost fare vanished once the route got too loud.\n\n' +
+      'Retrying Ghost Fare...',
+    objectiveIndex: 0,
+    visible: true,
+  });
+});
+
 test('story mode can complete a longer multi-objective encounter and roll into the next chapter', async ({
   page,
 }) => {

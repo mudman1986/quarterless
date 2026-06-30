@@ -6,6 +6,7 @@ import type {
   StoryFailRule,
   StoryStageTransition,
   VehicleRouteActorScript,
+  WantedPressureFailRule,
 } from './storyMode';
 
 export interface RouteActorStep {
@@ -35,6 +36,7 @@ export interface StoryProgressState {
 export interface StoryScriptTickContext {
   playerPos: Vec2;
   playerSpeed: number;
+  wantedStars: number;
   dt: number;
   actorPositions: Record<string, Vec2 | null>;
 }
@@ -148,6 +150,21 @@ function applyEscortRadiusRule(
   };
 }
 
+function applyWantedPressureRule(
+  rule: WantedPressureFailRule,
+  progress: StoryProgressState,
+  ctx: StoryScriptTickContext,
+): StoryScriptTickResult {
+  const key = `wanted-pressure:${rule.minStars}:${rule.failureText}`;
+  const nextCounter =
+    ctx.wantedStars >= rule.minStars ? (progress.failCounters[key] ?? 0) + ctx.dt : 0;
+  const failCounters = { ...progress.failCounters, [key]: nextCounter };
+  return {
+    progress: { ...progress, failCounters },
+    failureText: nextCounter >= rule.maxSeconds ? rule.failureText : null,
+  };
+}
+
 export function applyStoryFailRules(
   rules: readonly StoryFailRule[] | undefined,
   progress: StoryProgressState,
@@ -160,7 +177,9 @@ export function applyStoryFailRules(
     const result =
       rule.kind === 'loseActor'
         ? applyLoseActorRule(rule, next, ctx)
-        : applyEscortRadiusRule(rule, next, ctx);
+        : rule.kind === 'escortRadius'
+          ? applyEscortRadiusRule(rule, next, ctx)
+          : applyWantedPressureRule(rule, next, ctx);
     next = result.progress;
     if (result.failureText) return result;
   }

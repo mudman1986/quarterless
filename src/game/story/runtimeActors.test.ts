@@ -74,7 +74,7 @@ describe('updateTailCaptureProgress', () => {
     const next = updateTailCaptureProgress(
       actor,
       progress,
-      { playerPos: vec2(0, 0), playerSpeed: 0, dt: 1, actorPositions: {} },
+      { playerPos: vec2(0, 0), playerSpeed: 0, wantedStars: 0, dt: 1, actorPositions: {} },
       vec2(10, 0),
     );
     expect(next.tailSeconds).toBe(1);
@@ -104,7 +104,7 @@ describe('updateTailCaptureProgress', () => {
     const next = updateTailCaptureProgress(
       actor,
       progress,
-      { playerPos: vec2(100, 0), playerSpeed: 25, dt: 1, actorPositions: {} },
+      { playerPos: vec2(100, 0), playerSpeed: 25, wantedStars: 0, dt: 1, actorPositions: {} },
       vec2(10, 0),
     );
 
@@ -134,7 +134,7 @@ describe('updateTailCaptureProgress', () => {
     const next = updateTailCaptureProgress(
       actor,
       progress,
-      { playerPos: vec2(100, 0), playerSpeed: 25, dt: 1, actorPositions: {} },
+      { playerPos: vec2(100, 0), playerSpeed: 25, wantedStars: 0, dt: 1, actorPositions: {} },
       vec2(10, 0),
       true,
     );
@@ -159,6 +159,7 @@ describe('applyStoryFailRules', () => {
       {
         playerPos: vec2(0, 0),
         playerSpeed: 0,
+        wantedStars: 0,
         dt: 2.1,
         actorPositions: { escort: vec2(100, 0) },
       },
@@ -173,6 +174,7 @@ describe('applyStoryFailRules', () => {
       {
         playerPos: vec2(0, 0),
         playerSpeed: 0,
+        wantedStars: 0,
         dt: 1.6,
         actorPositions: { van: null },
       },
@@ -180,6 +182,23 @@ describe('applyStoryFailRules', () => {
 
     expect(result.failureText).toBe('Target lost');
     expect(result.progress.failCounters.van).toBeCloseTo(1.6);
+  });
+
+  it('fails when a stealth route stays loud for too long', () => {
+    const result = applyStoryFailRules(
+      [{ kind: 'wantedPressure', minStars: 2, maxSeconds: 2, failureText: 'Stealth blown' }],
+      { tailSeconds: 0, captureSeconds: 0, tailLostSeconds: 0, failCounters: {} },
+      {
+        playerPos: vec2(0, 0),
+        playerSpeed: 0,
+        wantedStars: 2,
+        dt: 2.1,
+        actorPositions: {},
+      },
+    );
+
+    expect(result.failureText).toBe('Stealth blown');
+    expect(result.progress.failCounters['wanted-pressure:2:Stealth blown']).toBeCloseTo(2.1);
   });
 });
 

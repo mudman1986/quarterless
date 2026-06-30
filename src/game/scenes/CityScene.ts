@@ -940,6 +940,7 @@ export class CityScene extends Phaser.Scene {
         {
           playerPos: this.world.focus,
           playerSpeed: this.world.drivingCar?.speed ?? 0,
+          wantedStars: this.world.wantedStars,
           dt,
           actorPositions,
         },
@@ -959,6 +960,7 @@ export class CityScene extends Phaser.Scene {
     const fail = applyStoryFailRules(stage.failRules ?? runtime.failRules, progress, {
       playerPos: this.world.focus,
       playerSpeed: this.world.drivingCar?.speed ?? 0,
+      wantedStars: this.world.wantedStars,
       dt,
       actorPositions,
     });

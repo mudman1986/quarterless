@@ -122,7 +122,14 @@ export interface EscortRadiusFailRule {
   failureText: string;
 }
 
-export type StoryFailRule = LoseActorFailRule | EscortRadiusFailRule;
+export interface WantedPressureFailRule {
+  kind: 'wantedPressure';
+  minStars: number;
+  maxSeconds: number;
+  failureText: string;
+}
+
+export type StoryFailRule = LoseActorFailRule | EscortRadiusFailRule | WantedPressureFailRule;
 
 export interface RouteCompleteStageTransition {
   kind: 'routeComplete';

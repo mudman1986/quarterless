@@ -667,6 +667,30 @@ export const STATIC_ON_THE_HOSPITAL_BAND: StoryChapter = {
         ],
         reward: 3600,
       },
+      prototypeScript: {
+        primaryActorId: 'clean-sheets-tunnel',
+        actors: [],
+        stages: [
+          {
+            id: 'clean-sheets-tunnel',
+            title: 'Keep the tunnel quiet',
+            districtState: {
+              label: 'The loading tunnel is still running below full alarm',
+              summary:
+                'If the security sweep gets a hard read on you, the archive room burns before you can pull the records.',
+            },
+            actors: [],
+            failRules: [
+              {
+                kind: 'wantedPressure',
+                minStars: 2,
+                maxSeconds: 1.5,
+                failureText: 'The archive room was torched once the tunnel alarm went loud.',
+              },
+            ],
+          },
+        ],
+      },
     },
     {
       id: 'crash-cart',
@@ -831,6 +855,30 @@ export const METER_RUNNING: StoryChapter = {
           },
         ],
         reward: 3000,
+      },
+      prototypeScript: {
+        primaryActorId: 'ghost-fare-route',
+        actors: [],
+        stages: [
+          {
+            id: 'ghost-fare-route',
+            title: 'Keep the route quiet',
+            districtState: {
+              label: 'The ghost fare is still checking how cleanly you move',
+              summary:
+                'Push the route into a full police read and the next drop disappears before you reach it.',
+            },
+            actors: [],
+            failRules: [
+              {
+                kind: 'wantedPressure',
+                minStars: 2,
+                maxSeconds: 2,
+                failureText: 'The ghost fare vanished once the route got too loud.',
+              },
+            ],
+          },
+        ],
       },
     },
     {
@@ -1176,6 +1224,32 @@ export const METER_RUNNING: StoryChapter = {
           },
         ],
         reward: 3900,
+      },
+      prototypeScript: {
+        primaryActorId: 'meter-burn-route',
+        actors: [],
+        stages: [
+          {
+            id: 'meter-burn-route',
+            title: 'Keep the meter cold',
+            districtState: {
+              label: 'Checkpoint readers are squeezing the taxi lane',
+              summary:
+                'The fare still passes for ordinary traffic, but only while the sweep never locks a full read on you.',
+              trafficSpeedMultiplier: 0.65,
+              wantedPressureBonus: 1,
+            },
+            actors: [],
+            failRules: [
+              {
+                kind: 'wantedPressure',
+                minStars: 2,
+                maxSeconds: 2,
+                failureText: 'The contraband fare was burned once the checkpoint strip got a full read.',
+              },
+            ],
+          },
+        ],
       },
     },
     {
