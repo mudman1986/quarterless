@@ -745,7 +745,7 @@ export class CityScene extends Phaser.Scene {
     const carIndex = this.ensureStoryTargetCar(actor.actorId, first, actor.vehicleKind);
     const routeIndex = script.actorRouteIndices[actor.actorId] ?? 0;
     const car = this.world.cars[carIndex]!;
-    const step = advanceVehicleRouteActor(actor, car.pos, routeIndex, dt);
+    const step = advanceVehicleRouteActor(actor, car.pos, routeIndex, dt, car.heading);
     this.world.cars[carIndex] = {
       ...car,
       heading: step.heading,
@@ -762,7 +762,7 @@ export class CityScene extends Phaser.Scene {
     const pedIndex = this.ensureStoryTargetPed(actor.actorId, first, { uniform: actor.uniform })[0]!;
     const ped = this.world.pedestrians[pedIndex]!;
     const routeIndex = script.actorRouteIndices[actor.actorId] ?? 0;
-    const step = advancePedestrianRouteActor(actor, ped.pos, routeIndex, dt);
+    const step = advancePedestrianRouteActor(actor, ped.pos, routeIndex, dt, ped.heading);
     this.world.pedestrians[pedIndex] = {
       ...ped,
       pos: step.pos,

@@ -1,6 +1,28 @@
 import { test, expect } from '@playwright/test';
 
 const MANUAL_SAVE_KEY = 'sindicate.manualSave';
+const UNLOCKED_THROUGH_STATIC_ON_THE_HOSPITAL_BAND = [
+  'dead-drop-district',
+  'spare-parts-gospel',
+  'static-on-the-hospital-band',
+] as const;
+const UNLOCKED_THROUGH_METER_RUNNING = [...UNLOCKED_THROUGH_STATIC_ON_THE_HOSPITAL_BAND, 'meter-running'] as const;
+const COMPLETED_THROUGH_WARD_6_EXIT = [
+  'night-ferry-run',
+  'burned-locker',
+  'wreck-before-dawn',
+  'false-ambulance',
+  'last-call-at-pier-9',
+  'yard-talk',
+  'hook-chain',
+  'the-empty-shell',
+  'crusher-feed',
+  'towline-oath',
+  'cold-intake',
+  'flatline-gap',
+  'clean-sheets',
+  'crash-cart',
+] as const;
 
 function storyManualSaveKey(slot: number): string {
   return slot <= 1 ? `${MANUAL_SAVE_KEY}.storyProgress` : `${MANUAL_SAVE_KEY}.${slot}.storyProgress`;
@@ -62,6 +84,24 @@ async function restartIntoStoryProgress(page: import('@playwright/test').Page, s
   }, storyProgress);
 }
 
+async function acknowledgeStoryPanel(page: import('@playwright/test').Page): Promise<void> {
+  await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      acknowledgeStoryPanel?: () => void;
+    };
+    scene?.acknowledgeStoryPanel?.();
+  });
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      paused: boolean;
+      storyPanel?: { visible: boolean };
+    };
+    return scene?.paused === false && !scene?.storyPanel?.visible;
+  });
+}
+
 async function launchStoryModeWithOptions(
   page: import('@playwright/test').Page,
   options: { acknowledgeBrief: boolean },
@@ -73,23 +113,7 @@ async function launchStoryModeWithOptions(
   await page.getByRole('button', { name: /Start Story|Continue Story|Resume Current Run/ }).click();
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
   await page.locator('#game canvas').click();
-  if (options.acknowledgeBrief) {
-    await page.evaluate(() => {
-      const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
-      const scene = game?.scene.getScene('City') as {
-        acknowledgeStoryPanel?: () => void;
-      };
-      scene?.acknowledgeStoryPanel?.();
-    });
-    await page.waitForFunction(() => {
-      const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
-      const scene = game?.scene.getScene('City') as {
-        paused: boolean;
-        storyPanel?: { visible: boolean };
-      };
-      return scene?.paused === false && !scene?.storyPanel?.visible;
-    });
-  }
+  if (options.acknowledgeBrief) await acknowledgeStoryPanel(page);
 }
 
 test.afterEach(async ({ page }) => {
@@ -623,32 +647,9 @@ test('story mode resolves branch-dependent mission variants from saved outcomes'
       missionId: 'red-light-choir',
       objectiveIndex: 0,
     },
-    unlockedChapterIds: [
-      'dead-drop-district',
-      'spare-parts-gospel',
-      'static-on-the-hospital-band',
-      'meter-running',
-    ],
+    unlockedChapterIds: UNLOCKED_THROUGH_METER_RUNNING,
     completedChapterIds: ['dead-drop-district', 'spare-parts-gospel', 'static-on-the-hospital-band'],
-    completedMissionIds: [
-      'night-ferry-run',
-      'burned-locker',
-      'wreck-before-dawn',
-      'false-ambulance',
-      'last-call-at-pier-9',
-      'yard-talk',
-      'hook-chain',
-      'the-empty-shell',
-      'crusher-feed',
-      'towline-oath',
-      'cold-intake',
-      'flatline-gap',
-      'clean-sheets',
-      'crash-cart',
-      'ward-6-exit',
-      'ghost-fare',
-      'double-booking',
-    ],
+    completedMissionIds: [...COMPLETED_THROUGH_WARD_6_EXIT, 'ward-6-exit', 'ghost-fare', 'double-booking'],
     branchOutcomes: { 'double-booking': 'save-passenger-a' },
   });
 
@@ -671,6 +672,390 @@ test('story mode resolves branch-dependent mission variants from saved outcomes'
     objective: 'Tail the radio host through the uptown club strip',
     state: 'DISTRICT STATE\nThe host is still circling the uptown clubs',
   });
+});
+
+test('story mode resolves branch-dependent mission variants from a live recorded outcome', async ({ page }) => {
+  await launchStoryMode(page);
+
+  await restartIntoStoryProgress(page, {
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'meter-running',
+      missionId: 'double-booking',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: UNLOCKED_THROUGH_METER_RUNNING,
+    completedChapterIds: ['dead-drop-district', 'spare-parts-gospel', 'static-on-the-hospital-band'],
+    completedMissionIds: [...COMPLETED_THROUGH_WARD_6_EXIT, 'ward-6-exit', 'ghost-fare'],
+    branchOutcomes: {},
+  });
+  await acknowledgeStoryPanel(page);
+
+  await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: {
+        campaign?: {
+          currentIndex: number;
+          missions: Array<{ currentIndex: number; objectives: unknown[]; status: 'active' | 'completed' }>;
+        } | null;
+        updateMissionProgress?: () => void;
+      };
+      storyProgress?: {
+        current: { missionId: string; objectiveIndex: number } | null;
+        branchOutcomes: Record<string, string>;
+      } | null;
+      handleEvents?: () => void;
+      persistGameState?: () => void;
+      scene: { restart(data: unknown): void };
+    };
+    if (!scene?.world?.campaign || !scene.storyProgress || typeof scene.handleEvents !== 'function') {
+      throw new Error('Missing live branch recording hooks');
+    }
+
+    scene.storyProgress.branchOutcomes = {
+      ...scene.storyProgress.branchOutcomes,
+      'double-booking': 'save-passenger-b',
+    };
+    const mission = scene.world.campaign.missions[scene.world.campaign.currentIndex];
+    if (!mission) throw new Error('Missing current story mission');
+    mission.currentIndex = mission.objectives.length;
+    mission.status = 'completed';
+    scene.world.updateMissionProgress?.();
+    scene.handleEvents();
+    if (!scene.storyProgress.current || scene.storyProgress.current.missionId !== 'red-light-choir') {
+      throw new Error('Missing next mission after live branch recording');
+    }
+    scene.storyProgress.current.objectiveIndex = 0;
+    scene.persistGameState?.();
+    scene.scene.restart({ skipResume: true, mode: 'story', storyProgress: scene.storyProgress });
+  });
+
+  const variant = await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: { mission?: { id: string; title: string } | null; missionObjective?: { description: string } | null };
+      storyProgress?: { branchOutcomes: Record<string, string> } | null;
+      storyPanel?: { text: string };
+      storyStateText?: { text: string };
+    };
+    if (scene?.world?.mission?.id !== 'red-light-choir') return null;
+    const saved = localStorage.getItem('sindicate.storyProgress');
+    const parsed = saved ? JSON.parse(saved) : null;
+    return {
+      title: scene.world.mission?.title ?? '',
+      objective: scene.world.missionObjective?.description ?? '',
+      state: scene.storyStateText?.text ?? '',
+      panel: scene.storyPanel?.text ?? '',
+      branch: scene.storyProgress?.branchOutcomes['double-booking'] ?? '',
+      savedBranch: parsed?.branchOutcomes?.['double-booking'] ?? '',
+    };
+  });
+
+  const branchValue = (await variant.jsonValue()) as {
+    title: string;
+    objective: string;
+    state: string;
+    panel: string;
+    branch: string;
+    savedBranch: string;
+  };
+
+  expect(branchValue).toMatchObject({
+    title: 'Red Light Choir: River Lead',
+    objective: 'Tail the radio host through the riverfront lanes',
+    state: 'DISTRICT STATE\nThe host is sweeping the riverfront lanes',
+    branch: 'save-passenger-b',
+    savedBranch: 'save-passenger-b',
+  });
+  expect(branchValue.panel).toContain('MISSION BRIEF');
+  expect(branchValue.panel).toContain('Red Light Choir: River Lead');
+});
+
+test('scripted escort fail rules restart the current story mission', async ({ page }) => {
+  await launchStoryMode(page);
+
+  await restartIntoStoryProgress(page, {
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'static-on-the-hospital-band',
+      missionId: 'ward-6-exit',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: UNLOCKED_THROUGH_STATIC_ON_THE_HOSPITAL_BAND,
+    completedChapterIds: ['dead-drop-district', 'spare-parts-gospel'],
+    completedMissionIds: COMPLETED_THROUGH_WARD_6_EXIT,
+    branchOutcomes: {},
+  });
+  await acknowledgeStoryPanel(page);
+
+  const failure = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: {
+        drivingCarIndex: number | null;
+        player: { pos: { x: number; y: number } };
+        cars: Array<{ pos: { x: number; y: number } }>;
+      };
+      pendingStoryRestart?: unknown;
+      storyPanel?: { text: string; visible: boolean };
+      storyProgress?: { current: { objectiveIndex: number } | null } | null;
+      syncStoryScript?: (dt?: number) => void;
+    };
+    if (!scene?.world || typeof scene.syncStoryScript !== 'function') {
+      throw new Error('Missing scripted fail hooks');
+    }
+
+    scene.world.player.pos = { x: 0, y: 0 };
+    if (scene.world.drivingCarIndex !== null) {
+      scene.world.cars[scene.world.drivingCarIndex]!.pos = { x: 0, y: 0 };
+    }
+    scene.syncStoryScript(3.2);
+    return {
+      pendingRestart: !!scene.pendingStoryRestart,
+      text: scene.storyPanel?.text ?? '',
+      objectiveIndex: scene.storyProgress?.current?.objectiveIndex ?? null,
+      visible: !!scene.storyPanel?.visible,
+    };
+  });
+
+  expect(failure).toEqual({
+    pendingRestart: true,
+    text:
+      'MISSION FAILED\n\n' +
+      'The nurse hacker was left behind in the lockdown corridor.\n\n' +
+      'Retrying Ward 6 Exit...',
+    objectiveIndex: 0,
+    visible: true,
+  });
+
+  const restarted = await page.waitForFunction(
+    () => {
+      const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+      const scene = game?.scene.getScene('City') as {
+        world: { mission?: { id: string } | null };
+        pendingStoryRestart?: unknown;
+        storyPanel?: { text: string; visible: boolean };
+        storyProgress?: { current: { missionId: string; objectiveIndex: number } | null } | null;
+      };
+      if (scene?.pendingStoryRestart) return null;
+      if (scene?.world?.mission?.id !== 'ward-6-exit') return null;
+      if (scene.storyProgress?.current?.missionId !== 'ward-6-exit') return null;
+      if (scene.storyProgress.current.objectiveIndex !== 0) return null;
+      if (!scene.storyPanel?.visible) return null;
+      if (!scene.storyPanel.text.startsWith('MISSION BRIEF\nWard 6 Exit')) return null;
+      return {
+        text: scene.storyPanel?.text ?? '',
+        visible: !!scene.storyPanel?.visible,
+      };
+    },
+    undefined,
+    { timeout: 8_000 },
+  );
+
+  const restartedValue = (await restarted.jsonValue()) as { text: string; visible: boolean };
+
+  expect(restartedValue.visible).toBe(true);
+  expect(restartedValue.text).toContain('MISSION BRIEF');
+  expect(restartedValue.text).toContain('Ward 6 Exit');
+});
+
+test('story mode can complete a longer multi-objective encounter and roll into the next chapter', async ({ page }) => {
+  await launchStoryMode(page);
+
+  await restartIntoStoryProgress(page, {
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'static-on-the-hospital-band',
+      missionId: 'ward-6-exit',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: UNLOCKED_THROUGH_STATIC_ON_THE_HOSPITAL_BAND,
+    completedChapterIds: ['dead-drop-district', 'spare-parts-gospel'],
+    completedMissionIds: COMPLETED_THROUGH_WARD_6_EXIT,
+    branchOutcomes: {},
+  });
+  await acknowledgeStoryPanel(page);
+
+  await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: {
+        player: { pos: { x: number; y: number } };
+        elapsed: number;
+        kills: number;
+        targetKills: number;
+        campaign?: { currentIndex: number } | null;
+        updateMissionProgress?: () => void;
+      };
+      handleEvents?: () => void;
+    };
+    if (!scene?.world?.campaign || typeof scene.handleEvents !== 'function') {
+      throw new Error('Missing long encounter completion hooks');
+    }
+
+    scene.world.player.pos = { x: 3776, y: 1280 };
+    scene.world.updateMissionProgress?.();
+    scene.handleEvents();
+
+    scene.world.kills += 5;
+    scene.world.targetKills += 5;
+    scene.world.updateMissionProgress?.();
+    scene.handleEvents();
+
+    scene.world.elapsed += 16;
+    scene.world.updateMissionProgress?.();
+    scene.handleEvents();
+  });
+
+  const completion = await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      pendingStoryRestart?: unknown;
+      storyPanel?: { text: string };
+    };
+    if (!scene?.pendingStoryRestart) return null;
+    return scene.storyPanel?.text ?? '';
+  });
+
+  const completionText = (await completion.jsonValue()) as string;
+
+  expect(completionText).toContain('CHAPTER COMPLETE');
+  expect(completionText).toContain('Static On The Hospital Band');
+  expect(completionText).toContain('Next: Meter Running');
+
+  const result = await page.waitForFunction(
+    () => {
+      const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+      const scene = game?.scene.getScene('City') as {
+        world: { mission?: { title: string } | null };
+        pendingStoryRestart?: unknown;
+        storyPanel?: { text: string };
+        storyProgress?: {
+          current: { chapterId: string; missionId: string } | null;
+          unlockedChapterIds: string[];
+          completedChapterIds: string[];
+        } | null;
+      };
+      if (scene?.pendingStoryRestart) return null;
+      if (scene?.storyProgress?.current?.chapterId !== 'meter-running') return null;
+      if (scene.storyProgress.current.missionId !== 'ghost-fare') return null;
+      if (scene.world.mission?.title !== 'Ghost Fare') return null;
+      if (!scene.storyPanel?.text.startsWith('MISSION BRIEF\nGhost Fare')) return null;
+      return {
+        missionTitle: scene.world.mission?.title ?? '',
+        panel: scene.storyPanel?.text ?? '',
+        unlocked: [...scene.storyProgress.unlockedChapterIds],
+        completed: [...scene.storyProgress.completedChapterIds],
+      };
+    },
+    undefined,
+    { timeout: 8_000 },
+  );
+
+  const longEncounterValue = (await result.jsonValue()) as {
+    missionTitle: string;
+    panel: string;
+    unlocked: string[];
+    completed: string[];
+  };
+
+  expect(longEncounterValue).toMatchObject({
+    missionTitle: 'Ghost Fare',
+    unlocked: ['dead-drop-district', 'spare-parts-gospel', 'static-on-the-hospital-band', 'meter-running'],
+    completed: ['dead-drop-district', 'spare-parts-gospel', 'static-on-the-hospital-band'],
+  });
+  expect(longEncounterValue.panel).toContain('MISSION BRIEF');
+  expect(longEncounterValue.panel).toContain('Ghost Fare');
+});
+
+test('False Ambulance completes through its tail then capture objectives and rewards the next mission', async ({ page }) => {
+  await launchStoryMode(page);
+
+  await restartIntoStoryProgress(page, {
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'dead-drop-district',
+      missionId: 'false-ambulance',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: ['dead-drop-district'],
+    completedChapterIds: [],
+    completedMissionIds: ['night-ferry-run', 'burned-locker', 'wreck-before-dawn'],
+    branchOutcomes: {},
+  });
+  await acknowledgeStoryPanel(page);
+
+  // The runtime mission is [reach-marker, tail(12s), capture(3s)]; starting at
+  // objectiveIndex 0 drops Rook straight onto the tail objective.
+  const beforeTail = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: { mission?: { id: string; currentIndex: number; objectives: Array<{ kind: string }> } | null };
+    };
+    const mission = scene?.world.mission;
+    return { id: mission?.id ?? null, kind: mission ? mission.objectives[mission.currentIndex]?.kind : null };
+  });
+  expect(beforeTail).toEqual({ id: 'false-ambulance', kind: 'tail' });
+
+  // Feed valid tail progress, then capture progress, the same way the live scene
+  // feeds the chase: hold the van in sight for the tail, then pin it at the chop
+  // garage for the capture. Completing both rolls the reward into the next mission.
+  const result = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: {
+        mission?: { currentIndex: number; objectives: Array<{ kind: string }> } | null;
+        setStoryObjectiveProgress(progress: { tailSeconds?: number; captureSeconds?: number } | null): void;
+        updateMissionProgress?: () => void;
+      };
+      handleEvents?: () => void;
+      storyProgress?: { current: { missionId: string } | null } | null;
+      storyPanel?: { text: string };
+    };
+    if (typeof scene?.world.updateMissionProgress !== 'function' || typeof scene.handleEvents !== 'function') {
+      throw new Error('Missing mission completion hooks');
+    }
+
+    scene.world.setStoryObjectiveProgress({ tailSeconds: 50, captureSeconds: 0 });
+    scene.world.updateMissionProgress();
+    scene.handleEvents();
+    const mission = scene.world.mission;
+    const afterTailKind = mission ? mission.objectives[mission.currentIndex]?.kind : null;
+
+    scene.world.setStoryObjectiveProgress({ tailSeconds: 50, captureSeconds: 50 });
+    scene.world.updateMissionProgress();
+    scene.handleEvents();
+
+    return {
+      afterTailKind,
+      curMission: scene.storyProgress?.current?.missionId ?? null,
+      panel: scene.storyPanel?.text ?? '',
+    };
+  });
+
+  // The tail objective resolves to the capture objective before the mission ends.
+  expect(result.afterTailKind).toBe('capture');
+  // Completing the capture pays out and rolls Rook into the next dead-drop mission.
+  expect(result.curMission).toBe('last-call-at-pier-9');
+
+  const after = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as { world: { mission?: { title: string } | null } };
+    return scene?.world.mission?.title ?? null;
+  });
+  expect(after).toBe('Last Call At Pier 9');
+  expect(result.panel).toContain('MISSION SUMMARY');
+  expect(result.panel).toContain('False Ambulance');
+  expect(result.panel).toContain('Reward: $4200');
 });
 
 test('pause routes into the integrated Sindicate launch page with the current objective visible', async ({ page }) => {

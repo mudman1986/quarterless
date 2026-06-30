@@ -15,6 +15,16 @@ export interface RouteActorStep {
   routeIndex: number;
 }
 
+function wrapAngle(angle: number): number {
+  while (angle > Math.PI) angle -= Math.PI * 2;
+  while (angle < -Math.PI) angle += Math.PI * 2;
+  return angle;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
 export interface StoryProgressState {
   tailSeconds: number;
   captureSeconds: number;
@@ -60,21 +70,32 @@ function moveAlongRoute(
   routeIndex: number,
   speed: number,
   dt: number,
+  prevHeading = 0,
 ): RouteActorStep {
-  const first = route[0] ?? pos;
-  const safeIndex = Math.max(0, Math.min(route.length - 1, routeIndex));
-  const target = route[safeIndex] ?? first;
+  if (route.length <= 1) {
+    return { pos, heading: prevHeading, speed: 0, routeIndex: 0 };
+  }
+
+  const safeIndex = Math.max(0, Math.min(route.length - 2, routeIndex));
+  const current = route[safeIndex] ?? pos;
+  const target = route[safeIndex + 1] ?? current;
   const dx = target.x - pos.x;
   const dy = target.y - pos.y;
   const dist = Math.hypot(dx, dy);
-  const heading = dist > 0 ? Math.atan2(dy, dx) : 0;
+  const desiredHeading = dist > 0 ? Math.atan2(dy, dx) : prevHeading;
+  const turnDelta = wrapAngle(desiredHeading - prevHeading);
+  const maxTurn = Math.PI * 1.35 * dt;
+  const heading = prevHeading + clamp(turnDelta, -maxTurn, maxTurn);
   const step = Math.min(dist, dt * speed);
   const nextPos = dist > 0 ? vec2(pos.x + (dx / dist) * step, pos.y + (dy / dist) * step) : pos;
+  const reachedTarget = step >= dist - 1e-6;
+  const nextRouteIndex = reachedTarget ? Math.min(route.length - 1, safeIndex + 1) : safeIndex;
+
   return {
     pos: nextPos,
     heading,
-    speed: step > 0 ? speed : 0,
-    routeIndex: step >= dist && safeIndex < route.length - 1 ? safeIndex + 1 : safeIndex,
+    speed: reachedTarget ? 0 : speed,
+    routeIndex: nextRouteIndex,
   };
 }
 
@@ -83,8 +104,9 @@ export function advanceVehicleRouteActor(
   pos: Vec2,
   routeIndex: number,
   dt: number,
+  prevHeading = 0,
 ): RouteActorStep {
-  return moveAlongRoute(pos, actor.route, routeIndex, actor.speed, dt);
+  return moveAlongRoute(pos, actor.route, routeIndex, actor.speed, dt, prevHeading);
 }
 
 export function advancePedestrianRouteActor(
@@ -92,8 +114,9 @@ export function advancePedestrianRouteActor(
   pos: Vec2,
   routeIndex: number,
   dt: number,
+  prevHeading = 0,
 ): RouteActorStep {
-  return moveAlongRoute(pos, actor.route, routeIndex, actor.speed, dt);
+  return moveAlongRoute(pos, actor.route, routeIndex, actor.speed, dt, prevHeading);
 }
 
 function applyLoseActorRule(

@@ -44,7 +44,7 @@ Mission shape:
 1. Night Ferry Run: Drive from the bus depot to the old dock motel while avoiding escalating patrol attention. This is a soft onboarding mission focused on route choice, near misses, and learning that the city is hostile before the first gunfire starts.
 2. Burned Locker: Reach three storage lockers before cleanup crews do, grab ledger fragments from each, and escape after the last pickup triggers a wanted spike. The goal is fast traversal with a changing risk profile instead of simple collection.
 3. Wreck Before Dawn: Cause a controlled crash to block a cleanup van, then fight or evade the crew long enough to steal its cargo manifest. This introduces deliberate collision as a mission tool.
-4. False Ambulance: Follow a fake ambulance that collected one of Nia's contacts, keep visual contact without destroying it, and intercept it at a chop garage. This is a pursuit mission built around pressure without immediate elimination.
+4. False Ambulance: Follow a fake ambulance that collected one of Nia's contacts, keep visual contact without destroying it, and then box it in at a chop garage until it stops. The mission now uses a two-stage pursuit flow so the player first tails the ambulance and then transitions into a clearer capture phase at the garage.
 5. Last Call At Pier 9: Assault the pier office, eliminate marked cleaners, retrieve the dispatch badge inside, and survive the counterpush until the road out reopens. This closes the chapter with a compact siege.
 
 ### Chapter 2 - Spare Parts Gospel
@@ -416,6 +416,7 @@ Implemented now:
 - Focused Playwright coverage now also covers story mission-start markers, route markers, marked-target minimap dots, scripted chase-target minimap markers, grouped in-world mission selection, staged district-state labels, and the integrated launcher-owned pause flow.
 - A dedicated authored-mission browser regression now walks every current runtime story mission and verifies that each mission shell boots with the expected mission title and scripted district-state surface.
 - Regression coverage now extends beyond mission-shell boot checks into longer multi-chapter story progression and lower-level world and scripted-actor seams, including consecutive chapter-finale unlock flow, scene-fed tail/capture objective progress, tail-drain behavior, and actor-loss fail rules.
+- Regression coverage now also includes live branch-recording flows, scripted failure-path restarts, and longer-running encounter completions for the new outcome-aware story runtime.
 - Story authoring can now resolve branch-dependent mission variants from saved story outcomes, and the current browser suite asserts scripted mission summaries, stage-shift district-state updates, and seeded branch-variant mission text against live story data.
 - The pause/menu UX is now fully integrated into the Sindicate launcher page: pausing returns to the launcher, which owns resume, checkpoint restart, manual save/load slots, current-objective presentation, and chapter replay.
 - Story mission transitions now use a richer summary card that surfaces reward, objective outcome, duration, collateral, and story unlock changes.
@@ -431,13 +432,13 @@ Prototype limitations right now:
 
 ## Next Steps From Here
 
-Priority after this pass:
+Remaining priorities after the regression pass:
 
 1. Add consequence-carrying branch outcomes on top of the new grouped mission order so chapter choices change later mission setup instead of only sequencing.
 2. Expand the mission runtime beyond route/tail/capture by implementing stronger bespoke systems such as vehicle-condition, defend, sabotage-order, and stealth-pressure objectives.
 3. Push district-state scripting further so blackout, checkpoint, and service-lane changes materially alter ambient city behavior instead of only updating story labels.
 4. Deepen the mission summary card with more systemic detail, especially vehicle-condition outcomes, service-lane state, and chapter-level faction effects.
-5. Build on the authored regression sweep with live failure-path, restart, and longer-running scripted encounter assertions so the new outcome-aware story runtime stays stable as it grows.
+5. Continue authoring Chapter 10 and beyond on top of the broader actor layer.
 
 ## Grounded Implementation Plan
 
@@ -614,13 +615,12 @@ What is still missing before it counts as a full slice:
 
 - Rich scripted encounter control for multi-stage raids and more persistent systemic district-state choreography beyond the current actor layer.
 - A more polished chapter-map style story front end and deeper post-mission scorecards.
-- Longer-running scripted encounter completion and failure-path coverage beyond the current shell, progression, district-state, and branch-variant regression suite.
 
 ## What To Do Next
 
-Recommended next production step:
+Recommended next production steps:
 
 1. Expand the mission-actor layer from staged route actors into full multi-stage raids, convoy handoffs with multiple tracked actors, and more persistent systemic district-state choreography.
 2. Add fuller post-mission scorecards and a more polished chapter-map style story front end on top of the current act-grouped menu and recap archive.
 3. Continue authoring Chapter 10 and beyond on top of the broader actor layer.
-4. Extend regression coverage from seeded branch variants and forced stage shifts into live branch-recording flows, scripted failure-path restarts, and longer-running encounter completions.
+4. Deepen the mission summary card with more systemic detail, especially vehicle-condition outcomes, service-lane state, and chapter-level faction effects.

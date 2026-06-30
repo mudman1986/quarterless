@@ -11,6 +11,20 @@ import {
 } from './runtimeActors';
 
 describe('advanceVehicleRouteActor', () => {
+  it('moves a route vehicle from the first waypoint toward the second waypoint', () => {
+    const actor = {
+      kind: 'vehicleRoute' as const,
+      actorId: 'a',
+      vehicleKind: 'ambulance' as const,
+      route: [vec2(10, 0), vec2(20, 0)],
+      speed: 100,
+      followRadius: 300,
+    };
+    const step = advanceVehicleRouteActor(actor, vec2(10, 0), 0, 0.2, 0);
+    expect(step.pos.x).toBeGreaterThan(10);
+    expect(step.routeIndex).toBe(1);
+  });
+
   it('moves a route vehicle toward the next waypoint and advances the route index on arrival', () => {
     const actor = {
       kind: 'vehicleRoute' as const,
