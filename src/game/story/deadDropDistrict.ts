@@ -427,23 +427,23 @@ export const SPARE_PARTS_GOSPEL: StoryChapter = {
           {
             kind: 'reach',
             description: 'Reach the scrap plant crusher lane',
-            target: { x: 3136, y: 2112 },
+            target: { x: 3136, y: 2304 },
             radius: 88,
           },
           {
             kind: 'sabotage',
             description: 'Trip the crusher safeties in the plant order',
             targets: [
-              { x: 3072, y: 2048 },
-              { x: 3200, y: 2112 },
-              { x: 3328, y: 2176 },
+              { x: 3072, y: 2240 },
+              { x: 3200, y: 2304 },
+              { x: 3328, y: 2368 },
             ],
             radius: 84,
           },
           {
             kind: 'defend',
             description: 'Hold the lane for 12 seconds and get clear',
-            target: { x: 3136, y: 2112 },
+            target: { x: 3136, y: 2304 },
             radius: 120,
             seconds: 12,
           },
@@ -456,7 +456,7 @@ export const SPARE_PARTS_GOSPEL: StoryChapter = {
           {
             kind: 'pedestrianSquad',
             actorId: 'crusher-squad',
-            center: { x: 3136, y: 2112 },
+            center: { x: 3136, y: 2304 },
             count: 5,
             spread: 26,
           },
@@ -1946,13 +1946,13 @@ export const THE_SWITCHBOARD_NAME: StoryChapter = {
           {
             kind: 'reach',
             description: 'Reach the rooftop transmitter before the decrypt window closes',
-            target: { x: 3904, y: 2048 },
+            target: { x: 3904, y: 2304 },
             radius: 88,
           },
           {
             kind: 'defend',
             description: 'Hold the rooftop for 20 seconds while the file decrypts',
-            target: { x: 3904, y: 2048 },
+            target: { x: 3904, y: 2304 },
             radius: 120,
             seconds: 20,
           },

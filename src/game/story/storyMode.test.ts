@@ -20,6 +20,34 @@ import {
   validateStoryMode,
 } from './storyMode';
 
+function fixedObjectiveTargets(runtime: ReturnType<typeof compileStoryMissionRuntime>) {
+  return (
+    runtime?.objectives.flatMap((objective) => {
+      if (objective.kind === 'reach' || objective.kind === 'defend') return [objective.target];
+      if (objective.kind === 'route' || objective.kind === 'sabotage') return objective.targets;
+      return [];
+    }) ?? []
+  );
+}
+
+function storyPlansForMarkerValidation() {
+  return STORY_MODE_PROTOTYPE.acts.flatMap((act) =>
+    act.chapters.flatMap((chapter) =>
+      chapter.missions.flatMap((mission) => {
+        const basePlan = [{
+          label: `${act.id}/${chapter.id}/${mission.id}`,
+          plan: mission,
+        }];
+        const variantPlans = (mission.variants ?? []).map((variant) => ({
+          label: `${act.id}/${chapter.id}/${mission.id}:${variant.branchId}=${variant.outcomeId}`,
+          plan: resolveStoryMissionPlan(mission, { [variant.branchId]: variant.outcomeId }),
+        }));
+        return [...basePlan, ...variantPlans];
+      }),
+    ),
+  );
+}
+
 describe('compileCampaignTemplate', () => {
   it('creates fresh runtime missions from authored specs', () => {
     const missions = compileCampaignTemplate({
@@ -122,6 +150,26 @@ describe('compileStoryChapterRuntimeCampaign', () => {
     expect(resolved.prototypeScript?.stages?.[0]?.districtState?.label).toBe(
       'River-wall readers are sweeping the darker fare lane',
     );
+  });
+
+  it('keeps fixed-position story markers out of water across all authored mission plans', () => {
+    const city = buildCity(CITY_SPEC);
+    let checkedTargets = 0;
+    const invalidTargets = new Set<string>();
+
+    for (const { label, plan } of storyPlansForMarkerValidation()) {
+      for (const target of fixedObjectiveTargets(compileStoryMissionRuntime(plan))) {
+        checkedTargets += 1;
+        const tx = Math.floor(target.x / city.spec.tile);
+        const ty = Math.floor(target.y / city.spec.tile);
+        if (city.isWater(tx, ty)) {
+          invalidTargets.add(`${label} -> (${target.x}, ${target.y})`);
+        }
+      }
+    }
+
+    expect(checkedTargets).toBeGreaterThan(0);
+    expect([...invalidTargets]).toEqual([]);
   });
 });
 
