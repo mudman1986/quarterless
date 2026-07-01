@@ -4,6 +4,8 @@ import {
   currentObjective,
   updateMission,
   isComplete,
+  isFailed,
+  failMission,
   objectiveProgress,
   resetMission,
   type Objective,
@@ -142,9 +144,11 @@ describe('updateMission — route objective', () => {
     expect(isComplete(m)).toBe(true);
   });
 
-  it('stops advancing after the time limit expires', () => {
+  it('fails the mission once the time limit expires', () => {
     const m = updateMission(routeMission(), ctx({ playerPos: vec2(10, 0), elapsed: 61 }), base());
-    expect(m).toEqual(routeMission());
+    expect(isFailed(m)).toBe(true);
+    expect(isComplete(m)).toBe(false);
+    expect(m.failureReason).toContain('Hit 3 lockers in sequence');
   });
 });
 
@@ -174,6 +178,12 @@ describe('updateMission — sabotage objective', () => {
 
     m = updateMission(m, ctx({ playerPos: vec2(30, 0) }), base());
     expect(isComplete(m)).toBe(true);
+  });
+
+  it('fails the mission once the time limit expires', () => {
+    const m = updateMission(sabotageMission(), ctx({ playerPos: vec2(10, 0), elapsed: 61 }), base());
+    expect(isFailed(m)).toBe(true);
+    expect(m.failureReason).toContain('Trip 3 crusher safeties in order');
   });
 });
 
@@ -395,5 +405,23 @@ describe('resetMission', () => {
     expect(fresh.currentIndex).toBe(0);
     expect(fresh.status).toBe('active');
     expect(currentObjective(fresh)?.kind).toBe('reach');
+  });
+
+  it('clears a failure reason when rewinding a failed mission', () => {
+    const failed = failMission(mission(), 'Got caught');
+    const fresh = resetMission(failed);
+    expect(fresh.status).toBe('active');
+    expect(fresh.failureReason).toBeUndefined();
+  });
+});
+
+describe('failMission / isFailed', () => {
+  it('marks a mission failed with a reason and leaves other missions untouched', () => {
+    const m = mission();
+    const failed = failMission(m, 'Blew the cover');
+    expect(isFailed(failed)).toBe(true);
+    expect(isFailed(m)).toBe(false);
+    expect(failed.failureReason).toBe('Blew the cover');
+    expect(isComplete(failed)).toBe(false);
   });
 });

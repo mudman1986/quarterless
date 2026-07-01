@@ -479,7 +479,7 @@ Main code areas:
 - src/game/story/storyProgress.ts
 - src/core/gameState.ts
 
-### Stage 1 - Finish Mission Objective Primitives
+### Stage 1 - Finish Mission Objective Primitives (complete)
 
 Goal: make the mission system itself good enough that story missions do not need scene hacks for basic behavior.
 
@@ -489,16 +489,16 @@ Why before actors:
 
 Required outcomes:
 
-1. Core objective families are implemented as reusable mission primitives.
-2. Objective state, baselines, and progress reporting are consistent across story and sandbox use.
-3. Branch-dependent mission variants resolve through stable mission-selection logic, not ad hoc scene branching.
-4. The mission system can express success, failure, and partial progress without relying on bespoke UI code.
+1. Core objective families are implemented as reusable mission primitives. — `src/core/mission.ts` covers reach, eliminate, collect, route, sabotage, tail, capture, survive, defend, wanted, and service.
+2. Objective state, baselines, and progress reporting are consistent across story and sandbox use. — both sandbox campaigns and compiled story chapters run through the same `Mission`/`Campaign`/`updateMission` primitives in `World.updateMissionProgress`.
+3. Branch-dependent mission variants resolve through stable mission-selection logic, not ad hoc scene branching. — `resolveStoryMissionPlan`/`currentStoryMission`/`selectStoryMission` are the single resolution path; `CityScene` only calls them, it does not branch on outcomes itself.
+4. The mission system can express success, failure, and partial progress without relying on bespoke UI code. — `MissionStatus` now includes `'failed'` with an optional `failureReason`, plus `failMission`/`isFailed` helpers; time-limited route/sabotage objectives now fail explicitly instead of silently freezing forever.
 
 Required tests before moving on:
 
-1. Unit tests for every objective kind.
-2. Progress and baseline-reset tests for multi-stage objectives.
-3. Branch-variant selection tests at the story compiler and story-progress layers.
+1. Unit tests for every objective kind. — `mission.test.ts` covers all 11 objective kinds plus purity/idempotence.
+2. Progress and baseline-reset tests for multi-stage objectives. — route/sabotage/defend baseline and reset behavior covered, including the new time-limit failure paths and `resetMission` clearing `failureReason`.
+3. Branch-variant selection tests at the story compiler and story-progress layers. — covered in `storyMode.test.ts` (`resolveStoryMissionPlan`, `compileStoryChapterRuntimeCampaign`) and `storyProgress.test.ts` (`currentStoryMission`, `selectStoryMission`).
 
 Main code areas:
 
