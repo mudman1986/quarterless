@@ -313,31 +313,68 @@ function parseBranchOutcomes(value: unknown): Record<string, string> | null {
   return Object.fromEntries(entries) as Record<string, string>;
 }
 
+/** A migration transforms a saved snapshot shaped for `fromVersion` into the shape expected by
+ * `fromVersion + 1`. Callers should not bump the returned `version` field themselves; the
+ * migration runner in `migrateStoryProgressData` does that. */
+export type StoryProgressMigration = (data: Record<string, unknown>) => Record<string, unknown>;
+
+/**
+ * Registry of migrations keyed by the saved version they upgrade *from*. Empty today because
+ * `STORY_PROGRESS_VERSION` has never changed. When it increments, add the old version's key here
+ * with a function that fills in / renames whatever fields changed, instead of letting
+ * `loadStoryProgress` silently discard every save with an older version number.
+ */
+export const STORY_PROGRESS_MIGRATIONS: Readonly<Record<number, StoryProgressMigration>> = {};
+
+/**
+ * Walk `data.version` forward to `targetVersion` by repeatedly applying the registered migration
+ * for its current version. Returns `null` if the version is missing/non-numeric, already newer
+ * than `targetVersion`, or there is no migration registered to advance it further.
+ */
+export function migrateStoryProgressData(
+  data: Record<string, unknown>,
+  migrations: Readonly<Record<number, StoryProgressMigration>> = STORY_PROGRESS_MIGRATIONS,
+  targetVersion = STORY_PROGRESS_VERSION,
+): Record<string, unknown> | null {
+  let version = Number(data.version);
+  if (!Number.isFinite(version) || version > targetVersion) return null;
+  let migrated = data;
+  while (version < targetVersion) {
+    const migrate = migrations[version];
+    if (!migrate) return null;
+    migrated = { ...migrate(migrated), version: version + 1 };
+    version += 1;
+  }
+  return migrated;
+}
+
 export function loadStoryProgress(
   store: KeyValueStore,
   key = STORY_PROGRESS_KEY,
+  migrations: Readonly<Record<number, StoryProgressMigration>> = STORY_PROGRESS_MIGRATIONS,
 ): StoryProgressSnapshot | null {
   const raw = store.getItem(key);
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw);
     if (!isRecord(parsed)) return null;
-    if (parsed.version !== STORY_PROGRESS_VERSION) return null;
-    if (typeof parsed.storyId !== 'string' || !parsed.storyId) return null;
-    if (!isStringArray(parsed.unlockedChapterIds)) return null;
-    if (!isStringArray(parsed.completedChapterIds)) return null;
-    if (!isStringArray(parsed.completedMissionIds)) return null;
-    const current = parseStoryCursor(parsed.current);
-    if (parsed.current !== null && !current) return null;
-    const branchOutcomes = parseBranchOutcomes(parsed.branchOutcomes);
+    const migrated = migrateStoryProgressData(parsed, migrations);
+    if (!migrated) return null;
+    if (typeof migrated.storyId !== 'string' || !migrated.storyId) return null;
+    if (!isStringArray(migrated.unlockedChapterIds)) return null;
+    if (!isStringArray(migrated.completedChapterIds)) return null;
+    if (!isStringArray(migrated.completedMissionIds)) return null;
+    const current = parseStoryCursor(migrated.current);
+    if (migrated.current !== null && !current) return null;
+    const branchOutcomes = parseBranchOutcomes(migrated.branchOutcomes);
     if (!branchOutcomes) return null;
     return {
       version: STORY_PROGRESS_VERSION,
-      storyId: parsed.storyId,
+      storyId: migrated.storyId,
       current,
-      unlockedChapterIds: unique(parsed.unlockedChapterIds),
-      completedChapterIds: unique(parsed.completedChapterIds),
-      completedMissionIds: unique(parsed.completedMissionIds),
+      unlockedChapterIds: unique(migrated.unlockedChapterIds),
+      completedChapterIds: unique(migrated.completedChapterIds),
+      completedMissionIds: unique(migrated.completedMissionIds),
       branchOutcomes: cloneBranchOutcomes(branchOutcomes),
     };
   } catch {

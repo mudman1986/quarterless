@@ -17,7 +17,7 @@ import type { WorldOptions } from '../../core/world';
 import { CITY_SPEC } from '../citySpec';
 import { clearGameState, GAME_STATE_KEY, loadGameState, saveGameState } from '../../core/gameState';
 import { loadHighScore, saveHighScore, type KeyValueStore } from '../../core/highScore';
-import type { Mission } from '../../core/mission';
+import { isFailed, type Mission } from '../../core/mission';
 import type { Car } from '../../core/vehicle';
 import type { Pedestrian } from '../../core/pedestrianAI';
 import { type TrafficAI, openDirections, tileCoord } from '../../core/trafficAI';
@@ -57,6 +57,7 @@ import {
 import { clearStoryLaunchRequest, loadStoryLaunchRequest } from '../story/storyLaunchState';
 import {
   compileStoryChapterRuntimeCampaign,
+  formatStorySystem,
   resolveStoryMissionPlan,
   STORY_MISSION_GROUP_SELECTION_INDEX,
   storyMissionStartPosition,
@@ -238,12 +239,20 @@ const MOVING_TRAFFIC_MIX: readonly VehicleKind[] = [
   'van',
   'car',
 ];
+/** Parking spot for story actors that have been handed off / dropped by a stage transition or
+ * mission change. Far enough outside any city bounds to stay off-screen and off the minimap. */
+const STORY_ACTOR_DESPAWN_POS: Vec2 = vec2(-100000, -100000);
 
 interface CitySceneStartData {
   loadSaveKey?: string | null;
   skipResume?: boolean;
   mode?: 'sandbox' | 'story';
   storyProgress?: StoryProgressSnapshot | null;
+  /** When resuming from a restored snapshot, rebuild the active mission/campaign
+   * fresh instead of keeping the snapshot's (often already-complete) one. Used for
+   * story chapter transitions, which must preserve run stats but not the just-
+   * finished chapter's mission state. */
+  freshMissionOnResume?: boolean;
 }
 
 interface StoryScriptState {
@@ -288,6 +297,7 @@ interface StoryMissionSummaryCard {
   vehicleConditionText: string;
   serviceLaneText: string;
   factionEffectText: string;
+  systemsText: string;
   unlockText: string;
   nextText: string;
 }
@@ -400,6 +410,13 @@ export class CityScene extends Phaser.Scene {
   private storyPanelRequiresAcknowledge = false;
   private storyPanelPauseGame = false;
   private pendingStoryRestart: StoryProgressSnapshot | null = null;
+  /** True when the pending restart should resume from the just-saved game
+   * state (e.g. a chapter-complete advance) instead of wiping progress (a
+   * mission-failure retry, which intentionally resets to a clean slate). */
+  private pendingStoryRestartResume = false;
+  /** True when a resumed restart should rebuild the active mission/campaign fresh
+   * rather than keep the restored snapshot's (often already-complete) one. */
+  private freshMissionOnResume = false;
   /** Elapsed time driving the day/night cycle, and its dimming overlay. */
   private timeOfDay = 0;
   private dayNightOverlay!: Phaser.GameObjects.Rectangle;
@@ -435,6 +452,7 @@ export class CityScene extends Phaser.Scene {
     }
     this.requestedLoadKey = data.loadSaveKey ?? launchRequest?.loadSaveKey ?? GAME_STATE_KEY;
     this.skipResumeOnCreate = !!(data.skipResume ?? launchRequest?.skipResume);
+    this.freshMissionOnResume = !!data.freshMissionOnResume;
     this.requestedMode = data.mode ?? launchRequest?.mode ?? this.queryRequestsStoryMode();
     this.requestedStoryProgress =
       data.storyProgress ?? launchRequest?.storyProgress ?? launchProgress ?? null;
@@ -485,6 +503,7 @@ export class CityScene extends Phaser.Scene {
     this.storyPanelRequiresAcknowledge = false;
     this.storyPanelPauseGame = false;
     this.pendingStoryRestart = null;
+    this.pendingStoryRestartResume = false;
     this.storyScript = null;
     this.storyMissionSummaryBaseline = null;
 
@@ -515,6 +534,7 @@ export class CityScene extends Phaser.Scene {
       try {
         this.world = World.fromSnapshot(worldOptions, savedState.world);
         this.timeOfDay = savedState.timeOfDay;
+        if (this.freshMissionOnResume) this.world.resetActiveMission(worldOptions.missions);
       } catch {
         clearGameState(this.store, loadKey ?? GAME_STATE_KEY);
         this.world = new World(worldOptions);
@@ -522,6 +542,7 @@ export class CityScene extends Phaser.Scene {
     } else {
       this.world = new World(worldOptions);
     }
+    this.freshMissionOnResume = false;
     this.prevDrivingCarIndex = this.world.drivingCarIndex;
     this.requestedLoadKey = GAME_STATE_KEY;
     this.skipResumeOnCreate = false;
@@ -667,6 +688,14 @@ export class CityScene extends Phaser.Scene {
       this.storyScript.chapterId !== chapter.id ||
       this.storyScript.missionId !== mission.id
     ) {
+      if (this.storyScript) {
+        for (const actorId of Object.keys(this.storyScript.actorCarIndices)) {
+          this.despawnStoryActor(actorId);
+        }
+        for (const actorId of Object.keys(this.storyScript.actorPedIndices)) {
+          this.despawnStoryActor(actorId);
+        }
+      }
       this.storyScript = {
         chapterId: chapter.id,
         missionId: mission.id,
@@ -687,6 +716,10 @@ export class CityScene extends Phaser.Scene {
     }
 
     this.runStoryScript(mission.prototypeScript, dt);
+    const missionState = this.world.mission;
+    if (missionState && isFailed(missionState) && !this.pendingStoryRestart) {
+      this.restartCurrentStoryMission(missionState.failureReason ?? `Ran out of time.`);
+    }
     this.world.setStoryObjectiveProgress({
       tailSeconds: this.storyScript.tailSeconds,
       captureSeconds: this.storyScript.captureSeconds,
@@ -781,6 +814,42 @@ export class CityScene extends Phaser.Scene {
     return created;
   }
 
+  /**
+   * Remove a mission actor from active play: park its car/pedestrians off-map and forget its
+   * script indices, so a later stage or mission reusing the same actor id spawns fresh instead of
+   * resuming a stale, already-handed-off actor. Used when a stage transition drops an actor
+   * (e.g. the Empty Shell decoy split) and when a mission ends, so actors do not pile up frozen
+   * in the world for the rest of the story run.
+   */
+  private despawnStoryActor(actorId: string): void {
+    const script = this.storyScript;
+    if (!script) return;
+    const carIndex = script.actorCarIndices[actorId];
+    if (carIndex !== undefined && this.world.cars[carIndex]) {
+      this.world.cars[carIndex] = {
+        ...this.world.cars[carIndex]!,
+        pos: STORY_ACTOR_DESPAWN_POS,
+        speed: 0,
+      };
+    }
+    delete script.actorCarIndices[actorId];
+
+    const pedIndices = script.actorPedIndices[actorId];
+    if (pedIndices) {
+      for (const idx of pedIndices) {
+        if (!this.world.pedestrians[idx]) continue;
+        this.world.pedestrians[idx] = {
+          ...this.world.pedestrians[idx],
+          pos: STORY_ACTOR_DESPAWN_POS,
+          target: STORY_ACTOR_DESPAWN_POS,
+          state: 'wait',
+        };
+      }
+    }
+    delete script.actorPedIndices[actorId];
+    delete script.actorRouteIndices[actorId];
+  }
+
   private storyTargetCarDisabled(carIndex: number): boolean {
     const wreckedCars = (this.world as unknown as { wreckedCars: boolean[] }).wreckedCars;
     return !!wreckedCars[carIndex] || this.world.carIsBurning(carIndex);
@@ -857,6 +926,7 @@ export class CityScene extends Phaser.Scene {
       2.6,
     );
     this.pendingStoryRestart = restart;
+    this.pendingStoryRestartResume = false;
   }
 
   private activeStoryStage(runtime: StoryRuntimeScript): StoryRuntimeStage | null {
@@ -986,9 +1056,13 @@ export class CityScene extends Phaser.Scene {
     if (isStageTransitionMet(stage.nextWhen, fail.progress, routeIndices)) {
       const stages = this.runtimeStages(runtime);
       if (script.stageIndex < stages.length - 1) {
+        const nextStage = stages[script.stageIndex + 1]!;
+        const nextActorIds = new Set(nextStage.actors.map((nextActor) => nextActor.actorId));
+        for (const actor of stage.actors) {
+          if (!nextActorIds.has(actor.actorId)) this.despawnStoryActor(actor.actorId);
+        }
         script.stageIndex += 1;
         script.failCounters = {};
-        const nextStage = stages[script.stageIndex]!;
         this.showStoryPanel(
           `STAGE SHIFT\n${nextStage.title}\n\n${nextStage.districtState?.summary ?? 'The city is changing around the mission.'}`,
           3.2,
@@ -2294,11 +2368,18 @@ export class CityScene extends Phaser.Scene {
       }
       if (this.storyPanelRemaining <= 0) {
         const progress = this.pendingStoryRestart;
+        const resume = this.pendingStoryRestartResume;
         this.pendingStoryRestart = null;
+        this.pendingStoryRestartResume = false;
         this.storyPanel.setVisible(false);
         this.skipPersistOnShutdown = true;
-        clearGameState(this.store);
-        this.scene.restart({ skipResume: true, mode: 'story', storyProgress: progress });
+        if (!resume) clearGameState(this.store);
+        this.scene.restart({
+          skipResume: !resume,
+          mode: 'story',
+          storyProgress: progress,
+          freshMissionOnResume: resume,
+        });
       }
       this.prevTouchConfirm = !!touchSnapshot?.confirmPressed;
       return;
@@ -2478,6 +2559,7 @@ export class CityScene extends Phaser.Scene {
             2.4,
           );
           this.pendingStoryRestart = this.storyProgress;
+          this.pendingStoryRestartResume = true;
           return;
         }
         this.showStoryPanel(
@@ -2646,6 +2728,7 @@ export class CityScene extends Phaser.Scene {
         vehicleConditionText: summary.vehicleConditionText,
         serviceLaneText: summary.serviceLaneText,
         factionEffectText: summary.factionEffectText,
+        systemsText: summary.systemsText,
         recordedAt: Date.now(),
       });
       this.showPersistentStoryPanel(this.storyMissionSummaryText(summary));
@@ -2722,6 +2805,12 @@ export class CityScene extends Phaser.Scene {
     );
     if (blocked.size === 0) return 'No service-lane shifts';
     return `Paused: ${[...blocked].join(' / ')}`;
+  }
+
+  private storySystemsText(mission: StoryMissionPlan): string {
+    const systems = mission.requiredSystems ?? [];
+    if (systems.length === 0) return 'No tracked systems';
+    return systems.map(formatStorySystem).join(' · ');
   }
 
   private storyFactionEffectSummary(
@@ -2845,6 +2934,7 @@ export class CityScene extends Phaser.Scene {
       vehicleConditionText,
       serviceLaneText: this.storyServiceLaneSummary(previousMission),
       factionEffectText: this.storyFactionEffectSummary(baseline, nextProgress),
+      systemsText: this.storySystemsText(previousMission),
       unlockText: unlockLines.length > 0 ? unlockLines.join(' • ') : 'No new unlocks',
       nextText,
     };
@@ -2867,6 +2957,7 @@ export class CityScene extends Phaser.Scene {
       `Vehicle Condition: ${card.vehicleConditionText}`,
       `Service Lanes: ${card.serviceLaneText}`,
       `Faction Effects: ${card.factionEffectText}`,
+      `Systems: ${card.systemsText}`,
       `Story Changes: ${card.unlockText}`,
       card.nextText,
     ].join('\n');

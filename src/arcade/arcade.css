@@ -342,6 +342,13 @@ button {
   line-height: 1.4;
 }
 
+.story-scorecard-systems {
+  color: #47d7ff;
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
 .story-slot-card {
   display: grid;
   gap: 6px;
@@ -491,6 +498,13 @@ button {
 .story-chapter-copy {
   color: #b8c3d1;
   line-height: 1.45;
+}
+
+.story-chapter-systems {
+  color: #47d7ff;
+  font-size: 0.76rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
 }
 
 @media (max-width: 900px) {

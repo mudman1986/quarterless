@@ -123,7 +123,7 @@ export type Objective =
   | WantedObjective
   | ServiceObjective;
 
-export type MissionStatus = 'active' | 'completed';
+export type MissionStatus = 'active' | 'completed' | 'failed';
 
 /** A linear sequence of objectives with a completion reward. */
 export interface Mission {
@@ -135,6 +135,8 @@ export interface Mission {
   /** Transient state for the active objective, when that objective needs it. */
   objectiveState?: ObjectiveState | null;
   status: MissionStatus;
+  /** Human-readable reason the mission failed. Only set when `status` is 'failed'. */
+  failureReason?: string;
   /** Score awarded when the final objective is completed. */
   reward: number;
 }
@@ -261,7 +263,9 @@ function advanceOrderedTargetObjective(
   base: MissionBaseline,
 ): Mission {
   const completed = routeProgress(m);
-  if (obj.timeLimitSeconds !== undefined && ctx.elapsed - base.elapsed > obj.timeLimitSeconds) return m;
+  if (obj.timeLimitSeconds !== undefined && ctx.elapsed - base.elapsed > obj.timeLimitSeconds) {
+    return failMission(m, `Ran out of time: ${obj.description}`);
+  }
 
   const target = obj.targets[completed];
   if (!target || distance(ctx.playerPos, target) > obj.radius) return m;
@@ -335,6 +339,15 @@ export function isComplete(m: Mission): boolean {
   return m.status === 'completed';
 }
 
+export function isFailed(m: Mission): boolean {
+  return m.status === 'failed';
+}
+
+/** Mark a mission failed for a given reason. Pure: returns a new mission. */
+export function failMission(m: Mission, reason: string): Mission {
+  return { ...m, status: 'failed', failureReason: reason };
+}
+
 /** A completed/total tally for showing objective progress on the HUD. */
 export interface ObjectiveProgress {
   current: number;
@@ -399,5 +412,6 @@ export function resetMission(m: Mission): Mission {
     currentIndex: 0,
     objectiveState: null,
     status: m.objectives.length === 0 ? 'completed' : 'active',
+    failureReason: undefined,
   };
 }

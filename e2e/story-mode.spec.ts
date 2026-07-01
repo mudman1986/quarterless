@@ -811,8 +811,12 @@ test('scripted district-state missions announce stage shifts and update the acti
     };
     const storyScript = scene?.storyScript;
     const carIndex = storyScript?.actorCarIndices?.['empty-shell-sedan'];
+    const decoyCarIndex = storyScript?.actorCarIndices?.['empty-shell-decoy'];
     if (!storyScript || carIndex === undefined || typeof scene?.syncStoryScript !== 'function') {
       throw new Error('Missing scripted actor stage hooks');
+    }
+    if (decoyCarIndex === undefined) {
+      throw new Error('Missing empty shell decoy hooks');
     }
     const car = scene.world.cars[carIndex];
     scene.world.cars[carIndex] = { ...car, pos: { x: 2496, y: 2112 } };
@@ -823,6 +827,8 @@ test('scripted district-state missions announce stage shifts and update the acti
       visible: !!scene.storyPanel?.visible,
       panel: scene.storyPanel?.text ?? '',
       state: scene.storyStateText?.text ?? '',
+      decoyDespawned: storyScript.actorCarIndices['empty-shell-decoy'] === undefined,
+      decoyCarPos: scene.world.cars[decoyCarIndex]?.pos ?? null,
     };
   });
 
@@ -831,6 +837,8 @@ test('scripted district-state missions announce stage shifts and update the acti
   expect(shift.panel).toContain('Confirm the receiving yard');
   expect(shift.panel).toContain('Hold the tail until the receiving yard is unmistakable.');
   expect(shift.state).toContain('The real shell is slipping through the salvage gate');
+  expect(shift.decoyDespawned).toBe(true);
+  expect(shift.decoyCarPos).toEqual({ x: -100000, y: -100000 });
 });
 
 test('scripted encounter mission summaries keep their authored objective outcome text', async ({
@@ -1301,6 +1309,68 @@ test('story mode fails quiet-route missions when the wanted level stays hot', as
   });
 });
 
+test('a route objective time-limit failure restarts the current story mission', async ({ page }) => {
+  await launchStoryMode(page);
+  await restartIntoStoryProgress(page, {
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'dead-drop-district',
+      missionId: 'burned-locker',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: ['dead-drop-district'],
+    completedChapterIds: [],
+    completedMissionIds: ['night-ferry-run'],
+    branchOutcomes: {},
+  });
+  await acknowledgeStoryPanel(page);
+
+  const failure = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      world: {
+        campaign?: {
+          missions: Array<{ status: string; failureReason?: string }>;
+          currentIndex: number;
+        } | null;
+      };
+      pendingStoryRestart?: unknown;
+      storyPanel?: { text: string; visible: boolean };
+      storyProgress?: { current: { objectiveIndex: number } | null } | null;
+      syncStoryScript?: (dt?: number) => void;
+    };
+    const campaign = scene?.world?.campaign;
+    if (!campaign || typeof scene?.syncStoryScript !== 'function') {
+      throw new Error('Missing time-limit fail hooks');
+    }
+
+    const mission = campaign.missions[campaign.currentIndex];
+    mission.status = 'failed';
+    mission.failureReason =
+      'Ran out of time: Reach the 3 storage lockers in sequence before the trail goes cold';
+    scene.syncStoryScript(0.1);
+    return {
+      pendingRestart: !!scene.pendingStoryRestart,
+      text: scene.storyPanel?.text ?? '',
+      objectiveIndex: scene.storyProgress?.current?.objectiveIndex ?? null,
+      visible: !!scene.storyPanel?.visible,
+    };
+  });
+
+  expect(failure).toEqual({
+    pendingRestart: true,
+    text:
+      'MISSION FAILED\n\n' +
+      'Ran out of time: Reach the 3 storage lockers in sequence before the trail goes cold\n\n' +
+      'Retrying Burned Locker...',
+    objectiveIndex: 0,
+    visible: true,
+  });
+});
+
 test('story mode can complete a longer multi-objective encounter and roll into the next chapter', async ({
   page,
 }) => {
@@ -1421,6 +1491,117 @@ test('story mode can complete a longer multi-objective encounter and roll into t
   });
   expect(longEncounterValue.panel).toContain('MISSION BRIEF');
   expect(longEncounterValue.panel).toContain('Ghost Fare');
+});
+
+test('chapter completion preserves money, ammo, and health instead of resetting the run', async ({
+  page,
+}) => {
+  await launchStoryMode(page);
+
+  await restartIntoStoryProgress(page, {
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'static-on-the-hospital-band',
+      missionId: 'ward-6-exit',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: UNLOCKED_THROUGH_STATIC_ON_THE_HOSPITAL_BAND,
+    completedChapterIds: ['dead-drop-district', 'spare-parts-gospel'],
+    completedMissionIds: COMPLETED_THROUGH_WARD_6_EXIT,
+    branchOutcomes: {},
+  });
+  await acknowledgeStoryPanel(page);
+
+  // Drive the run to a distinctive, non-default state before finishing the chapter.
+  await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      world: {
+        player: { pos: { x: number; y: number } };
+        health: { current: number };
+        weapon: { ammo: number };
+        score: { current: number };
+        elapsed: number;
+        kills: number;
+        targetKills: number;
+        campaign?: { currentIndex: number } | null;
+        updateMissionProgress?: () => void;
+      };
+      handleEvents?: () => void;
+    };
+    if (!scene?.world?.campaign || typeof scene.handleEvents !== 'function') {
+      throw new Error('Missing long encounter completion hooks');
+    }
+
+    scene.world.health.current = 42;
+    scene.world.weapon.ammo = 17;
+    scene.world.score.current = 640;
+
+    scene.world.player.pos = { x: 3776, y: 1280 };
+    scene.world.updateMissionProgress?.();
+    scene.handleEvents();
+
+    scene.world.kills += 5;
+    scene.world.targetKills += 5;
+    scene.world.updateMissionProgress?.();
+    scene.handleEvents();
+
+    scene.world.elapsed += 16;
+    scene.world.updateMissionProgress?.();
+    scene.handleEvents();
+  });
+
+  // Wait for the chapter-complete panel, then let the real restart timer fire.
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as { pendingStoryRestart?: unknown };
+    return !!scene?.pendingStoryRestart;
+  });
+
+  const result = await page.waitForFunction(
+    () => {
+      const game = (
+        window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }
+      ).__game;
+      const scene = game?.scene.getScene('City') as {
+        world: {
+          health: { current: number };
+          weapon: { ammo: number };
+          score: { current: number };
+          mission?: { title: string } | null;
+        };
+        pendingStoryRestart?: unknown;
+        storyProgress?: {
+          current: { chapterId: string; missionId: string } | null;
+        } | null;
+      };
+      if (scene?.pendingStoryRestart) return null;
+      if (scene?.storyProgress?.current?.chapterId !== 'meter-running') return null;
+      if (scene.storyProgress.current.missionId !== 'ghost-fare') return null;
+      // The in-world mission/campaign must also reflect the new chapter, not just the
+      // story-progress bookkeeping (a stale restored campaign would leave this null/wrong
+      // even though storyProgress itself already points at the new chapter).
+      if (scene.world.mission?.title !== 'Ghost Fare') return null;
+      return {
+        health: scene.world.health.current,
+        ammo: scene.world.weapon.ammo,
+        score: scene.world.score.current,
+      };
+    },
+    undefined,
+    { timeout: 8_000 },
+  );
+
+  const preserved = (await result.jsonValue()) as { health: number; ammo: number; score: number };
+  // Health/ammo carry over untouched; score only grows (mission completion pays a reward),
+  // so a reset-to-zero regression would fail this while a normal payout would not.
+  expect(preserved.health).toBe(42);
+  expect(preserved.ammo).toBe(17);
+  expect(preserved.score).toBeGreaterThanOrEqual(640);
 });
 
 test('False Ambulance can be completed from the start with its stop objective and rewards the next mission', async ({
@@ -1608,8 +1789,8 @@ test('story mode shows a prototype-complete panel when the current story slice f
 
     scene.storyProgress.current = {
       actId: 'court-the-citys-middle-powers',
-      chapterId: 'glass-towers-empty-floors',
-      missionId: 'vacancy-notice',
+      chapterId: 'saints-of-the-side-street',
+      missionId: 'quiet-chapel',
       objectiveIndex: 0,
     };
     scene.storyProgress.completedMissionIds = [
@@ -1627,8 +1808,13 @@ test('story mode shows a prototype-complete panel when the current story slice f
       'window-tax',
       'lobby-flood',
       'fire-sale-run',
+      'vacancy-notice',
+      'soup-line-watch',
+      'siren-swap',
+      'half-block-safehouse',
+      'medicine-debt',
     ];
-    scene.prevMissionId = 'vacancy-notice';
+    scene.prevMissionId = 'quiet-chapel';
     scene.prevMissionComplete = false;
     scene.world.campaign.currentIndex = scene.world.campaign.missions.length;
     scene.handleEvents();

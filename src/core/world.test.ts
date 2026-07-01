@@ -16,6 +16,7 @@ import {
 import { type OnFootActor } from './entity';
 import { type Car } from './vehicle';
 import { type Pedestrian } from './pedestrianAI';
+import { type Police } from './policeAI';
 import { tileCoord, type TrafficAI } from './trafficAI';
 import { rect, pointInRect } from './collision';
 import { buildCity, tileCenter } from './city';
@@ -367,6 +368,69 @@ describe('World story objective progress', () => {
     }
 
     expect(pressured.police.length).toBeGreaterThan(base.police.length);
+  });
+
+  it('holds NPC traffic at every intersection during a story blackout, even on a green axis', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    // Eastbound car approaching the intersection at (4,4); horizontal has the
+    // green, so this car would normally sail straight through.
+    const npc: Car = {
+      pos: tileCenter(city.spec, 2, 4),
+      heading: 0,
+      speed: 0,
+      radius: 12,
+    };
+    const w = new World({
+      player: player(),
+      cars: [npc],
+      city,
+      carDrivers: [{ dir: vec2(1, 0) }],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+    w.lights = createTrafficLights(0); // horizontal green
+
+    w.setStoryDistrictStateEffects({ blackoutIntersections: true });
+    const intersectionX = tileCenter(city.spec, 4, 4).x - city.spec.tile / 2; // left edge
+    for (let i = 0; i < 180; i++) {
+      w.tick(controls(), 1 / 60);
+      expect(w.cars[0].pos.x).toBeLessThan(intersectionX); // never entered the box
+    }
+  });
+
+  it('keeps NPC traffic clear of a story-reserved route lane', () => {
+    const city = buildCity({
+      cols: 18,
+      rows: 18,
+      tile: 64,
+      block: 6,
+      roadWidth: 4,
+    });
+    const start = tileCenter(city.spec, 1, 4);
+    const base = new World({
+      player: player(),
+      cars: [{ pos: start, heading: Math.PI / 2, speed: 0, radius: 12 }],
+      city,
+      carDrivers: [{ dir: vec2(0, 1) }],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+    const reserved = new World({
+      player: player(),
+      cars: [{ pos: start, heading: Math.PI / 2, speed: 0, radius: 12 }],
+      city,
+      carDrivers: [{ dir: vec2(0, 1) }],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+    reserved.setStoryDistrictStateEffects({
+      reservedRoutes: [{ points: [start], radius: 200 }],
+    });
+
+    advance(base, 1);
+    advance(reserved, 1);
+
+    expect(base.cars[0].pos.y).toBeGreaterThan(reserved.cars[0].pos.y + 30);
   });
 });
 
@@ -1526,6 +1590,93 @@ describe('World traffic rerouting and lights', () => {
     // The important regression is that calm pedestrians no longer walk over the
     // river; instead they peel off toward a bridge approach.
     expect(Math.abs(finalPos.x - start.x)).toBeGreaterThan(city.spec.tile);
+  });
+
+  it('keeps a fleeing pedestrian out of the river even when panic steers it straight at the water', () => {
+    const spec = {
+      cols: 20,
+      rows: 20,
+      tile: 64,
+      block: 5,
+      margin: 10,
+      rivers: [{ orientation: 'horizontal' as const, start: 11, span: 3, bridgeEvery: 2 }],
+    };
+    const city = buildCity(spec);
+    const river = spec.rivers[0];
+    const riverTop = river.start * spec.tile;
+    const xWanted = 5 * spec.tile + spec.tile / 2;
+    const northSidewalk = city.sidewalks
+      .filter((sidewalk) => sidewalk.y + sidewalk.h <= riverTop)
+      .sort(
+        (a, b) =>
+          Math.abs(a.y + a.h - riverTop) - Math.abs(b.y + b.h - riverTop) ||
+          Math.abs(a.x + a.w / 2 - xWanted) - Math.abs(b.x + b.w / 2 - xWanted),
+      )[0];
+    expect(northSidewalk).toBeDefined();
+    // Right at the river bank, so even a single flee step would land in the water.
+    // Offset a little from the shooter's line of fire so gunfire panics the
+    // pedestrian (a near miss) instead of killing it outright.
+    const start = vec2(xWanted + 25, riverTop - 4);
+    const ped: Pedestrian = { pos: start, heading: 0, radius: 7, state: 'wander', target: start };
+    const w = new World({
+      // The shooter stands north of the pedestrian and fires south, so the panic
+      // direction (away from the gunfire) points straight into the river.
+      player: { pos: vec2(xWanted, start.y - 30), angle: Math.PI / 2, radius: 8 },
+      city,
+      pedestrians: [ped],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.5,
+    });
+
+    w.tick(controls({ fire: true }), 1 / 60);
+    w.tick(controls(), 1 / 60);
+    expect(w.pedestrians).toHaveLength(1);
+    expect(w.pedestrians[0].state).toBe('flee');
+    for (let i = 0; i < 600; i++) {
+      w.tick(controls(), 1 / 60);
+      const p = w.pedestrians[0];
+      expect(city.water.some((water) => pointInRect(p.pos, water))).toBe(false);
+    }
+  });
+
+  it('keeps a foot officer returning to station out of the river when home sits directly across the water', () => {
+    const spec = {
+      cols: 20,
+      rows: 20,
+      tile: 64,
+      block: 5,
+      margin: 10,
+      rivers: [{ orientation: 'horizontal' as const, start: 11, span: 3, bridgeEvery: 2 }],
+    };
+    const city = buildCity(spec);
+    const river = spec.rivers[0];
+    const riverTop = river.start * spec.tile;
+    const riverBottom = (river.start + river.span) * spec.tile;
+    const xWanted = 5 * spec.tile + spec.tile / 2;
+    // No buildings sit directly over open water, so a straight line from the
+    // officer to a home across the river is never "sight blocked" by walls —
+    // only the isWaterAt guard stops the direct path from crossing the water.
+    const cop: Police = {
+      pos: vec2(xWanted, riverTop - 4),
+      heading: 0,
+      radius: 12,
+      kind: 'foot',
+      returningHome: true,
+      home: vec2(xWanted, riverBottom + 4),
+    };
+    const w = new World({
+      player: player(),
+      city,
+      police: [cop],
+      bounds: { width: city.width, height: city.height },
+    });
+
+    for (let i = 0; i < 600; i++) {
+      w.tick(controls(), 1 / 60);
+      const officer = w.police.find((c) => c.kind === 'foot');
+      if (!officer) break; // reached home and was removed: also fine
+      expect(city.water.some((water) => pointInRect(officer.pos, water))).toBe(false);
+    }
   });
 });
 

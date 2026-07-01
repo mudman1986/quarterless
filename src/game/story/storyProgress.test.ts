@@ -8,6 +8,7 @@ import {
   currentStoryMissionChoices,
   currentStoryMission,
   loadStoryProgress,
+  migrateStoryProgressData,
   recordBranchOutcome,
   saveStoryProgress,
   selectStoryChapter,
@@ -19,6 +20,7 @@ import {
   type StoryProgressSnapshot,
 } from './storyProgress';
 import type { StoryMode } from './storyMode';
+import { STORY_MODE_SCHEMA_VERSION } from './storyMode';
 
 function fakeStore(): KeyValueStore {
   const map = new Map<string, string>();
@@ -50,6 +52,7 @@ function fiveMissionChapter(id: string, actId: string, order: number) {
 }
 
 const TWO_CHAPTER_STORY: StoryMode = {
+  schemaVersion: STORY_MODE_SCHEMA_VERSION,
   id: 'test-story',
   title: 'Test Story',
   premise: 'Premise',
@@ -296,5 +299,83 @@ describe('story progress persistence', () => {
     });
     clearStoryProgress(validStore);
     expect(loadStoryProgress(validStore)).toBeNull();
+  });
+
+  it('returns null for a newer save version with no migration path', () => {
+    const store = fakeStore();
+    const progress = createStoryProgress(TWO_CHAPTER_STORY);
+    saveStoryProgress(store, {
+      storyId: progress.storyId,
+      current: progress.current,
+      unlockedChapterIds: progress.unlockedChapterIds,
+      completedChapterIds: progress.completedChapterIds,
+      completedMissionIds: progress.completedMissionIds,
+      branchOutcomes: progress.branchOutcomes,
+    });
+    const raw = JSON.parse(store.getItem(STORY_PROGRESS_KEY)!);
+    store.setItem(STORY_PROGRESS_KEY, JSON.stringify({ ...raw, version: 2 }));
+
+    expect(loadStoryProgress(store)).toBeNull();
+  });
+
+  it('applies a registered migration to upgrade an older save on load', () => {
+    const store = fakeStore();
+    const progress = createStoryProgress(TWO_CHAPTER_STORY);
+    saveStoryProgress(store, {
+      storyId: progress.storyId,
+      current: progress.current,
+      unlockedChapterIds: progress.unlockedChapterIds,
+      completedChapterIds: progress.completedChapterIds,
+      completedMissionIds: progress.completedMissionIds,
+      branchOutcomes: progress.branchOutcomes,
+    });
+    const raw = JSON.parse(store.getItem(STORY_PROGRESS_KEY)!);
+    // Simulate a save written before `branchOutcomes` existed, at version 0.
+    const withoutBranchOutcomes: Record<string, unknown> = { ...raw };
+    delete withoutBranchOutcomes.branchOutcomes;
+    store.setItem(STORY_PROGRESS_KEY, JSON.stringify({ ...withoutBranchOutcomes, version: 0 }));
+
+    const migrations = {
+      0: (data: Record<string, unknown>) => ({ ...data, branchOutcomes: {} }),
+    };
+    expect(loadStoryProgress(store, STORY_PROGRESS_KEY, migrations)).toEqual({
+      version: 1,
+      storyId: 'test-story',
+      current: progress.current,
+      unlockedChapterIds: ['chapter-1'],
+      completedChapterIds: [],
+      completedMissionIds: [],
+      branchOutcomes: {},
+    });
+  });
+});
+
+describe('migrateStoryProgressData', () => {
+  it('chains multiple registered migrations to reach the target version', () => {
+    const migrations = {
+      0: (data: Record<string, unknown>) => ({ ...data, addedAtV1: true }),
+      1: (data: Record<string, unknown>) => ({ ...data, addedAtV2: true }),
+    };
+    expect(migrateStoryProgressData({ version: 0 }, migrations, 2)).toEqual({
+      version: 2,
+      addedAtV1: true,
+      addedAtV2: true,
+    });
+  });
+
+  it('returns null when no migration is registered for the saved version', () => {
+    const migrations = { 1: (data: Record<string, unknown>) => data };
+    expect(migrateStoryProgressData({ version: 0 }, migrations, 2)).toBeNull();
+  });
+
+  it('returns null for a version newer than the target', () => {
+    expect(migrateStoryProgressData({ version: 5 }, {}, 1)).toBeNull();
+  });
+
+  it('returns the data unchanged when already at the target version', () => {
+    expect(migrateStoryProgressData({ version: 1, storyId: 'x' }, {}, 1)).toEqual({
+      version: 1,
+      storyId: 'x',
+    });
   });
 });

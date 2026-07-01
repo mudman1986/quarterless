@@ -784,6 +784,12 @@ export class World {
   private storyNpcDrivingSuppressed = false;
   /** Story-driven checkpoint pressure added on top of live wanted stars. */
   private storyWantedPressureBonus = 0;
+  /** Story-driven citywide traffic-light blackout: every intersection is
+   * treated as an all-way stop instead of following the normal cycle. */
+  private storyBlackoutIntersections = false;
+  /** Story-driven reserved route lanes: NPC cars near these points nearly
+   * stop, keeping the lane clear for a scripted escort or getaway. */
+  private storyReservedRoutes: { points: Vec2[]; radius: number }[] = [];
   /** Seconds elapsed in the current run (drives survive objectives). */
   private elapsed = 0;
   /** The currently active player taxi fare, if the player is driving a cab. */
@@ -986,6 +992,24 @@ export class World {
     return world;
   }
 
+  /**
+   * Re-derive the active mission/campaign fresh from `missions`, discarding whatever
+   * campaign/objective-baseline state a restored snapshot carried over. A restored
+   * snapshot's `campaign` reflects whatever mission was active (often already complete)
+   * at save time, which is correct for a real save/load but wrong immediately after a
+   * story chapter transition: the run's stats (position, health, ammo, score) should
+   * carry over, but the mission/campaign must start fresh for the new chapter.
+   */
+  resetActiveMission(missions: Mission[] = []): void {
+    this.campaign = this.loopCampaigns
+      ? this.pickNextCampaign()
+      : missions.length > 0
+        ? createCampaign(missions)
+        : null;
+    this.objectiveBaseline = this.baselineNow();
+    this.syncMissionTargets();
+  }
+
   get isDriving(): boolean {
     return this.drivingCarIndex !== null;
   }
@@ -1118,12 +1142,19 @@ export class World {
       trafficSpeedMultiplier?: number;
       suppressNpcDriving?: boolean;
       wantedPressureBonus?: number;
+      blackoutIntersections?: boolean;
+      reservedRoutes?: readonly { points: readonly Vec2[]; radius: number }[];
     } | null,
   ): void {
     this.storyServiceLaneBlocks = new Set(effects?.serviceLaneBlocks ?? []);
     this.storyTrafficSpeedMultiplier = Math.max(0.25, effects?.trafficSpeedMultiplier ?? 1);
     this.storyNpcDrivingSuppressed = !!effects?.suppressNpcDriving;
     this.storyWantedPressureBonus = Math.max(0, Math.floor(effects?.wantedPressureBonus ?? 0));
+    this.storyBlackoutIntersections = !!effects?.blackoutIntersections;
+    this.storyReservedRoutes = (effects?.reservedRoutes ?? []).map((route) => ({
+      points: route.points.map((p) => ({ x: p.x, y: p.y })),
+      radius: route.radius,
+    }));
     if (this.storyServiceLaneBlocked('taxi')) {
       if (this.playerTaxiMission) this.cancelPlayerTaxiMission(this.focus);
       for (let i = 0; i < this.cars.length; i++) {
@@ -1147,6 +1178,18 @@ export class World {
 
   private storyWantedPressure(): number {
     return Math.min(6, this.wantedStars + this.storyWantedPressureBonus);
+  }
+
+  /** Speed multiplier applied to an NPC car near a story-reserved route lane
+   * (e.g. keeping a road clear for an escort or getaway). Cars within a
+   * reserved route's radius nearly stop; everyone else is unaffected. */
+  private storyReservedRouteMultiplier(pos: Vec2): number {
+    for (const route of this.storyReservedRoutes) {
+      for (const point of route.points) {
+        if (distance(pos, point) <= route.radius) return 0.08;
+      }
+    }
+    return 1;
   }
 
   /** Advance the simulation by `dt` seconds. */
@@ -1540,7 +1583,9 @@ export class World {
         continue;
       const car = this.cars[i];
       const cruiseSpeed =
-        trafficCruiseSpeedForKind(this.carKind(i)) * this.storyTrafficSpeedMultiplier;
+        trafficCruiseSpeedForKind(this.carKind(i)) *
+        this.storyTrafficSpeedMultiplier *
+        this.storyReservedRouteMultiplier(car.pos);
 
       let dir = ai.dir;
       let blocked = ai.blocked ?? 0;
@@ -1613,7 +1658,10 @@ export class World {
   /** Whether an NPC car is approaching an intersection it must stop at for a red
    * light. Looks a tile or two ahead along the car's direction. */
   private redLightAhead(car: Car, dir: Vec2): boolean {
-    if (!this.city || hasGreen(this.lights, dir)) return false; // our axis is green
+    if (!this.city) return false;
+    // During a story blackout every intersection is an all-way stop, so the
+    // normal green-light bypass never applies.
+    if (!this.storyBlackoutIntersections && hasGreen(this.lights, dir)) return false; // our axis is green
     const { tx, ty } = tileCoord(this.city.spec, car.pos);
     if (isIntersection(this.city, tx, ty)) return false; // already committed: clear the junction
     for (let step = 1; step <= 2; step++) {
@@ -3434,9 +3482,13 @@ export class World {
         stepped.radius,
         this.nearbyWalls(offCars, stepped.radius),
       );
-      // When calm, a pedestrian keeps to the pavement and only steps onto the
-      // road at a crosswalk; a fleeing pedestrian will bolt across anywhere.
-      if (!returningTo && stepped.state === 'wander' && this.onForbiddenRoad(pos)) {
+      // A pedestrian may never end up standing in the river, no matter which
+      // steering behavior (wander, flee, panic-exit) chose the raw target.
+      if (this.isWaterAt(pos)) {
+        pos = ped.pos; // never let a pedestrian step into the water
+      } else if (!returningTo && stepped.state === 'wander' && this.onForbiddenRoad(pos)) {
+        // When calm, a pedestrian keeps to the pavement and only steps onto the
+        // road at a crosswalk; a fleeing pedestrian will bolt across anywhere.
         pos = ped.pos; // hold at the kerb instead of jaywalking
       }
       const blocked = pos.x !== stepped.pos.x || pos.y !== stepped.pos.y;
@@ -3489,6 +3541,16 @@ export class World {
       waypoint: flowWaypoint(grid, field, ped.pos),
       cache: { tx, ty, field },
     };
+  }
+
+  /** Whether a point sits over lethal water. Used to keep foot NPCs (pedestrians,
+   * police officers) out of the river regardless of which steering behavior
+   * (wander, flee, panic, pursuit) chose the raw target — unlike vehicles, foot
+   * actors don't route exclusively through a water-excluding grid at all times. */
+  private isWaterAt(pos: Vec2): boolean {
+    if (!this.city) return false;
+    const { tx, ty } = tileCoord(this.city.spec, pos);
+    return this.city.isWater(tx, ty);
   }
 
   /** Whether a point is on an open road lane that is not a marked crossing, so a
@@ -3980,9 +4042,10 @@ export class World {
         ? (flowWaypoint(this.navGrid, homeFlow, cop.pos) ?? home)
         : home;
     const stepped = stepPolice(cop, waypoint, dt, speed);
+    const resolvedPos = resolveCircleRects(stepped.pos, stepped.radius, this.walls);
     const resolved = {
       ...stepped,
-      pos: resolveCircleRects(stepped.pos, stepped.radius, this.walls),
+      pos: this.isWaterAt(resolvedPos) ? cop.pos : resolvedPos,
       speed: cop.kind === 'car' ? speed : 0,
       fireCooldown: 0,
       returningHome: cop.returningHome,
@@ -4057,8 +4120,9 @@ export class World {
           ? (flowWaypoint(this.navGrid, this.copFlow, cop.pos) ?? this.focus)
           : this.focus;
       const stepped = stepPolice(cop, waypoint, dt, policeSpeedFor(cop.kind, pressureStars));
+      const resolvedPos = resolveCircleRects(stepped.pos, stepped.radius, this.walls);
       return [
-        { ...stepped, pos: resolveCircleRects(stepped.pos, stepped.radius, this.walls), speed: 0 },
+        { ...stepped, pos: this.isWaterAt(resolvedPos) ? cop.pos : resolvedPos, speed: 0 },
       ];
     });
 

@@ -306,3 +306,57 @@ test('Sindicate keeps multiple manual save slots independent', async ({ page }) 
   expect(loadedSlotTwoState.score).toEqual(slotTwoState.score);
   expect(loadedSlotTwoState.wantedStars).toBe(slotTwoState.wantedStars);
 });
+
+test('clicking the real Load-slot button in the story menu restores that slot', async ({
+  page,
+}) => {
+  await boot(page);
+
+  await page.evaluate(() => {
+    const game = (window as unknown as { __game: GameProbe }).__game;
+    const scene = game.scene.getScene('City');
+    const world = scene.world;
+    world.player.pos = { x: 501, y: 502 };
+    world.health.current = 55;
+    world.weapon.ammo = 9;
+    world.score.current = 555;
+    world.score.best = 777;
+  });
+
+  const savedState = await readState(page);
+
+  await page.keyboard.press('p');
+  await expect(page.getByRole('heading', { name: 'Story Mode' })).toBeVisible({ timeout: 10_000 });
+  await page.locator('[data-story-slot-save="1"]').click();
+
+  await page.getByRole('button', { name: /Resume Current Run|Continue Story|Start Story/ }).click();
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
+
+  // Drift away from the saved slot so we can tell whether Load actually restores it.
+  await page.evaluate(() => {
+    const game = (window as unknown as { __game: GameProbe }).__game;
+    const world = game.scene.getScene('City').world;
+    world.player.pos = { x: 1, y: 2 };
+    world.health.current = 12;
+    world.weapon.ammo = 0;
+    world.score.current = 1;
+    world.score.best = 1;
+  });
+
+  await page.keyboard.press('p');
+  await expect(page.getByRole('heading', { name: 'Story Mode' })).toBeVisible({ timeout: 10_000 });
+  await page.locator('[data-story-slot-load="1"]').click();
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: GameProbe }).__game;
+    if (!game) return false;
+    const world = game.scene.getScene('City').world;
+    return world.player.pos.x === 501 && world.player.pos.y === 502;
+  });
+
+  const loadedState = await readState(page);
+  expect(loadedState.pos).toEqual(savedState.pos);
+  expect(loadedState.health).toEqual(savedState.health);
+  expect(loadedState.ammo).toBe(savedState.ammo);
+  expect(loadedState.score).toEqual(savedState.score);
+});
