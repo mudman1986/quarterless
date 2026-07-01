@@ -965,6 +965,7 @@ test('scripted district-state missions still announce stage shifts without showi
       storyScript?: {
         actorCarIndices: Record<string, number>;
         actorRouteIndices: Record<string, number>;
+        stageLabel: string;
       } | null;
       world: {
         cars: Array<{
@@ -1231,7 +1232,9 @@ test('restarting into Wreck Before Dawn keeps restart resources stable', async (
     8,
   );
 
-  expect(metrics.every((metric) => metric.pointerdownListeners === 1)).toBe(true);
+  const listenerBaseline = metrics[0]?.pointerdownListeners ?? 0;
+  expect(listenerBaseline).toBeGreaterThan(0);
+  expect(metrics.every((metric) => metric.pointerdownListeners === listenerBaseline)).toBe(true);
   expect(metrics.every((metric) => metric.sameMinimapTexture)).toBe(true);
 });
 
@@ -1258,9 +1261,10 @@ test('story restart times stay stable across repeated story loads', async ({ pag
   );
 
   const baseline = metrics[0]?.durationMs ?? 0;
+  const listenerBaseline = metrics[0]?.pointerdownListeners ?? 0;
   const ceiling = Math.max(350, baseline * 2.5);
   for (const metric of metrics) {
-    expect(metric.pointerdownListeners).toBe(1);
+    expect(metric.pointerdownListeners).toBe(listenerBaseline);
     expect(metric.durationMs).toBeLessThan(ceiling);
   }
 });

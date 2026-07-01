@@ -2698,8 +2698,9 @@ export class CityScene extends Phaser.Scene {
   }
 
   /** Flash a banner message for a few seconds. */
-  private showBanner(_text: string): void {
-    this.banner.setVisible(false);
+  private showBanner(text: string): void {
+    void text;
+    this.banner.setText('').setVisible(false);
     this.announceRemaining = 0;
   }
 
