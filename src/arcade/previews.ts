@@ -107,9 +107,63 @@ function drawVoidSweep(context: CanvasRenderingContext2D, time: number): void {
   }
 }
 
+function drawPenguinsOfTangram(context: CanvasRenderingContext2D, time: number): void {
+  clear(context);
+  context.fillStyle = '#8fd8ff';
+  context.fillRect(0, 0, previewSize.width, previewSize.height);
+  context.fillStyle = '#ffffff';
+  context.beginPath();
+  context.arc(68, 42, 24, 0, Math.PI * 2);
+  context.arc(94, 48, 18, 0, Math.PI * 2);
+  context.arc(40, 50, 16, 0, Math.PI * 2);
+  context.fill();
+
+  context.fillStyle = '#77d16a';
+  context.fillRect(0, 152, previewSize.width, 58);
+  context.fillStyle = '#ffefc0';
+  context.fillRect(190, 56, 110, 76);
+  context.fillStyle = '#ffd166';
+  context.fillRect(204, 36, 82, 30);
+  context.fillStyle = '#ff8f66';
+  context.fillRect(174, 126, 146, 12);
+  context.fillStyle = '#59d0ff';
+  context.fillRect(208, 74, 22, 28);
+  context.fillRect(236, 74, 22, 28);
+  context.fillRect(264, 74, 22, 28);
+
+  const penguinY = 140 - Math.abs(Math.sin(time * 0.008)) * 22;
+  context.fillStyle = '#1f3348';
+  context.beginPath();
+  context.ellipse(90, penguinY, 18, 26, 0, 0, Math.PI * 2);
+  context.fill();
+  context.fillStyle = '#f7fbff';
+  context.beginPath();
+  context.ellipse(90, penguinY + 3, 11, 14, 0, 0, Math.PI * 2);
+  context.fill();
+  context.fillStyle = '#ff7f50';
+  context.fillRect(76, penguinY - 22, 28, 6);
+  context.fillStyle = '#ffb15f';
+  context.beginPath();
+  context.moveTo(90, penguinY - 1);
+  context.lineTo(100, penguinY + 4);
+  context.lineTo(90, penguinY + 8);
+  context.fill();
+  context.fillRect(82, penguinY + 24, 8, 4);
+  context.fillRect(92, penguinY + 24, 8, 4);
+
+  context.fillStyle = '#ffd166';
+  for (let index = 0; index < 5; index++) {
+    const badgeX = 168 + index * 34 - ((time * 0.06) % 34);
+    context.beginPath();
+    context.arc(badgeX, 102 + Math.sin(index * 0.7) * 6, 7, 0, Math.PI * 2);
+    context.fill();
+  }
+}
+
 const renderers: Partial<Record<string, PreviewRenderer>> = {
   sindicate: drawSindicate,
   'pixel-sprint': drawPixelSprint,
+  'penguins-of-tangram': drawPenguinsOfTangram,
   'void-sweep': drawVoidSweep,
 };
 

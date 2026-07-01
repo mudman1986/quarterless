@@ -66,6 +66,15 @@ const games: readonly ArcadeGame[] = [
     load: () => import('./games/pixelSprint'),
   },
   {
+    id: 'penguins-of-tangram',
+    title: 'Penguins of Tangram',
+    badge: 'New',
+    description:
+      'A cartoony school-themed Phaser platformer with character select, badges, checkpoints, and a festival-bell finish.',
+    accent: '#59d0ff',
+    load: () => import('./games/penguinsOfTangram'),
+  },
+  {
     id: 'void-sweep',
     title: 'Void Sweep',
     badge: 'Work in progress',

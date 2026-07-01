@@ -40,6 +40,24 @@ export async function launchArcadeGame(page: Page, title: 'Pixel Sprint' | 'Void
   await page.waitForFunction(() => Boolean((window as unknown as { __arcadeGame?: unknown }).__arcadeGame));
 }
 
+export async function launchPenguinsOfTangram(
+  page: Page,
+  character: 'Penguin' | 'Crocodile' | 'Monkey' | 'Turtle' | 'Kangaroo' | 'Lion' = 'Penguin',
+): Promise<void> {
+  await page.goto('/quarterless/');
+  await expect(page.getByRole('heading', { name: 'Retro Arcade' })).toBeVisible({ timeout: 10_000 });
+  await page.getByRole('button', { name: 'Play Penguins of Tangram' }).click();
+  await expect(page.getByRole('heading', { name: 'Penguins of Tangram' })).toBeVisible({
+    timeout: 10_000,
+  });
+  await page.getByRole('button', { name: new RegExp(`^${character}`) }).click();
+  await page.getByRole('button', { name: 'Start adventure' }).click();
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
+  await page.waitForFunction(
+    () => (window as unknown as { __penguinsOfTangram?: { state?: string } }).__penguinsOfTangram?.state === 'running',
+  );
+}
+
 export async function triggerArcadeGameOver(page: Page, score?: number): Promise<void> {
   await page.evaluate((nextScore) => {
     const hook = (window as unknown as { __arcadeGame?: ArcadeGameTestHook }).__arcadeGame;
