@@ -533,7 +533,7 @@ Main code areas:
 - src/game/story/runtimeActors.ts
 - src/game/scenes/CityScene.ts
 
-### Stage 3 - Finish Story Progression And Recovery
+### Stage 3 - Finish Story Progression And Recovery (complete)
 
 Goal: ensure long-form story runs are reliable before broadening content.
 
@@ -543,17 +543,17 @@ Why before presentation polish:
 
 Required outcomes:
 
-1. Chapter progression, grouped mission order, branch outcomes, and replay all compose cleanly.
-2. Failure restarts and chapter restarts preserve the correct story cursor and runtime state.
-3. Manual saves, autosaves, and launcher resume all agree on the same source of truth.
-4. Branch outcomes can influence future mission setup without corrupting canonical progress.
+1. Chapter progression, grouped mission order, branch outcomes, and replay all compose cleanly. — already true: `completeStoryMission`/`cursorForPendingGroup`/`selectStoryMission` in `storyProgress.ts` handle mission advancement, the `STORY_MISSION_GROUP_SELECTION_INDEX` grouped-choice cursor, and branch recording cleanly.
+2. Failure restarts and chapter restarts preserve the correct story cursor and runtime state. — already true: `CityScene.restartCurrentStoryMission` builds its restart snapshot as `{ ...this.storyProgress, current: { ...current, objectiveIndex: 0 } }`, so `branchOutcomes`/`unlockedChapterIds`/`completedChapterIds`/`completedMissionIds` all carry through untouched — verified directly by reading the function.
+3. Manual saves, autosaves, and launcher resume all agree on the same source of truth. — already true: autosave uses `GAME_STATE_KEY`/`STORY_PROGRESS_KEY`, manual slots use `manualSaveKey(N)`/`storyProgressSaveKey(manualSaveKey(N))`, and `bootstrap.ts`'s `currentStoryProgress()`/`slotOverview()` read the same paired keys `CityScene.ts` writes on autosave — verified directly by reading both files.
+4. Branch outcomes can influence future mission setup without corrupting canonical progress. — already true: `branchOutcomes` is a separate `Record<string, string>` field on `StoryProgressSnapshot`, only ever merged via `recordBranchOutcome`/`selectStoryMission`, and resolved read-only through `resolveStoryMissionPlan` without touching the cursor.
 
 Required tests before moving on:
 
-1. Multi-chapter progression tests.
-2. Save/load and replay tests.
-3. Failure-path and restart regressions.
-4. Live branch-recording and branch-carry-forward coverage.
+1. Multi-chapter progression tests. — covered by `storyProgress.test.ts`'s `completeStoryMission` suite plus `story-mode.spec.ts` ("story mode can complete a longer multi-objective encounter and roll into the next chapter", "story mode can progress across multiple chapter finales and preserve unlock state").
+2. Save/load and replay tests. — covered by `storyProgress.test.ts`'s "story progress persistence" suite (round-trip, malformed-save, migration) and `save-state.spec.ts`/`story-mode.spec.ts` (autosave-after-refresh, manual save/load slots, independent slots, chapter replay from the launcher).
+3. Failure-path and restart regressions. — covered by `story-mode.spec.ts` ("scripted escort fail rules restart the current story mission", "story mode fails quiet-route missions when the wanted level stays hot", "story mode restarts into the next chapter after chapter completion").
+4. Live branch-recording and branch-carry-forward coverage. — covered by `storyProgress.test.ts` ("records a branch outcome when the player picks a grouped lead", "resolves branch-dependent mission variants from recorded outcomes") and `story-mode.spec.ts` (grouped-lead branch recording, carry-forward into later mission setup, resolving variants from both live and saved outcomes).
 
 Main code areas:
 
