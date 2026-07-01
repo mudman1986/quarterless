@@ -715,7 +715,7 @@ export class CityScene extends Phaser.Scene {
       };
     }
 
-    this.runStoryScript(mission.prototypeScript, dt);
+    this.runStoryScript(mission, dt);
     const missionState = this.world.mission;
     if (missionState && isFailed(missionState) && !this.pendingStoryRestart) {
       this.restartCurrentStoryMission(missionState.failureReason ?? `Ran out of time.`);
@@ -936,8 +936,9 @@ export class CityScene extends Phaser.Scene {
     return stages[safeIndex] ?? null;
   }
 
-  private runStoryScript(runtime: StoryRuntimeScript | undefined, dt: number): void {
+  private runStoryScript(mission: StoryMissionPlan, dt: number): void {
     const script = this.storyScript!;
+    const runtime = mission.prototypeScript;
     if (!runtime) {
       script.tailSeconds = 0;
       script.captureSeconds = 0;
@@ -1053,7 +1054,21 @@ export class CityScene extends Phaser.Scene {
     script.failCounters = fail.progress.failCounters;
     if (fail.failureText) this.restartCurrentStoryMission(fail.failureText);
 
-    if (isStageTransitionMet(stage.nextWhen, fail.progress, routeIndices)) {
+    const storyObjectiveIndex = this.world.mission
+      ? storyObjectiveIndexFromRuntime(mission, this.world.mission.currentIndex)
+      : null;
+    const routeProgress =
+      this.world.mission?.objectiveState?.kind === 'route'
+        ? this.world.mission.objectiveState.completed
+        : 0;
+    if (
+      isStageTransitionMet(stage.nextWhen, {
+        progress: fail.progress,
+        routeIndices,
+        storyObjectiveIndex,
+        routeProgress,
+      })
+    ) {
       const stages = this.runtimeStages(runtime);
       if (script.stageIndex < stages.length - 1) {
         const nextStage = stages[script.stageIndex + 1]!;

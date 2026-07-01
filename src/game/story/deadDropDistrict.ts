@@ -1,9 +1,12 @@
 import {
   actorVehicleConditionFailRule,
   createEscortMissionScript,
+  createWantedPressureMissionScript,
   escortRadiusFailRule,
   escortRouteActor,
+  missionTargetSquadActor,
   STORY_MODE_SCHEMA_VERSION,
+  vehicleRouteActor,
   wantedPressureFailRule,
 } from './storyMode';
 import type { StoryAct, StoryChapter, StoryMode } from './storyMode';
@@ -48,6 +51,49 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
         ],
         reward: 1500,
       },
+      prototypeScript: {
+        primaryActorId: 'dock-motel-runner',
+        actors: [],
+        stages: [
+          {
+            id: 'night-ferry-approach',
+            title: 'Slip into the dock motel',
+            districtState: {
+              label: 'Dock spotters are still scanning the motel blocks',
+              summary:
+                'Reach the drop before the first cleanup watchers finish pinching the alleys around the old dock motel.',
+              trafficSpeedMultiplier: 0.82,
+              wantedPressureBonus: 1,
+            },
+            actors: [
+              {
+                kind: 'pedestrianRoute',
+                actorId: 'dock-motel-runner',
+                route: [
+                  { x: 640, y: 1088 },
+                  { x: 736, y: 1088 },
+                  { x: 832, y: 1024 },
+                ],
+                speed: 42,
+              },
+            ],
+            nextWhen: { kind: 'storyObjective', objectiveIndex: 1 },
+          },
+          {
+            id: 'night-ferry-hold',
+            title: 'Ride out the wake-up call',
+            districtState: {
+              label: 'The motel block is awake and closing around the drop',
+              summary:
+                'Cleanup spotters are lighting up the block now that the handoff is confirmed; keep moving until the wake-up call fades.',
+              trafficSpeedMultiplier: 0.76,
+              wantedPressureBonus: 1,
+              serviceLaneBlocks: ['police'],
+            },
+            actors: [],
+          },
+        ],
+      },
     },
     {
       id: 'burned-locker',
@@ -85,6 +131,69 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
         ],
         reward: 2200,
       },
+      prototypeScript: {
+        primaryActorId: 'burned-locker-net',
+        actors: [],
+        stages: [
+          {
+            id: 'burned-locker-first',
+            title: 'Crack the first locker',
+            districtState: {
+              label: 'The first locker is still outside the full cleanup cordon',
+              summary:
+                'Get the waterfront fragment now; the next locker wakes the whole strip and collapses your clean approach.',
+              trafficSpeedMultiplier: 0.8,
+              wantedPressureBonus: 1,
+              serviceLaneBlocks: ['police'],
+            },
+            actors: [],
+            nextWhen: { kind: 'routeProgress', count: 1 },
+          },
+          {
+            id: 'burned-locker-second',
+            title: 'Beat the middle sweep',
+            districtState: {
+              label: 'The middle lockers are pulling the response inward',
+              summary:
+                'Cleanup crews are shifting east and starting to read the route, forcing a faster cut between the next fragments.',
+              trafficSpeedMultiplier: 0.68,
+              suppressNpcDriving: true,
+              wantedPressureBonus: 1,
+            },
+            actors: [],
+            nextWhen: { kind: 'routeProgress', count: 2 },
+          },
+          {
+            id: 'burned-locker-third',
+            title: 'Take the last fragment before it burns',
+            districtState: {
+              label: 'The last locker is about to burn with the district watching',
+              summary:
+                'The final locker is lighting up every scanner on the avenue; push through before the ambulance cover closes the lane.',
+              trafficSpeedMultiplier: 0.6,
+              suppressNpcDriving: true,
+              serviceLaneBlocks: ['ambulance', 'police'],
+              wantedPressureBonus: 2,
+            },
+            actors: [],
+            nextWhen: { kind: 'storyObjective', objectiveIndex: 1 },
+          },
+          {
+            id: 'burned-locker-extract',
+            title: 'Break contact with the fragments',
+            districtState: {
+              label: 'The waterfront sweep is collapsing on your exit lane',
+              summary:
+                'Every locker hit lit up the response; keep cutting forward until the sweep burns through its first rush.',
+              trafficSpeedMultiplier: 0.55,
+              suppressNpcDriving: true,
+              serviceLaneBlocks: ['ambulance', 'police'],
+              wantedPressureBonus: 2,
+            },
+            actors: [],
+          },
+        ],
+      },
     },
     {
       id: 'wreck-before-dawn',
@@ -121,6 +230,65 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
           },
         ],
         reward: 3200,
+      },
+      prototypeScript: {
+        primaryActorId: 'cleanup-van',
+        actors: [],
+        stages: [
+          {
+            id: 'wreck-intercept',
+            title: 'Cut off the cleanup van',
+            districtState: {
+              label: 'The cleanup van is still trying to slip past the dock choke point',
+              summary:
+                'Beat it to the roadblock window before the blockers peel off and the manifest disappears into the dawn traffic.',
+              trafficSpeedMultiplier: 0.72,
+              serviceLaneBlocks: ['tow'],
+            },
+            actors: [
+              vehicleRouteActor(
+                'cleanup-van',
+                'van',
+                [
+                  { x: 2240, y: 1152 },
+                  { x: 2368, y: 1088 },
+                  { x: 2496, y: 1024 },
+                ],
+                92,
+                { followRadius: 260 },
+              ),
+            ],
+            nextWhen: { kind: 'storyObjective', objectiveIndex: 1 },
+          },
+          {
+            id: 'manifest-grab',
+            title: 'Pull the manifest off the wreck crew',
+            primaryActorId: 'pier-9-manifest-crew',
+            districtState: {
+              label: 'The roadblock is live and the manifest crew is digging in',
+              summary:
+                'Marked cleaners are trying to burn the papers while the crash lane buys them one last defensive pocket.',
+              suppressNpcDriving: true,
+              serviceLaneBlocks: ['police'],
+              wantedPressureBonus: 1,
+            },
+            actors: [missionTargetSquadActor('pier-9-manifest-crew', { x: 2368, y: 1088 }, 4, 24)],
+            nextWhen: { kind: 'storyObjective', objectiveIndex: 2 },
+          },
+          {
+            id: 'wreck-hold',
+            title: 'Hold the block and clear out',
+            districtState: {
+              label: 'The crash lane is pinched shut while reinforcements pile in',
+              summary:
+                'The manifest is yours, but the roadblock only sticks if you hold the avenue a few beats longer before peeling away.',
+              suppressNpcDriving: true,
+              trafficSpeedMultiplier: 0.58,
+              serviceLaneBlocks: ['police', 'ambulance'],
+            },
+            actors: [],
+          },
+        ],
       },
     },
     {
@@ -163,11 +331,10 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
               serviceLaneBlocks: ['ambulance'],
             },
             actors: [
-              {
-                kind: 'vehicleRoute',
-                actorId: 'false-ambulance-van',
-                vehicleKind: 'ambulance',
-                route: [
+              vehicleRouteActor(
+                'false-ambulance-van',
+                'ambulance',
+                [
                   { x: 2560, y: 1472 },
                   { x: 2784, y: 1472 },
                   { x: 3008, y: 1472 },
@@ -176,13 +343,51 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
                   { x: 3568, y: 1120 },
                   { x: 3648, y: 1024 },
                 ],
-                speed: 120,
-                followRadius: 320,
-                captureRadius: 140,
-                captureMaxSpeed: 65,
-                tailDrainPerSecond: 2,
-                loseGraceSeconds: 2.5,
-              },
+                120,
+                {
+                  followRadius: 320,
+                  captureRadius: 140,
+                  captureMaxSpeed: 65,
+                  tailDrainPerSecond: 2,
+                  loseGraceSeconds: 2.5,
+                },
+              ),
+            ],
+            nextWhen: { kind: 'captureSeconds', seconds: 1 },
+          },
+          {
+            id: 'false-ambulance-boxed-in',
+            title: 'Hold the stop long enough to pull the witness clear',
+            primaryActorId: 'false-ambulance-van',
+            districtState: {
+              label: 'The witness lane is shut but the crew is still fighting to break it open',
+              summary:
+                'Keep the fake ambulance pinned for a few more seconds so the witness can be dragged out before the chop garage crew regains momentum.',
+              serviceLaneBlocks: ['ambulance', 'police'],
+              suppressNpcDriving: true,
+            },
+            actors: [
+              vehicleRouteActor(
+                'false-ambulance-van',
+                'ambulance',
+                [
+                  { x: 2560, y: 1472 },
+                  { x: 2784, y: 1472 },
+                  { x: 3008, y: 1472 },
+                  { x: 3248, y: 1352 },
+                  { x: 3456, y: 1216 },
+                  { x: 3568, y: 1120 },
+                  { x: 3648, y: 1024 },
+                ],
+                120,
+                {
+                  followRadius: 320,
+                  captureRadius: 140,
+                  captureMaxSpeed: 65,
+                  tailDrainPerSecond: 2,
+                  loseGraceSeconds: 2.5,
+                },
+              ),
             ],
           },
         ],
@@ -222,6 +427,53 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
           },
         ],
         reward: 5500,
+      },
+      prototypeScript: {
+        primaryActorId: 'pier-9-office',
+        actors: [],
+        stages: [
+          {
+            id: 'pier-9-breach',
+            title: 'Punch into the office',
+            districtState: {
+              label: 'Pier 9 is still trying to burn the office ledgers',
+              summary:
+                'Reach the office before the cleaners fully reset the evidence room and dump the last trace tying Nia to the pier.',
+              trafficSpeedMultiplier: 0.78,
+              serviceLaneBlocks: ['police'],
+            },
+            actors: [],
+            nextWhen: { kind: 'storyObjective', objectiveIndex: 1 },
+          },
+          {
+            id: 'pier-9-clear',
+            title: 'Clear the office cleaners',
+            primaryActorId: 'pier-9-cleaners',
+            districtState: {
+              label: 'The evidence room is live and the cleaners are holding the badge',
+              summary:
+                'The last marked crew is dug in around Nia’s dispatch badge while the pier tries to choke the office exits.',
+              suppressNpcDriving: true,
+              wantedPressureBonus: 1,
+              serviceLaneBlocks: ['police', 'ambulance'],
+            },
+            actors: [missionTargetSquadActor('pier-9-cleaners', { x: 3520, y: 704 }, 6, 22)],
+            nextWhen: { kind: 'storyObjective', objectiveIndex: 2 },
+          },
+          {
+            id: 'pier-9-counterpush',
+            title: 'Survive the counterpush',
+            districtState: {
+              label: 'Pier 9 is locking the avenues while the counterpush closes in',
+              summary:
+                'The badge is secure, but the exit stays pinched until the first wave of reinforcements burns itself out.',
+              suppressNpcDriving: true,
+              trafficSpeedMultiplier: 0.52,
+              serviceLaneBlocks: ['police', 'ambulance', 'tow'],
+            },
+            actors: [],
+          },
+        ],
       },
     },
   ],
@@ -768,29 +1020,16 @@ export const STATIC_ON_THE_HOSPITAL_BAND: StoryChapter = {
         ],
         reward: 3600,
       },
-      prototypeScript: {
-        primaryActorId: 'clean-sheets-tunnel',
-        actors: [],
-        stages: [
-          {
-            id: 'clean-sheets-tunnel',
-            title: 'Keep the tunnel quiet',
-            districtState: {
-              label: 'The loading tunnel is still running below full alarm',
-              summary:
-                'If the security sweep gets a hard read on you, the archive room burns before you can pull the records.',
-            },
-            actors: [],
-            failRules: [
-              wantedPressureFailRule(
-                2,
-                'The archive room was torched once the tunnel alarm went loud.',
-                1.5,
-              ),
-            ],
-          },
-        ],
-      },
+      prototypeScript: createWantedPressureMissionScript({
+        id: 'clean-sheets-tunnel',
+        title: 'Keep the tunnel quiet',
+        label: 'The loading tunnel is still running below full alarm',
+        summary:
+          'If the security sweep gets a hard read on you, the archive room burns before you can pull the records.',
+        minStars: 2,
+        failureText: 'The archive room was torched once the tunnel alarm went loud.',
+        maxSeconds: 1.5,
+      }),
     },
     {
       id: 'crash-cart',
@@ -958,25 +1197,15 @@ export const METER_RUNNING: StoryChapter = {
         ],
         reward: 3000,
       },
-      prototypeScript: {
-        primaryActorId: 'ghost-fare-route',
-        actors: [],
-        stages: [
-          {
-            id: 'ghost-fare-route',
-            title: 'Keep the route quiet',
-            districtState: {
-              label: 'The ghost fare is still checking how cleanly you move',
-              summary:
-                'Push the route into a full police read and the next drop disappears before you reach it.',
-            },
-            actors: [],
-            failRules: [
-              wantedPressureFailRule(2, 'The ghost fare vanished once the route got too loud.'),
-            ],
-          },
-        ],
-      },
+      prototypeScript: createWantedPressureMissionScript({
+        id: 'ghost-fare-route',
+        title: 'Keep the route quiet',
+        label: 'The ghost fare is still checking how cleanly you move',
+        summary:
+          'Push the route into a full police read and the next drop disappears before you reach it.',
+        minStars: 2,
+        failureText: 'The ghost fare vanished once the route got too loud.',
+      }),
     },
     {
       id: 'double-booking',
@@ -1358,30 +1587,17 @@ export const METER_RUNNING: StoryChapter = {
             ],
             reward: 3900,
           },
-          prototypeScript: {
-            primaryActorId: 'meter-burn-route',
-            actors: [],
-            stages: [
-              {
-                id: 'meter-burn-route',
-                title: 'Keep the meter cold',
-                districtState: {
-                  label: 'Club-strip readers are squeezing the uptown fare lane',
-                  summary:
-                    'The club lead still gives you cover, but the checkpoint sweep is crawling uphill behind the taxi route.',
-                  trafficSpeedMultiplier: 0.65,
-                  wantedPressureBonus: 1,
-                },
-                actors: [],
-                failRules: [
-                  wantedPressureFailRule(
-                    2,
-                    'The uptown fare was burned once the checkpoint strip got a full read.',
-                  ),
-                ],
-              },
-            ],
-          },
+          prototypeScript: createWantedPressureMissionScript({
+            id: 'meter-burn-route',
+            title: 'Keep the meter cold',
+            label: 'Club-strip readers are squeezing the uptown fare lane',
+            summary:
+              'The club lead still gives you cover, but the checkpoint sweep is crawling uphill behind the taxi route.',
+            minStars: 2,
+            failureText: 'The uptown fare was burned once the checkpoint strip got a full read.',
+            trafficSpeedMultiplier: 0.65,
+            wantedPressureBonus: 1,
+          }),
         },
         {
           branchId: 'double-booking',
@@ -1410,56 +1626,30 @@ export const METER_RUNNING: StoryChapter = {
             ],
             reward: 3900,
           },
-          prototypeScript: {
-            primaryActorId: 'meter-burn-route',
-            actors: [],
-            stages: [
-              {
-                id: 'meter-burn-route',
-                title: 'Keep the meter cold',
-                districtState: {
-                  label: 'River-wall readers are sweeping the darker fare lane',
-                  summary:
-                    'The river lead leaves fewer witnesses, but the open wall road gives the checkpoint sweep a cleaner line of sight.',
-                  trafficSpeedMultiplier: 0.7,
-                  wantedPressureBonus: 1,
-                },
-                actors: [],
-                failRules: [
-                  wantedPressureFailRule(
-                    2,
-                    'The river fare was burned once the checkpoint strip got a full read.',
-                  ),
-                ],
-              },
-            ],
-          },
-        },
-      ],
-      prototypeScript: {
-        primaryActorId: 'meter-burn-route',
-        actors: [],
-        stages: [
-          {
+          prototypeScript: createWantedPressureMissionScript({
             id: 'meter-burn-route',
             title: 'Keep the meter cold',
-            districtState: {
-              label: 'Checkpoint readers are squeezing the taxi lane',
-              summary:
-                'The fare still passes for ordinary traffic, but only while the sweep never locks a full read on you.',
-              trafficSpeedMultiplier: 0.65,
-              wantedPressureBonus: 1,
-            },
-            actors: [],
-            failRules: [
-              wantedPressureFailRule(
-                2,
-                'The contraband fare was burned once the checkpoint strip got a full read.',
-              ),
-            ],
-          },
-        ],
-      },
+            label: 'River-wall readers are sweeping the darker fare lane',
+            summary:
+              'The river lead leaves fewer witnesses, but the open wall road gives the checkpoint sweep a cleaner line of sight.',
+            minStars: 2,
+            failureText: 'The river fare was burned once the checkpoint strip got a full read.',
+            trafficSpeedMultiplier: 0.7,
+            wantedPressureBonus: 1,
+          }),
+        },
+      ],
+      prototypeScript: createWantedPressureMissionScript({
+        id: 'meter-burn-route',
+        title: 'Keep the meter cold',
+        label: 'Checkpoint readers are squeezing the taxi lane',
+        summary:
+          'The fare still passes for ordinary traffic, but only while the sweep never locks a full read on you.',
+        minStars: 2,
+        failureText: 'The contraband fare was burned once the checkpoint strip got a full read.',
+        trafficSpeedMultiplier: 0.65,
+        wantedPressureBonus: 1,
+      }),
     },
     {
       id: 'farewell-signal',

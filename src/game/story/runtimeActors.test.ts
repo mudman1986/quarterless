@@ -268,8 +268,12 @@ describe('stage transitions', () => {
       failCounters: {},
     };
     expect(
-      isStageTransitionMet({ kind: 'routeComplete', actorId: 'van' }, progress, {
-        van: normalizeRouteCompletion(2, 3),
+      isStageTransitionMet({
+        kind: 'routeComplete',
+        actorId: 'van',
+      }, {
+        progress,
+        routeIndices: { van: normalizeRouteCompletion(2, 3) },
       }),
     ).toBe(true);
   });
@@ -281,7 +285,32 @@ describe('stage transitions', () => {
       tailLostSeconds: 0,
       failCounters: {},
     };
-    expect(isStageTransitionMet({ kind: 'tailSeconds', seconds: 10 }, progress, {})).toBe(true);
-    expect(isStageTransitionMet({ kind: 'captureSeconds', seconds: 4 }, progress, {})).toBe(false);
+    expect(
+      isStageTransitionMet({ kind: 'tailSeconds', seconds: 10 }, { progress, routeIndices: {} }),
+    ).toBe(true);
+    expect(
+      isStageTransitionMet({ kind: 'captureSeconds', seconds: 4 }, { progress, routeIndices: {} }),
+    ).toBe(false);
+  });
+
+  it('supports story-objective and route-progress thresholds', () => {
+    const progress: StoryProgressState = {
+      tailSeconds: 0,
+      captureSeconds: 0,
+      tailLostSeconds: 0,
+      failCounters: {},
+    };
+    expect(
+      isStageTransitionMet(
+        { kind: 'storyObjective', objectiveIndex: 1 },
+        { progress, routeIndices: {}, storyObjectiveIndex: 1 },
+      ),
+    ).toBe(true);
+    expect(
+      isStageTransitionMet(
+        { kind: 'routeProgress', count: 2 },
+        { progress, routeIndices: {}, routeProgress: 1 },
+      ),
+    ).toBe(false);
   });
 });

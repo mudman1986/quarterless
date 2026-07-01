@@ -104,6 +104,14 @@ export type StoryActorScript =
   | PedestrianRouteActorScript
   | PedestrianSquadActorScript;
 
+export interface VehicleRouteActorOptions {
+  followRadius?: number;
+  captureRadius?: number;
+  captureMaxSpeed?: number;
+  tailDrainPerSecond?: number;
+  loseGraceSeconds?: number;
+}
+
 /** A road lane reserved by a scripted district state: NPC traffic near any of
  * `points` (within `radius`) yields almost to a stop, keeping the lane clear
  * for an escort or getaway route. */
@@ -177,10 +185,22 @@ export interface CaptureSecondsStageTransition {
   seconds: number;
 }
 
+export interface StoryObjectiveStageTransition {
+  kind: 'storyObjective';
+  objectiveIndex: number;
+}
+
+export interface RouteProgressStageTransition {
+  kind: 'routeProgress';
+  count: number;
+}
+
 export type StoryStageTransition =
   | RouteCompleteStageTransition
   | TailSecondsStageTransition
-  | CaptureSecondsStageTransition;
+  | CaptureSecondsStageTransition
+  | StoryObjectiveStageTransition
+  | RouteProgressStageTransition;
 
 export interface StoryRuntimeStage {
   id: string;
@@ -212,6 +232,45 @@ export function escortRouteActor(
   escortRadius = 180,
 ): PedestrianRouteActorScript {
   return { kind: 'pedestrianRoute', actorId, route, speed, escortRadius };
+}
+
+export function vehicleRouteActor(
+  actorId: string,
+  vehicleKind: VehicleKind,
+  route: readonly Vec2[],
+  speed: number,
+  options: VehicleRouteActorOptions = {},
+): VehicleRouteActorScript {
+  return {
+    kind: 'vehicleRoute',
+    actorId,
+    vehicleKind,
+    route,
+    speed,
+    followRadius: options.followRadius ?? 320,
+    captureRadius: options.captureRadius,
+    captureMaxSpeed: options.captureMaxSpeed,
+    tailDrainPerSecond: options.tailDrainPerSecond,
+    loseGraceSeconds: options.loseGraceSeconds,
+  };
+}
+
+export function missionTargetSquadActor(
+  actorId: string,
+  center: Vec2,
+  count: number,
+  spread: number,
+  uniform?: Pedestrian['uniform'],
+): PedestrianSquadActorScript {
+  return {
+    kind: 'pedestrianSquad',
+    actorId,
+    center,
+    count,
+    spread,
+    uniform,
+    missionTargets: true,
+  };
 }
 
 export function escortRadiusFailRule(
@@ -259,6 +318,74 @@ export function wantedPressureFailRule(
   maxSeconds = 2,
 ): WantedPressureFailRule {
   return { kind: 'wantedPressure', minStars, maxSeconds, failureText };
+}
+
+export interface WantedPressureStageOptions {
+  id: string;
+  title: string;
+  label: string;
+  summary: string;
+  minStars: number;
+  failureText: string;
+  maxSeconds?: number;
+  serviceLaneBlocks?: readonly ServiceObjectiveKind[];
+  trafficSpeedMultiplier?: number;
+  suppressNpcDriving?: boolean;
+  wantedPressureBonus?: number;
+  blackoutIntersections?: boolean;
+  reservedRoutes?: readonly StoryReservedRouteScript[];
+}
+
+export function createWantedPressureStage(
+  options: WantedPressureStageOptions,
+): StoryRuntimeStage {
+  const {
+    id,
+    title,
+    label,
+    summary,
+    minStars,
+    failureText,
+    maxSeconds,
+    serviceLaneBlocks,
+    trafficSpeedMultiplier,
+    suppressNpcDriving,
+    wantedPressureBonus,
+    blackoutIntersections,
+    reservedRoutes,
+  } = options;
+  return {
+    id,
+    title,
+    primaryActorId: id,
+    actors: [],
+    districtState: {
+      label,
+      summary,
+      serviceLaneBlocks,
+      trafficSpeedMultiplier,
+      suppressNpcDriving,
+      wantedPressureBonus,
+      blackoutIntersections,
+      reservedRoutes,
+    },
+    failRules: [wantedPressureFailRule(minStars, failureText, maxSeconds)],
+  };
+}
+
+export interface WantedPressureMissionScriptOptions extends WantedPressureStageOptions {
+  primaryActorId?: string;
+}
+
+export function createWantedPressureMissionScript(
+  options: WantedPressureMissionScriptOptions,
+): StoryRuntimeScript {
+  const stage = createWantedPressureStage(options);
+  return {
+    primaryActorId: options.primaryActorId ?? stage.primaryActorId ?? stage.id,
+    actors: [],
+    stages: [stage],
+  };
 }
 
 /**
@@ -571,6 +698,7 @@ interface ResolvedStoryStage {
   actorIds: Set<string>;
   primaryActorId: string;
   failRules: readonly StoryFailRule[];
+  nextWhen?: StoryStageTransition;
 }
 
 /** Mirrors CityScene's stage resolution: a script with no authored `stages` runs as one
@@ -584,6 +712,7 @@ function resolvedStoryStages(script: StoryRuntimeScript): ResolvedStoryStage[] {
       actorIds: new Set(stage.actors.map((actor) => actor.actorId)),
       primaryActorId: stage.primaryActorId ?? script.primaryActorId,
       failRules: stage.failRules ?? script.failRules ?? [],
+      nextWhen: stage.nextWhen,
     }));
   }
   return [
@@ -592,6 +721,7 @@ function resolvedStoryStages(script: StoryRuntimeScript): ResolvedStoryStage[] {
       actorIds: new Set(script.actors.map((actor) => actor.actorId)),
       primaryActorId: script.primaryActorId,
       failRules: script.failRules ?? [],
+      nextWhen: undefined,
     },
   ];
 }
@@ -601,7 +731,59 @@ function failRuleActorId(rule: StoryFailRule): string | null {
   return rule.kind === 'wantedPressure' ? null : rule.actorId;
 }
 
+function validateStoryStageTransition(
+  mission: Pick<StoryMissionPlan, 'prototypeRuntime'>,
+  stage: ResolvedStoryStage,
+  stagePath: string,
+  issues: StoryValidationIssue[],
+): void {
+  const transition = stage.nextWhen;
+  if (!transition) return;
+  if (transition.kind === 'routeComplete' && !stage.actorIds.has(transition.actorId)) {
+    issues.push({
+      path: stagePath,
+      message: `Stage transition "${transition.kind}" references unknown actor id "${transition.actorId}"`,
+    });
+    return;
+  }
+  if (transition.kind === 'storyObjective') {
+    const objectiveCount = mission.prototypeRuntime?.objectives.length ?? 0;
+    if (!Number.isInteger(transition.objectiveIndex) || transition.objectiveIndex < 0) {
+      issues.push({
+        path: stagePath,
+        message: `Stage transition "storyObjective" must use a non-negative integer objectiveIndex`,
+      });
+    } else if (objectiveCount === 0 || transition.objectiveIndex >= objectiveCount) {
+      issues.push({
+        path: stagePath,
+        message: `Stage transition "storyObjective" references objective index ${transition.objectiveIndex}, but only ${objectiveCount} authored objectives exist`,
+      });
+    }
+    return;
+  }
+  if (transition.kind === 'routeProgress') {
+    const maxOrderedTargetCount = Math.max(
+      0,
+      ...(mission.prototypeRuntime?.objectives
+        .filter((objective) => objective.kind === 'route' || objective.kind === 'sabotage')
+        .map((objective) => objective.targets.length) ?? []),
+    );
+    if (!Number.isInteger(transition.count) || transition.count < 1) {
+      issues.push({
+        path: stagePath,
+        message: `Stage transition "routeProgress" must use a positive integer count`,
+      });
+    } else if (maxOrderedTargetCount < transition.count) {
+      issues.push({
+        path: stagePath,
+        message: `Stage transition "routeProgress" requires ${transition.count} ordered targets, but the mission only defines ${maxOrderedTargetCount}`,
+      });
+    }
+  }
+}
+
 function validateStoryRuntimeScript(
+  mission: Pick<StoryMissionPlan, 'prototypeRuntime'>,
   script: StoryRuntimeScript,
   path: string,
   issues: StoryValidationIssue[],
@@ -625,6 +807,7 @@ function validateStoryRuntimeScript(
         });
       }
     }
+    validateStoryStageTransition(mission, stage, stagePath, issues);
   }
 }
 
@@ -723,7 +906,7 @@ export function validateStoryMode(story: StoryMode): StoryValidationIssue[] {
           });
         }
         if (mission.prototypeScript) {
-          validateStoryRuntimeScript(mission.prototypeScript, `${missionPath}.prototypeScript`, issues);
+          validateStoryRuntimeScript(mission, mission.prototypeScript, `${missionPath}.prototypeScript`, issues);
         }
         for (const [variantIndex, variant] of (mission.variants ?? []).entries()) {
           const variantPath = `${missionPath}.variants[${variantIndex}]`;
@@ -735,6 +918,7 @@ export function validateStoryMode(story: StoryMode): StoryValidationIssue[] {
           }
           if (variant.prototypeScript) {
             validateStoryRuntimeScript(
+              { prototypeRuntime: variant.prototypeRuntime ?? mission.prototypeRuntime },
               variant.prototypeScript,
               `${variantPath}.prototypeScript`,
               issues,

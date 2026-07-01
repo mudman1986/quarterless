@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { launchSindicate } from './helpers';
 import { STORY_MODE_PROTOTYPE } from '../src/game/story/deadDropDistrict';
+import { storyMissionInitialObjectiveIndex } from '../src/game/story/storyMode';
 
 const authoredMissions = STORY_MODE_PROTOTYPE.acts.flatMap((act) =>
   act.chapters.flatMap((chapter) =>
@@ -73,6 +74,36 @@ async function acknowledgeStoryPanel(page: import('@playwright/test').Page): Pro
   });
 }
 
+async function forceStoryMissionRuntimeState(
+  page: import('@playwright/test').Page,
+  update: { missionId: string; currentIndex?: number; routeCompleted?: number },
+): Promise<void> {
+  await page.evaluate(({ missionId, currentIndex, routeCompleted }) => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: {
+        mission?: {
+          id: string;
+          currentIndex: number;
+          objectiveState?: { kind: 'route'; completed: number } | null;
+          status: string;
+        } | null;
+      };
+      syncStoryScript?: (dt?: number) => void;
+    };
+    if (!scene?.world?.mission || scene.world.mission.id !== missionId) {
+      throw new Error(`Mission ${missionId} is not active`);
+    }
+    if (currentIndex !== undefined) {
+      scene.world.mission.currentIndex = currentIndex;
+    }
+    if (routeCompleted !== undefined) {
+      scene.world.mission.objectiveState = { kind: 'route', completed: routeCompleted };
+    }
+    scene.syncStoryScript?.(0);
+  }, update);
+}
+
 test.afterEach(async ({ page }) => {
   await page.evaluate(() => {
     localStorage.removeItem('sindicate.gameState');
@@ -85,7 +116,7 @@ test('every authored runtime mission boots into the expected mission shell', asy
   await launchSindicate(page);
 
   for (const entry of authoredMissions) {
-    const objectiveIndex = entry.mission.prototypeScript ? 0 : entry.mission.prototypeRuntime?.objectives[0]?.kind === 'reach' || entry.mission.prototypeRuntime?.objectives[0]?.kind === 'route' ? -1 : 0;
+    const objectiveIndex = storyMissionInitialObjectiveIndex(entry.mission);
     await restartIntoStoryMission(page, {
       actId: entry.actId,
       chapterId: entry.chapter.id,
@@ -172,4 +203,54 @@ test('scripted route vehicles advance instead of snapping back to their spawn po
 
     expect(await moved.jsonValue()).not.toBeNull();
   }
+});
+
+test('dead drop district missions expose scripted stage shifts for route and objective progress', async ({
+  page,
+}) => {
+  await launchSindicate(page);
+
+  await restartIntoStoryMission(page, {
+    actId: 'find-the-missing-dispatcher',
+    chapterId: 'dead-drop-district',
+    missionId: 'burned-locker',
+    objectiveIndex: 0,
+  });
+  await acknowledgeStoryPanel(page);
+  await forceStoryMissionRuntimeState(page, { missionId: 'burned-locker', routeCompleted: 1 });
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      storyPanel?: { visible: boolean; text: string };
+      storyStateText?: { text: string };
+    };
+    return (
+      !!scene?.storyPanel?.visible &&
+      scene.storyPanel.text.includes('STAGE SHIFT') &&
+      scene.storyPanel.text.includes('Beat the middle sweep') &&
+      scene.storyStateText?.text.includes('The middle lockers are pulling the response inward')
+    );
+  });
+
+  await restartIntoStoryMission(page, {
+    actId: 'find-the-missing-dispatcher',
+    chapterId: 'dead-drop-district',
+    missionId: 'last-call-at-pier-9',
+    objectiveIndex: 0,
+  });
+  await acknowledgeStoryPanel(page);
+  await forceStoryMissionRuntimeState(page, { missionId: 'last-call-at-pier-9', currentIndex: 2 });
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      storyPanel?: { visible: boolean; text: string };
+      storyStateText?: { text: string };
+    };
+    return (
+      !!scene?.storyPanel?.visible &&
+      scene.storyPanel.text.includes('STAGE SHIFT') &&
+      scene.storyPanel.text.includes('Clear the office cleaners') &&
+      scene.storyStateText?.text.includes('The evidence room is live and the cleaners are holding the badge')
+    );
+  });
 });
