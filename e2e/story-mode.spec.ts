@@ -127,6 +127,72 @@ async function acknowledgeStoryPanel(page: import('@playwright/test').Page): Pro
   });
 }
 
+interface StoryRestartMetric {
+  durationMs: number;
+  pointerdownListeners: number;
+  sameMinimapTexture: boolean;
+}
+
+async function measureStoryRestartStability(
+  page: import('@playwright/test').Page,
+  storyProgress: unknown,
+  repeats = 6,
+): Promise<StoryRestartMetric[]> {
+  return page.evaluate(
+    async ({ progress, repeats: count }) => {
+      const phaser = (
+        window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }
+      ).__game;
+      if (!phaser) throw new Error('Missing running game');
+
+      const waitForReady = (): Promise<{
+        hud: { text: string };
+        input: { listenerCount(event: string): number };
+        scene: { restart(data: unknown): void };
+        textures: { get(key: string): unknown };
+      }> =>
+        new Promise((resolve, reject) => {
+          const startedAt = performance.now();
+          const poll = (): void => {
+            const scene = phaser.scene.getScene('City') as {
+              hud?: { text: string };
+              input?: { listenerCount(event: string): number };
+              scene?: { restart(data: unknown): void };
+              textures?: { get(key: string): unknown };
+            };
+            if (scene?.hud && scene.input && scene.scene && scene.textures) {
+              resolve(scene as never);
+              return;
+            }
+            if (performance.now() - startedAt > 10_000) {
+              reject(new Error('Timed out waiting for restarted City scene'));
+              return;
+            }
+            window.requestAnimationFrame(poll);
+          };
+          poll();
+        });
+
+      const initialScene = await waitForReady();
+      const initialMinimapTexture = initialScene.textures.get('minimap-bg');
+      const metrics: StoryRestartMetric[] = [];
+      for (let index = 0; index < count; index += 1) {
+        const currentScene = await waitForReady();
+        const startedAt = performance.now();
+        currentScene.scene.restart({ skipResume: true, mode: 'story', storyProgress: progress });
+        const restartedScene = await waitForReady();
+        metrics.push({
+          durationMs: performance.now() - startedAt,
+          pointerdownListeners: restartedScene.input.listenerCount('pointerdown'),
+          sameMinimapTexture: restartedScene.textures.get('minimap-bg') === initialMinimapTexture,
+        });
+      }
+      return metrics;
+    },
+    { progress: storyProgress, repeats },
+  );
+}
+
 async function launchStoryModeWithOptions(
   page: import('@playwright/test').Page,
   options: { acknowledgeBrief: boolean },
@@ -379,6 +445,32 @@ test('story mission briefing stays visible until Enter acknowledges it', async (
     };
     return scene?.paused === false && !scene?.storyPanel?.visible;
   });
+});
+
+test('story HUD stays compact while transient mission overlays stay hidden', async ({ page }) => {
+  await launchStoryMode(page);
+
+  const ui = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      hud?: { text: string };
+      banner?: { visible: boolean };
+      storyStateText?: { visible: boolean };
+    };
+    return {
+      hud: scene?.hud?.text ?? '',
+      bannerVisible: !!scene?.banner?.visible,
+      storyStateVisible: !!scene?.storyStateText?.visible,
+    };
+  });
+
+  expect(ui.hud).toContain('WANTED');
+  expect(ui.hud).toContain('Pistol');
+  expect(ui.hud).not.toContain('Night Ferry Run');
+  expect(ui.hud).not.toContain('Go to the mission marker');
+  expect(ui.bannerVisible).toBe(false);
+  expect(ui.storyStateVisible).toBe(false);
 });
 
 test('location-based story missions keep their start and route targets on the minimap', async ({
@@ -708,7 +800,7 @@ test('meter-running grouped leads record a branch outcome when the chosen lead s
   });
 });
 
-test('the empty shell uses staged scripted district-state beats after mission start', async ({
+test('the empty shell keeps its staged district-state beat without showing an on-screen label', async ({
   page,
 }) => {
   await launchStoryMode(page);
@@ -739,12 +831,20 @@ test('the empty shell uses staged scripted district-state beats after mission st
     const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
       .__game;
     const scene = game?.scene.getScene('City') as {
-      storyStateText?: { visible: boolean; text: string };
+      storyScript?: { stageLabel: string } | null;
+      storyStateText?: { visible: boolean };
     };
-    return scene?.storyStateText?.visible ? scene.storyStateText.text : null;
+    if (!scene?.storyScript?.stageLabel) return null;
+    return {
+      stageLabel: scene.storyScript.stageLabel,
+      visible: !!scene.storyStateText?.visible,
+    };
   });
 
-  expect(await stateLabel.jsonValue()).toContain('Decoy wrecks are dragging the chase east');
+  expect(await stateLabel.jsonValue()).toEqual({
+    stageLabel: 'Decoy wrecks are dragging the chase east',
+    visible: false,
+  });
 });
 
 test('the empty shell fails when the cargo sedan is too damaged', async ({ page }) => {
@@ -822,7 +922,7 @@ test('the empty shell fails when the cargo sedan is too damaged', async ({ page 
   });
 });
 
-test('scripted district-state missions announce stage shifts and update the active district label', async ({
+test('scripted district-state missions still announce stage shifts without showing the active district label', async ({
   page,
 }) => {
   await launchStoryMode(page);
@@ -875,7 +975,7 @@ test('scripted district-state missions announce stage shifts and update the acti
         }>;
       };
       storyPanel?: { visible: boolean; text: string };
-      storyStateText?: { text: string };
+      storyStateText?: { visible: boolean };
       syncStoryScript?: (dt?: number) => void;
     };
     const storyScript = scene?.storyScript;
@@ -895,7 +995,8 @@ test('scripted district-state missions announce stage shifts and update the acti
     return {
       visible: !!scene.storyPanel?.visible,
       panel: scene.storyPanel?.text ?? '',
-      state: scene.storyStateText?.text ?? '',
+      stateVisible: !!scene.storyStateText?.visible,
+      stageLabel: storyScript.stageLabel,
       decoyDespawned: storyScript.actorCarIndices['empty-shell-decoy'] === undefined,
       decoyCarPos: scene.world.cars[decoyCarIndex]?.pos ?? null,
     };
@@ -905,7 +1006,8 @@ test('scripted district-state missions announce stage shifts and update the acti
   expect(shift.panel).toContain('STAGE SHIFT');
   expect(shift.panel).toContain('Confirm the receiving yard');
   expect(shift.panel).toContain('Hold the tail until the receiving yard is unmistakable.');
-  expect(shift.state).toContain('The real shell is slipping through the salvage gate');
+  expect(shift.stageLabel).toContain('The real shell is slipping through the salvage gate');
+  expect(shift.stateVisible).toBe(false);
   expect(shift.decoyDespawned).toBe(true);
   expect(shift.decoyCarPos).toEqual({ x: -100000, y: -100000 });
 });
@@ -1037,20 +1139,20 @@ test('story mode resolves branch-dependent mission variants from saved outcomes'
         mission?: { id: string; title: string } | null;
         missionObjective?: { description: string } | null;
       };
-      storyStateText?: { text: string };
+      storyStateText?: { visible: boolean };
     };
     if (scene?.world?.mission?.id !== 'red-light-choir') return null;
     return {
       title: scene.world.mission?.title ?? '',
       objective: scene.world.missionObjective?.description ?? '',
-      state: scene.storyStateText?.text ?? '',
+      storyStateVisible: !!scene.storyStateText?.visible,
     };
   });
 
   expect(await variant.jsonValue()).toEqual({
     title: 'Red Light Choir: Uptown Lead',
     objective: 'Tail the radio host through the uptown club strip',
-    state: 'DISTRICT STATE\nThe host is still circling the uptown clubs',
+    storyStateVisible: false,
   });
 });
 
@@ -1090,21 +1192,77 @@ test('story mode carries grouped-lead outcomes into later mission setup', async 
         mission?: { id: string; title: string } | null;
         missionObjective?: { description: string } | null;
       };
-      storyStateText?: { text: string };
+      storyStateText?: { visible: boolean };
     };
     if (scene?.world?.mission?.id !== 'meter-burn') return null;
     return {
       title: scene.world.mission?.title ?? '',
       objective: scene.world.missionObjective?.description ?? '',
-      state: scene.storyStateText?.text ?? '',
+      storyStateVisible: !!scene.storyStateText?.visible,
     };
   });
 
   expect(await variant.jsonValue()).toEqual({
     title: 'Meter Burn: River Slip',
     objective: 'Clear the river fare route through the checkpoint strip',
-    state: 'DISTRICT STATE\nRiver-wall readers are sweeping the darker fare lane',
+    storyStateVisible: false,
   });
+});
+
+test('restarting into Wreck Before Dawn keeps restart resources stable', async ({ page }) => {
+  await launchStoryMode(page);
+
+  const metrics = await measureStoryRestartStability(
+    page,
+    {
+      version: 1,
+      storyId: 'sindicate-story-mode',
+      current: {
+        actId: 'find-the-missing-dispatcher',
+        chapterId: 'dead-drop-district',
+        missionId: 'wreck-before-dawn',
+        objectiveIndex: 0,
+      },
+      unlockedChapterIds: ['dead-drop-district'],
+      completedChapterIds: [],
+      completedMissionIds: ['night-ferry-run', 'burned-locker'],
+      branchOutcomes: {},
+    },
+    8,
+  );
+
+  expect(metrics.every((metric) => metric.pointerdownListeners === 1)).toBe(true);
+  expect(metrics.every((metric) => metric.sameMinimapTexture)).toBe(true);
+});
+
+test('story restart times stay stable across repeated story loads', async ({ page }) => {
+  await launchStoryMode(page);
+
+  const metrics = await measureStoryRestartStability(
+    page,
+    {
+      version: 1,
+      storyId: 'sindicate-story-mode',
+      current: {
+        actId: 'find-the-missing-dispatcher',
+        chapterId: 'dead-drop-district',
+        missionId: 'night-ferry-run',
+        objectiveIndex: 0,
+      },
+      unlockedChapterIds: ['dead-drop-district'],
+      completedChapterIds: [],
+      completedMissionIds: [],
+      branchOutcomes: {},
+    },
+    8,
+  );
+
+  const baseline = metrics[0]?.durationMs ?? 0;
+  const ceiling = Math.max(350, baseline * 2.5);
+  for (const metric of metrics) {
+    expect(metric.pointerdownListeners).toBe(1);
+    expect(metric.durationMs).toBeLessThan(ceiling);
+  }
 });
 
 test('story mode carries grouped-lead outcomes into later-act mission variants', async ({
@@ -1273,7 +1431,7 @@ test('story mode resolves branch-dependent mission variants from a live recorded
       };
       storyProgress?: { branchOutcomes: Record<string, string> } | null;
       storyPanel?: { text: string };
-      storyStateText?: { text: string };
+      storyStateText?: { visible: boolean };
     };
     if (scene?.world?.mission?.id !== 'red-light-choir') return null;
     const saved = localStorage.getItem('sindicate.storyProgress');
@@ -1281,7 +1439,7 @@ test('story mode resolves branch-dependent mission variants from a live recorded
     return {
       title: scene.world.mission?.title ?? '',
       objective: scene.world.missionObjective?.description ?? '',
-      state: scene.storyStateText?.text ?? '',
+      storyStateVisible: !!scene.storyStateText?.visible,
       panel: scene.storyPanel?.text ?? '',
       branch: scene.storyProgress?.branchOutcomes['double-booking'] ?? '',
       savedBranch: parsed?.branchOutcomes?.['double-booking'] ?? '',
@@ -1291,7 +1449,7 @@ test('story mode resolves branch-dependent mission variants from a live recorded
   const branchValue = (await variant.jsonValue()) as {
     title: string;
     objective: string;
-    state: string;
+    storyStateVisible: boolean;
     panel: string;
     branch: string;
     savedBranch: string;
@@ -1300,7 +1458,7 @@ test('story mode resolves branch-dependent mission variants from a live recorded
   expect(branchValue).toMatchObject({
     title: 'Red Light Choir: River Lead',
     objective: 'Tail the radio host through the riverfront lanes',
-    state: 'DISTRICT STATE\nThe host is sweeping the riverfront lanes',
+    storyStateVisible: false,
     branch: 'save-passenger-b',
     savedBranch: 'save-passenger-b',
   });

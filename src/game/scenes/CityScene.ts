@@ -183,8 +183,7 @@ const MAX_ZOOM = 2.5;
 const CAMERA_EDGE_GUTTER = 12;
 /** On-screen size of the square minimap. */
 const MINIMAP_SIZE = 168;
-/** Seconds a mission announcement banner stays on screen. */
-const ANNOUNCE_SECONDS = 3.2;
+const MINIMAP_BG_TEXTURE_KEY = 'minimap-bg';
 
 function enteredCarLabel(kind: VehicleKind): string {
   if (kind === 'ambulance') return 'AMBULANCE';
@@ -588,7 +587,7 @@ export class CityScene extends Phaser.Scene {
     }
     // Browsers block audio until a user gesture: unlock on the first key press.
     this.input.keyboard?.once('keydown', () => this.sfx.resume());
-    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+    const handlePointerDown = (pointer: Phaser.Input.Pointer): void => {
       this.sfx.resume();
       const pointerType = (pointer.event as PointerEvent | undefined)?.pointerType;
       if (pointerType === 'touch') {
@@ -596,9 +595,11 @@ export class CityScene extends Phaser.Scene {
         if (!this.touchEnabled && !this.touchOptedOut) this.setTouchEnabled(true);
         else this.refreshPauseTouchButton();
       }
-    });
+    };
+    this.input.on('pointerdown', handlePointerDown);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       kb.off('keydown-ENTER', handleStoryAcknowledge);
+      this.input.off('pointerdown', handlePointerDown);
       if (typeof window !== 'undefined') {
         window.removeEventListener('beforeunload', this.beforeUnloadHandler);
       }
@@ -2172,41 +2173,43 @@ export class CityScene extends Phaser.Scene {
   /** Build the corner minimap: a static city backdrop plus a live dot overlay. */
   private createMinimap(): void {
     const scale = MINIMAP_SIZE / this.city.width;
-    const g = this.make.graphics({ x: 0, y: 0 }, false);
-    g.fillStyle(COLORS.mmRoad, 1);
-    g.fillRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
-    g.fillStyle(COLORS.mmBuilding, 1);
-    for (const b of this.city.buildings) {
-      g.fillRect(b.x * scale, b.y * scale, Math.max(1, b.w * scale), Math.max(1, b.h * scale));
+    if (!this.textures.exists(MINIMAP_BG_TEXTURE_KEY)) {
+      const g = this.make.graphics({ x: 0, y: 0 }, false);
+      g.fillStyle(COLORS.mmRoad, 1);
+      g.fillRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
+      g.fillStyle(COLORS.mmBuilding, 1);
+      for (const b of this.city.buildings) {
+        g.fillRect(b.x * scale, b.y * scale, Math.max(1, b.w * scale), Math.max(1, b.h * scale));
+      }
+      for (const facility of this.city.facilities) {
+        g.fillStyle(
+          facility.kind === 'policeStation'
+            ? COLORS.mmPoliceBuilding
+            : facility.kind === 'hospital'
+              ? COLORS.mmHospitalBuilding
+              : facility.kind === 'towYard'
+                ? COLORS.mmTowBuilding
+                : COLORS.mmTaxiBuilding,
+          1,
+        );
+        const b = facility.building;
+        g.fillRect(b.x * scale, b.y * scale, Math.max(1, b.w * scale), Math.max(1, b.h * scale));
+      }
+      g.fillStyle(COLORS.mmWater, 1);
+      for (const water of this.city.water) {
+        g.fillRect(
+          water.x * scale,
+          water.y * scale,
+          Math.max(1, water.w * scale),
+          Math.max(1, water.h * scale),
+        );
+      }
+      g.generateTexture(MINIMAP_BG_TEXTURE_KEY, MINIMAP_SIZE, MINIMAP_SIZE);
+      g.destroy();
     }
-    for (const facility of this.city.facilities) {
-      g.fillStyle(
-        facility.kind === 'policeStation'
-          ? COLORS.mmPoliceBuilding
-          : facility.kind === 'hospital'
-            ? COLORS.mmHospitalBuilding
-            : facility.kind === 'towYard'
-              ? COLORS.mmTowBuilding
-              : COLORS.mmTaxiBuilding,
-        1,
-      );
-      const b = facility.building;
-      g.fillRect(b.x * scale, b.y * scale, Math.max(1, b.w * scale), Math.max(1, b.h * scale));
-    }
-    g.fillStyle(COLORS.mmWater, 1);
-    for (const water of this.city.water) {
-      g.fillRect(
-        water.x * scale,
-        water.y * scale,
-        Math.max(1, water.w * scale),
-        Math.max(1, water.h * scale),
-      );
-    }
-    g.generateTexture('minimap-bg', MINIMAP_SIZE, MINIMAP_SIZE);
-    g.destroy();
 
     this.minimapBg = this.add
-      .image(0, 0, 'minimap-bg')
+      .image(0, 0, MINIMAP_BG_TEXTURE_KEY)
       .setOrigin(0, 0)
       .setScrollFactor(0)
       .setDepth(1400)
@@ -2695,9 +2698,9 @@ export class CityScene extends Phaser.Scene {
   }
 
   /** Flash a banner message for a few seconds. */
-  private showBanner(text: string): void {
-    this.banner.setText(text).setVisible(true);
-    this.announceRemaining = ANNOUNCE_SECONDS;
+  private showBanner(_text: string): void {
+    this.banner.setVisible(false);
+    this.announceRemaining = 0;
   }
 
   private showStoryPanel(text: string, seconds: number): void {
@@ -2735,12 +2738,7 @@ export class CityScene extends Phaser.Scene {
   }
 
   private syncStoryStateText(): void {
-    const label = this.storyScript?.stageLabel?.trim() ?? '';
-    if (!label) {
-      this.storyStateText.setVisible(false);
-      return;
-    }
-    this.storyStateText.setText(`DISTRICT STATE\n${label}`).setVisible(true);
+    this.storyStateText.setVisible(false);
   }
 
   private showMissionBriefingPanel(): void {
@@ -3215,59 +3213,7 @@ export class CityScene extends Phaser.Scene {
     this.syncBustedText();
   }
 
-  /** A "(done/goal)" tag for the current objective, or '' for reach/none. */
-  private progressText(): string {
-    const p = this.world.missionProgress;
-    return p ? `  (${p.current}/${p.goal})` : '';
-  }
-
-  private serviceDetail(mission: {
-    kind: 'police' | 'ambulance' | 'tow';
-    stage?: 'pickup' | 'return';
-  }): string {
-    if (mission.kind === 'police') return 'Bust the suspect';
-    if (mission.kind === 'ambulance')
-      return mission.stage === 'pickup' ? 'Recover the body' : 'Return to the hospital';
-    return mission.stage === 'pickup' ? 'Recover the wreck' : 'Return to the tow yard';
-  }
-
-  private serviceUnavailableText(kind: 'police' | 'ambulance' | 'tow' | 'taxi'): string {
-    if (kind === 'police') return 'No suspect available';
-    if (kind === 'ambulance') return 'No corpses to recover';
-    if (kind === 'taxi') return 'No fares available';
-    return 'No wrecks to recover';
-  }
-
-  private missionText(): string {
-    const w = this.world;
-    if (w.missionComplete) return 'ALL MISSIONS COMPLETE';
-    if (this.selectingStoryMission()) {
-      const choices = this.storyMissionChoices();
-      if (choices.length > 0)
-        return `▶ Choose a lead: ${choices.map((mission) => mission.title).join(' / ')}`;
-    }
-    if (!w.mission || !w.missionObjective) return '';
-    const objective = w.missionObjective;
-    const detail =
-      objective.kind === 'service'
-        ? (() => {
-            if (objective.service === 'taxi' && w.taxiMission) {
-              return w.taxiMission.stage === 'pickup'
-                ? `Pick up ${w.taxiMission.passengerName}`
-                : `Drop off ${w.taxiMission.passengerName}`;
-            }
-            if (w.serviceMission?.kind === objective.service)
-              return this.serviceDetail(w.serviceMission);
-            if (w.drivingCarIndex !== null && w.carKind(w.drivingCarIndex) === objective.service) {
-              return this.serviceUnavailableText(objective.service);
-            }
-            return objective.description;
-          })()
-        : objective.description;
-    return `▶ ${w.mission.title}: ${detail}${this.progressText()}`;
-  }
-
-  /** Build the multi-line HUD: wanted, health, money, weapon, mission, controls. */
+  /** Build the multi-line HUD: wanted, health, money, weapon, and controls. */
   private hudText(): string {
     const w = this.world;
     const stars = '★'.repeat(w.wantedStars) || '—';
@@ -3275,20 +3221,6 @@ export class CityScene extends Phaser.Scene {
     const money =
       w.score.best > 0 ? `$${w.score.current}  (best $${w.score.best})` : `$${w.score.current}`;
     const speed = w.drivingCar ? Math.round(Math.abs(w.drivingCar.speed)) : 0;
-
-    const mission = this.missionText();
-    const taxi = w.taxiMission
-      ? `TAXI: ${w.taxiMission.stage === 'pickup' ? `Pick up ${w.taxiMission.passengerName}` : `Drop off ${w.taxiMission.passengerName}`}  +$${w.taxiMission.reward}`
-      : '';
-    const service = w.serviceMission
-      ? `${w.serviceMission.kind.toUpperCase()}: ${this.serviceDetail(w.serviceMission)}  +$${w.serviceMission.reward}`
-      : w.drivingCarIndex !== null && w.carKind(w.drivingCarIndex) === 'police'
-        ? `POLICE: ${this.serviceUnavailableText('police')}`
-        : w.drivingCarIndex !== null && w.carKind(w.drivingCarIndex) === 'ambulance'
-          ? `AMBULANCE: ${this.serviceUnavailableText('ambulance')}`
-          : w.drivingCarIndex !== null && w.carKind(w.drivingCarIndex) === 'tow'
-            ? `TOW: ${this.serviceUnavailableText('tow')}`
-            : '';
 
     const ammo =
       w.weapon.ammo <= 4
@@ -3303,9 +3235,7 @@ export class CityScene extends Phaser.Scene {
         ? `DRIVING ${speed}  ·  WASD steer · Space exit · F shoot · P pause`
         : 'ON FOOT  ·  WASD move · Space car · F shoot · P pause';
 
-    return [`WANTED ${stars}    HP ${hp}`, `${money}    ${ammo}`, mission, taxi, service, status]
-      .filter(Boolean)
-      .join('\n');
+    return [`WANTED ${stars}    HP ${hp}`, `${money}    ${ammo}`, status].join('\n');
   }
 
   private syncHudText(): void {

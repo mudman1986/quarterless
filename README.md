@@ -82,8 +82,8 @@ Production bundle shape is intentionally split:
 src/
   arcade/        Landing-page styles, animated previews, and shared game types
   core/          Pure Sindicate game logic, tested with Vitest
-  game/          Sindicate Phaser adapter: scene, rendering, input, audio
-  games/         Shared arcade catalog plus one folder per standalone arcade game
+  game/          Shared Sindicate Phaser internals: scene, rendering, input, audio
+  games/         Shared arcade catalog plus one folder per game, including Sindicate
   bootstrap.ts   Arcade landing entry point and lazy game launcher
 ```
 
