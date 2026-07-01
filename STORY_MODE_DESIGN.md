@@ -452,7 +452,7 @@ Execution rules:
 3. Every new base capability must land with unit or world coverage before it becomes a dependency for later story work.
 4. Vertical slices are still useful, but only after the next required lower layer is complete enough to trust.
 
-### Stage 0 - Lock The Core Contracts
+### Stage 0 - Lock The Core Contracts (complete)
 
 Goal: stabilize the data and state interfaces that every later layer depends on.
 
@@ -462,16 +462,16 @@ Why first:
 
 Required outcomes:
 
-1. StoryMode, StoryChapter, StoryMissionPlan, mission-variant, and actor-script types are explicit and intentionally versioned.
+1. StoryMode, StoryChapter, StoryMissionPlan, mission-variant, and actor-script types are explicit and intentionally versioned. — `StoryMode.schemaVersion` (`STORY_MODE_SCHEMA_VERSION`) is required and validated.
 2. Story progress, branch outcomes, mission ids, and chapter ids are stable save keys, not incidental implementation details.
-3. Validation catches malformed authored data before runtime.
-4. Save versioning and migration rules are defined before more story state is added.
+3. Validation catches malformed authored data before runtime. — `validateStoryMode` now also catches dangling actor-script references (`primaryActorId`/fail-rule actor ids, resolved per runtime stage) and mission variants pointing at branch outcomes no mission ever sets.
+4. Save versioning and migration rules are defined before more story state is added. — both `storyProgress.ts` and `gameState.ts` load through a version-walking `migrate*Data` function backed by a (currently empty) per-version migration registry, instead of discarding any non-matching version.
 
 Required tests before moving on:
 
-1. Type-level and validation coverage for authoring shapes.
-2. Story progress persistence and migration tests.
-3. Fixture-based authored-data validation for every current chapter.
+1. Type-level and validation coverage for authoring shapes. — expanded `storyMode.test.ts` fixture tests cover schema-version mismatches, dangling references, and unknown branch outcomes.
+2. Story progress persistence and migration tests. — `storyProgress.test.ts`/`gameState.test.ts` cover round-trips, malformed saves, unmigratable future versions, and multi-step migration chains.
+3. Fixture-based authored-data validation for every current chapter. — the stricter validation runs clean against all 10 authored chapters in `STORY_MODE_PROTOTYPE`.
 
 Main code areas:
 

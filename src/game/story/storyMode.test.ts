@@ -6,6 +6,7 @@ import { DEAD_DROP_DISTRICT, STORY_MODE_PROTOTYPE } from './deadDropDistrict';
 import { buildSandboxCampaigns } from './sandboxCampaigns';
 import {
   STORY_MISSION_GROUP_SELECTION_INDEX,
+  STORY_MODE_SCHEMA_VERSION,
   compileStoryMissionRuntime,
   compileStoryChapterRuntimeCampaign,
   chapterMissingSystems,
@@ -26,6 +27,7 @@ import {
   storyObjectiveIndexFromRuntime,
   validateStoryMode,
 } from './storyMode';
+import type { StoryChapter, StoryMissionPlan, StoryMode } from './storyMode';
 
 function fixedObjectiveTargets(runtime: ReturnType<typeof compileStoryMissionRuntime>) {
   return (
@@ -85,11 +87,143 @@ describe('compileCampaignTemplate', () => {
   });
 });
 
+function minimalMission(id: string): StoryMissionPlan {
+  return {
+    id,
+    title: `${id} title`,
+    hook: 'Hook',
+    primaryGoal: 'Goal',
+    secondaryPressure: 'Pressure',
+    failureState: 'Failure',
+    payoff: 'Payoff',
+  };
+}
+
+function minimalChapter(id: string, actId: string, order: number): StoryChapter {
+  return {
+    id,
+    actId,
+    order,
+    title: `${id} title`,
+    storyRole: 'Role',
+    combinedGoal: 'Combined goal',
+    missions: Array.from({ length: 5 }, (_, index) => minimalMission(`${id}-m${index + 1}`)),
+  };
+}
+
+function minimalStoryMode(): StoryMode {
+  return {
+    schemaVersion: STORY_MODE_SCHEMA_VERSION,
+    id: 'test-story',
+    title: 'Test Story',
+    premise: 'Premise',
+    acts: [
+      {
+        id: 'act-1',
+        order: 1,
+        title: 'Act 1',
+        summary: 'Summary',
+        chapters: [minimalChapter('chapter-1', 'act-1', 1)],
+      },
+    ],
+  };
+}
+
+/** Replace the first mission of the fixture's only chapter, keeping everything else valid. */
+function withFirstMission(story: StoryMode, mission: StoryMissionPlan): StoryMode {
+  const chapter = story.acts[0]!.chapters[0]!;
+  return {
+    ...story,
+    acts: [
+      {
+        ...story.acts[0]!,
+        chapters: [{ ...chapter, missions: [mission, ...chapter.missions.slice(1)] }],
+      },
+    ],
+  };
+}
+
 describe('validateStoryMode', () => {
   it('accepts the first implemented story slice', () => {
     expect(validateStoryMode(STORY_MODE_PROTOTYPE)).toEqual([]);
     expect(countStoryChapters(STORY_MODE_PROTOTYPE)).toBe(10);
     expect(countStoryMissions(STORY_MODE_PROTOTYPE)).toBe(50);
+  });
+
+  it('accepts a minimal well-formed fixture', () => {
+    expect(validateStoryMode(minimalStoryMode())).toEqual([]);
+  });
+
+  it('flags a schemaVersion mismatch', () => {
+    const story: StoryMode = { ...minimalStoryMode(), schemaVersion: 999 };
+    expect(validateStoryMode(story)).toContainEqual(
+      expect.objectContaining({ path: 'schemaVersion' }),
+    );
+  });
+
+  it('flags duplicate act ids', () => {
+    const story = minimalStoryMode();
+    const duplicated: StoryMode = { ...story, acts: [...story.acts, { ...story.acts[0]! }] };
+    expect(validateStoryMode(duplicated).some((issue) => issue.message.includes('Duplicate act id'))).toBe(
+      true,
+    );
+  });
+
+  it('flags a mission group that references an unknown mission id', () => {
+    const story = minimalStoryMode();
+    const chapter = story.acts[0]!.chapters[0]!;
+    const malformed: StoryMode = {
+      ...story,
+      acts: [{ ...story.acts[0]!, chapters: [{ ...chapter, missionGroups: [['does-not-exist']] }] }],
+    };
+    expect(
+      validateStoryMode(malformed).some((issue) => issue.message.includes('unknown mission id')),
+    ).toBe(true);
+  });
+
+  it('flags a prototypeScript primaryActorId that is not one of its own actors', () => {
+    const story = minimalStoryMode();
+    const mission: StoryMissionPlan = {
+      ...minimalMission('chapter-1-m1'),
+      prototypeScript: {
+        primaryActorId: 'ghost-actor',
+        actors: [escortRouteActor('real-actor', [{ x: 0, y: 0 }], 100)],
+      },
+    };
+    const malformed = withFirstMission(story, mission);
+    expect(
+      validateStoryMode(malformed).some((issue) => issue.message.includes('primaryActorId')),
+    ).toBe(true);
+  });
+
+  it('flags a fail rule that references an unknown actor id', () => {
+    const story = minimalStoryMode();
+    const mission: StoryMissionPlan = {
+      ...minimalMission('chapter-1-m1'),
+      prototypeScript: {
+        primaryActorId: 'real-actor',
+        actors: [escortRouteActor('real-actor', [{ x: 0, y: 0 }], 100)],
+        failRules: [escortRadiusFailRule('someone-else', 'Lost the escort')],
+      },
+    };
+    const malformed = withFirstMission(story, mission);
+    expect(
+      validateStoryMode(malformed).some((issue) => issue.message.includes('unknown actor id')),
+    ).toBe(true);
+  });
+
+  it('flags a mission variant that references a branch outcome no mission ever sets', () => {
+    const story = minimalStoryMode();
+    const mission: StoryMissionPlan = {
+      ...minimalMission('chapter-1-m1'),
+      variants: [{ branchId: 'ghost-branch', outcomeId: 'ghost-outcome', title: 'Variant' }],
+    };
+    const malformed = withFirstMission(story, mission);
+    expect(
+      validateStoryMode(malformed).some((issue) =>
+        issue.message.includes('that no mission ever sets'),
+      ),
+    ).toBe(true);
   });
 });
 

@@ -3,6 +3,7 @@ import {
   createEscortMissionScript,
   escortRadiusFailRule,
   escortRouteActor,
+  STORY_MODE_SCHEMA_VERSION,
   wantedPressureFailRule,
 } from './storyMode';
 import type { StoryAct, StoryChapter, StoryMode } from './storyMode';
@@ -3004,6 +3005,7 @@ export const COURT_THE_CITYS_MIDDLE_POWERS: StoryAct = {
 };
 
 export const STORY_MODE_PROTOTYPE: StoryMode = {
+  schemaVersion: STORY_MODE_SCHEMA_VERSION,
   id: 'sindicate-story-mode',
   title: 'Sindicate Story Mode',
   premise:

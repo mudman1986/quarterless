@@ -320,7 +320,16 @@ export interface StoryAct {
   chapters: readonly StoryChapter[];
 }
 
+/**
+ * Schema version for the authored story-data contracts (StoryMode / StoryChapter /
+ * StoryMissionPlan / mission variants / actor-script types). Bump this when one of those
+ * shapes changes in a way that would make older authored data or saved branch/mission ids
+ * ambiguous, and update `validateStoryMode` and any migration logic that depends on it.
+ */
+export const STORY_MODE_SCHEMA_VERSION = 1;
+
 export interface StoryMode {
+  schemaVersion: number;
   id: string;
   title: string;
   premise: string;
@@ -557,10 +566,94 @@ export function formatStorySystem(system: StorySystem): string {
     .trim();
 }
 
+interface ResolvedStoryStage {
+  label: string;
+  actorIds: Set<string>;
+  primaryActorId: string;
+  failRules: readonly StoryFailRule[];
+}
+
+/** Mirrors CityScene's stage resolution: a script with no authored `stages` runs as one
+ * synthetic stage built from its top-level actors/failRules/primaryActorId. Each stage only
+ * ever sees its own `actors` list, never actors from other stages, so id references must stay
+ * within the stage that declares them. */
+function resolvedStoryStages(script: StoryRuntimeScript): ResolvedStoryStage[] {
+  if (script.stages && script.stages.length > 0) {
+    return script.stages.map((stage, index) => ({
+      label: stage.id || `stages[${index}]`,
+      actorIds: new Set(stage.actors.map((actor) => actor.actorId)),
+      primaryActorId: stage.primaryActorId ?? script.primaryActorId,
+      failRules: stage.failRules ?? script.failRules ?? [],
+    }));
+  }
+  return [
+    {
+      label: `${script.primaryActorId}-stage`,
+      actorIds: new Set(script.actors.map((actor) => actor.actorId)),
+      primaryActorId: script.primaryActorId,
+      failRules: script.failRules ?? [],
+    },
+  ];
+}
+
+/** Fail rules that reference a specific actor id; `wantedPressure` does not. */
+function failRuleActorId(rule: StoryFailRule): string | null {
+  return rule.kind === 'wantedPressure' ? null : rule.actorId;
+}
+
+function validateStoryRuntimeScript(
+  script: StoryRuntimeScript,
+  path: string,
+  issues: StoryValidationIssue[],
+): void {
+  for (const stage of resolvedStoryStages(script)) {
+    const stagePath = `${path} (${stage.label})`;
+    // A stage with no actors (pure district-state / wanted-pressure beats) has no actor to
+    // track, so `primaryActorId` is just a stable label rather than a real reference.
+    if (stage.actorIds.size > 0 && !stage.actorIds.has(stage.primaryActorId)) {
+      issues.push({
+        path: stagePath,
+        message: `primaryActorId "${stage.primaryActorId}" is not one of this stage's actors`,
+      });
+    }
+    for (const rule of stage.failRules) {
+      const actorId = failRuleActorId(rule);
+      if (actorId && !stage.actorIds.has(actorId)) {
+        issues.push({
+          path: stagePath,
+          message: `Fail rule "${rule.kind}" references unknown actor id "${actorId}"`,
+        });
+      }
+    }
+  }
+}
+
+function collectStoryBranchOutcomes(story: StoryMode): Set<string> {
+  const outcomes = new Set<string>();
+  for (const act of story.acts) {
+    for (const chapter of act.chapters) {
+      for (const mission of chapter.missions) {
+        if (mission.branchOutcome) {
+          outcomes.add(`${mission.branchOutcome.branchId}::${mission.branchOutcome.outcomeId}`);
+        }
+      }
+    }
+  }
+  return outcomes;
+}
+
 export function validateStoryMode(story: StoryMode): StoryValidationIssue[] {
   const issues: StoryValidationIssue[] = [];
   const actIds = new Set<string>();
   const chapterIds = new Set<string>();
+  const knownBranchOutcomes = collectStoryBranchOutcomes(story);
+
+  if (story.schemaVersion !== STORY_MODE_SCHEMA_VERSION) {
+    issues.push({
+      path: 'schemaVersion',
+      message: `Story schemaVersion should be ${STORY_MODE_SCHEMA_VERSION}, got ${story.schemaVersion}`,
+    });
+  }
 
   for (const [actIndex, act] of story.acts.entries()) {
     const actPath = `acts[${actIndex}]`;
@@ -628,6 +721,25 @@ export function validateStoryMode(story: StoryMode): StoryValidationIssue[] {
             path: `${missionPath}.failureState`,
             message: 'Mission failureState must not be empty',
           });
+        }
+        if (mission.prototypeScript) {
+          validateStoryRuntimeScript(mission.prototypeScript, `${missionPath}.prototypeScript`, issues);
+        }
+        for (const [variantIndex, variant] of (mission.variants ?? []).entries()) {
+          const variantPath = `${missionPath}.variants[${variantIndex}]`;
+          if (!knownBranchOutcomes.has(`${variant.branchId}::${variant.outcomeId}`)) {
+            issues.push({
+              path: variantPath,
+              message: `Variant references branch outcome "${variant.branchId}=${variant.outcomeId}" that no mission ever sets`,
+            });
+          }
+          if (variant.prototypeScript) {
+            validateStoryRuntimeScript(
+              variant.prototypeScript,
+              `${variantPath}.prototypeScript`,
+              issues,
+            );
+          }
         }
       }
 

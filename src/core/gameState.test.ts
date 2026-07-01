@@ -6,6 +6,7 @@ import {
   MANUAL_SAVE_KEY,
   manualSaveKey,
   loadGameState,
+  migrateGameStateData,
   saveGameState,
 } from './gameState';
 import type { KeyValueStore } from './highScore';
@@ -215,6 +216,36 @@ describe('game state storage', () => {
     expect(loadGameState(store)).toBeNull();
   });
 
+  it('returns null for a newer save version with no migration path', () => {
+    const store = fakeStore();
+    const world = new World({ player: { pos: { x: 1, y: 2 }, angle: 0, radius: 7 } });
+    saveGameState(store, { world: world.snapshot(), timeOfDay: 5 });
+    const raw = JSON.parse(store.getItem(GAME_STATE_KEY)!);
+    store.setItem(GAME_STATE_KEY, JSON.stringify({ ...raw, version: 2 }));
+
+    expect(loadGameState(store)).toBeNull();
+  });
+
+  it('applies a registered migration to upgrade an older save on load', () => {
+    const store = fakeStore();
+    const world = new World({ player: { pos: { x: 1, y: 2 }, angle: 0, radius: 7 } });
+    saveGameState(store, { world: world.snapshot(), timeOfDay: 5 });
+    const raw = JSON.parse(store.getItem(GAME_STATE_KEY)!);
+    // Simulate a save written before `timeOfDay` existed, at version 0.
+    const withoutTimeOfDay: Record<string, unknown> = { ...raw };
+    delete withoutTimeOfDay.timeOfDay;
+    store.setItem(GAME_STATE_KEY, JSON.stringify({ ...withoutTimeOfDay, version: 0 }));
+
+    const migrations = {
+      0: (data: Record<string, unknown>) => ({ ...data, timeOfDay: 0 }),
+    };
+    expect(loadGameState(store, GAME_STATE_KEY, migrations)).toEqual({
+      version: 1,
+      world: world.snapshot(),
+      timeOfDay: 0,
+    });
+  });
+
   it('clears a stored save', () => {
     const store = fakeStore();
     const world = new World({ player: { pos: { x: 1, y: 2 }, angle: 0, radius: 7 } });
@@ -256,6 +287,36 @@ describe('game state storage', () => {
       version: 1,
       world: second.snapshot(),
       timeOfDay: 144,
+    });
+  });
+});
+
+describe('migrateGameStateData', () => {
+  it('chains multiple registered migrations to reach the target version', () => {
+    const migrations = {
+      0: (data: Record<string, unknown>) => ({ ...data, addedAtV1: true }),
+      1: (data: Record<string, unknown>) => ({ ...data, addedAtV2: true }),
+    };
+    expect(migrateGameStateData({ version: 0 }, migrations, 2)).toEqual({
+      version: 2,
+      addedAtV1: true,
+      addedAtV2: true,
+    });
+  });
+
+  it('returns null when no migration is registered for the saved version', () => {
+    const migrations = { 1: (data: Record<string, unknown>) => data };
+    expect(migrateGameStateData({ version: 0 }, migrations, 2)).toBeNull();
+  });
+
+  it('returns null for a version newer than the target', () => {
+    expect(migrateGameStateData({ version: 5 }, {}, 1)).toBeNull();
+  });
+
+  it('returns the data unchanged when already at the target version', () => {
+    expect(migrateGameStateData({ version: 1, timeOfDay: 3 }, {}, 1)).toEqual({
+      version: 1,
+      timeOfDay: 3,
     });
   });
 });
