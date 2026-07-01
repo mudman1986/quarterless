@@ -1,4 +1,10 @@
-import { createEscortMissionScript, escortRadiusFailRule, escortRouteActor } from './storyMode';
+import {
+  actorVehicleConditionFailRule,
+  createEscortMissionScript,
+  escortRadiusFailRule,
+  escortRouteActor,
+  wantedPressureFailRule,
+} from './storyMode';
 import type { StoryAct, StoryChapter, StoryMode } from './storyMode';
 
 export const DEAD_DROP_DISTRICT: StoryChapter = {
@@ -335,13 +341,12 @@ export const SPARE_PARTS_GOSPEL: StoryChapter = {
                 'A decoy sedan peels away while the real shell heads toward the salvage lane.',
             },
             failRules: [
-              {
-                kind: 'actorVehicleCondition',
-                actorId: 'empty-shell-sedan',
-                minHealth: 55,
-                maxSeconds: 0.5,
-                failureText: 'The stripped sedan was smashed before the cargo route could be read.',
-              },
+              actorVehicleConditionFailRule(
+                'empty-shell-sedan',
+                55,
+                'The stripped sedan was smashed before the cargo route could be read.',
+                0.5,
+              ),
             ],
             actors: [
               {
@@ -381,13 +386,12 @@ export const SPARE_PARTS_GOSPEL: StoryChapter = {
               summary: 'Hold the tail until the receiving yard is unmistakable.',
             },
             failRules: [
-              {
-                kind: 'actorVehicleCondition',
-                actorId: 'empty-shell-sedan',
-                minHealth: 55,
-                maxSeconds: 0.5,
-                failureText: 'The stripped sedan was smashed before the receiving yard was confirmed.',
-              },
+              actorVehicleConditionFailRule(
+                'empty-shell-sedan',
+                55,
+                'The stripped sedan was smashed before the receiving yard was confirmed.',
+                0.5,
+              ),
             ],
             actors: [
               {
@@ -777,12 +781,11 @@ export const STATIC_ON_THE_HOSPITAL_BAND: StoryChapter = {
             },
             actors: [],
             failRules: [
-              {
-                kind: 'wantedPressure',
-                minStars: 2,
-                maxSeconds: 1.5,
-                failureText: 'The archive room was torched once the tunnel alarm went loud.',
-              },
+              wantedPressureFailRule(
+                2,
+                'The archive room was torched once the tunnel alarm went loud.',
+                1.5,
+              ),
             ],
           },
         ],
@@ -968,12 +971,7 @@ export const METER_RUNNING: StoryChapter = {
             },
             actors: [],
             failRules: [
-              {
-                kind: 'wantedPressure',
-                minStars: 2,
-                maxSeconds: 2,
-                failureText: 'The ghost fare vanished once the route got too loud.',
-              },
+              wantedPressureFailRule(2, 'The ghost fare vanished once the route got too loud.'),
             ],
           },
         ],
@@ -1375,12 +1373,10 @@ export const METER_RUNNING: StoryChapter = {
                 },
                 actors: [],
                 failRules: [
-                  {
-                    kind: 'wantedPressure',
-                    minStars: 2,
-                    maxSeconds: 2,
-                    failureText: 'The uptown fare was burned once the checkpoint strip got a full read.',
-                  },
+                  wantedPressureFailRule(
+                    2,
+                    'The uptown fare was burned once the checkpoint strip got a full read.',
+                  ),
                 ],
               },
             ],
@@ -1429,12 +1425,10 @@ export const METER_RUNNING: StoryChapter = {
                 },
                 actors: [],
                 failRules: [
-                  {
-                    kind: 'wantedPressure',
-                    minStars: 2,
-                    maxSeconds: 2,
-                    failureText: 'The river fare was burned once the checkpoint strip got a full read.',
-                  },
+                  wantedPressureFailRule(
+                    2,
+                    'The river fare was burned once the checkpoint strip got a full read.',
+                  ),
                 ],
               },
             ],
@@ -1457,12 +1451,10 @@ export const METER_RUNNING: StoryChapter = {
             },
             actors: [],
             failRules: [
-              {
-                kind: 'wantedPressure',
-                minStars: 2,
-                maxSeconds: 2,
-                failureText: 'The contraband fare was burned once the checkpoint strip got a full read.',
-              },
+              wantedPressureFailRule(
+                2,
+                'The contraband fare was burned once the checkpoint strip got a full read.',
+              ),
             ],
           },
         ],
@@ -1916,6 +1908,7 @@ export const THE_SWITCHBOARD_NAME: StoryChapter = {
       secondaryPressure: 'The city itself should feel unstable instead of simply more crowded.',
       failureState: 'Fail if the blackout response overwhelms the route before the window closes.',
       payoff: 'Rook sees what a district looks like when every response lane is sold off at once.',
+      requiredSystems: ['districtState'],
       prototypeRuntime: {
         id: 'four-minute-silence',
         title: 'Four Minute Silence',
@@ -1927,6 +1920,37 @@ export const THE_SWITCHBOARD_NAME: StoryChapter = {
           },
         ],
         reward: 4600,
+      },
+      prototypeScript: {
+        primaryActorId: 'blackout-window',
+        actors: [],
+        stages: [
+          {
+            id: 'blackout-window',
+            title: 'Hold through the blackout',
+            primaryActorId: 'blackout-window',
+            districtState: {
+              label: 'The Switchboard has killed every signal in the district at once',
+              summary:
+                'Every intersection is running dark, the service lanes are dead, and the rooftop lane is the only route still worth holding.',
+              blackoutIntersections: true,
+              serviceLaneBlocks: ['police', 'ambulance', 'tow', 'taxi'],
+              trafficSpeedMultiplier: 0.6,
+              wantedPressureBonus: 1,
+              reservedRoutes: [
+                {
+                  points: [
+                    { x: 3648, y: 2304 },
+                    { x: 3776, y: 2304 },
+                    { x: 3904, y: 2304 },
+                  ],
+                  radius: 160,
+                },
+              ],
+            },
+            actors: [],
+          },
+        ],
       },
     },
     {
@@ -2806,12 +2830,10 @@ export const SAINTS_OF_THE_SIDE_STREET: StoryChapter = {
           },
         ],
         failRules: [
-          {
-            kind: 'wantedPressure',
-            minStars: 2,
-            maxSeconds: 2,
-            failureText: 'The clinic van was flagged by the sweep before it cleared the block.',
-          },
+          wantedPressureFailRule(
+            2,
+            'The clinic van was flagged by the sweep before it cleared the block.',
+          ),
         ],
       },
     },

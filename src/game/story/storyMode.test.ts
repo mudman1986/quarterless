@@ -15,6 +15,10 @@ import {
   createEscortMissionScript,
   escortRadiusFailRule,
   escortRouteActor,
+  actorVehicleConditionFailRule,
+  createProtectedVehicleTailScript,
+  formatStorySystem,
+  wantedPressureFailRule,
   isChapterRuntimeReady,
   resolveStoryMissionPlan,
   storyChapterPendingMissionGroup,
@@ -228,5 +232,66 @@ describe('escort authoring helpers', () => {
       actors: [escortRouteActor('guide', route, 40)],
       failRules: [escortRadiusFailRule('guide', 'The guide was lost.')],
     });
+  });
+});
+
+describe('wanted-pressure and protected-vehicle authoring helpers', () => {
+  const route = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+  ];
+
+  it('builds a wanted-pressure fail rule with the default grace period', () => {
+    expect(wantedPressureFailRule(2, 'The fare was burned.')).toEqual({
+      kind: 'wantedPressure',
+      minStars: 2,
+      maxSeconds: 2,
+      failureText: 'The fare was burned.',
+    });
+  });
+
+  it('builds an actor-vehicle-condition fail rule with the default grace period', () => {
+    expect(actorVehicleConditionFailRule('cargo-van', 55, 'The cargo was lost.')).toEqual({
+      kind: 'actorVehicleCondition',
+      actorId: 'cargo-van',
+      minHealth: 55,
+      maxSeconds: 3,
+      failureText: 'The cargo was lost.',
+    });
+  });
+
+  it('composes a full single-actor protected-vehicle runtime script', () => {
+    const script = createProtectedVehicleTailScript({
+      actorId: 'cargo-van',
+      vehicleKind: 'van',
+      route,
+      speed: 90,
+      followRadius: 260,
+      minHealth: 55,
+      failureText: 'The cargo was lost.',
+    });
+
+    expect(script).toEqual({
+      primaryActorId: 'cargo-van',
+      actors: [
+        {
+          kind: 'vehicleRoute',
+          actorId: 'cargo-van',
+          vehicleKind: 'van',
+          route,
+          speed: 90,
+          followRadius: 260,
+        },
+      ],
+      failRules: [actorVehicleConditionFailRule('cargo-van', 55, 'The cargo was lost.')],
+    });
+  });
+});
+
+describe('formatStorySystem', () => {
+  it('turns camelCase system ids into title-case labels', () => {
+    expect(formatStorySystem('districtState')).toBe('District State');
+    expect(formatStorySystem('escort')).toBe('Escort');
+    expect(formatStorySystem('timedMultiStop')).toBe('Timed Multi Stop');
   });
 });

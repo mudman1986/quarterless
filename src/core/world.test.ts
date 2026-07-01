@@ -368,6 +368,69 @@ describe('World story objective progress', () => {
 
     expect(pressured.police.length).toBeGreaterThan(base.police.length);
   });
+
+  it('holds NPC traffic at every intersection during a story blackout, even on a green axis', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    // Eastbound car approaching the intersection at (4,4); horizontal has the
+    // green, so this car would normally sail straight through.
+    const npc: Car = {
+      pos: tileCenter(city.spec, 2, 4),
+      heading: 0,
+      speed: 0,
+      radius: 12,
+    };
+    const w = new World({
+      player: player(),
+      cars: [npc],
+      city,
+      carDrivers: [{ dir: vec2(1, 0) }],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+    w.lights = createTrafficLights(0); // horizontal green
+
+    w.setStoryDistrictStateEffects({ blackoutIntersections: true });
+    const intersectionX = tileCenter(city.spec, 4, 4).x - city.spec.tile / 2; // left edge
+    for (let i = 0; i < 180; i++) {
+      w.tick(controls(), 1 / 60);
+      expect(w.cars[0].pos.x).toBeLessThan(intersectionX); // never entered the box
+    }
+  });
+
+  it('keeps NPC traffic clear of a story-reserved route lane', () => {
+    const city = buildCity({
+      cols: 18,
+      rows: 18,
+      tile: 64,
+      block: 6,
+      roadWidth: 4,
+    });
+    const start = tileCenter(city.spec, 1, 4);
+    const base = new World({
+      player: player(),
+      cars: [{ pos: start, heading: Math.PI / 2, speed: 0, radius: 12 }],
+      city,
+      carDrivers: [{ dir: vec2(0, 1) }],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+    const reserved = new World({
+      player: player(),
+      cars: [{ pos: start, heading: Math.PI / 2, speed: 0, radius: 12 }],
+      city,
+      carDrivers: [{ dir: vec2(0, 1) }],
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9,
+    });
+    reserved.setStoryDistrictStateEffects({
+      reservedRoutes: [{ points: [start], radius: 200 }],
+    });
+
+    advance(base, 1);
+    advance(reserved, 1);
+
+    expect(base.cars[0].pos.y).toBeGreaterThan(reserved.cars[0].pos.y + 30);
+  });
 });
 
 describe('World police and wanted level', () => {

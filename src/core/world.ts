@@ -784,6 +784,12 @@ export class World {
   private storyNpcDrivingSuppressed = false;
   /** Story-driven checkpoint pressure added on top of live wanted stars. */
   private storyWantedPressureBonus = 0;
+  /** Story-driven citywide traffic-light blackout: every intersection is
+   * treated as an all-way stop instead of following the normal cycle. */
+  private storyBlackoutIntersections = false;
+  /** Story-driven reserved route lanes: NPC cars near these points nearly
+   * stop, keeping the lane clear for a scripted escort or getaway. */
+  private storyReservedRoutes: { points: Vec2[]; radius: number }[] = [];
   /** Seconds elapsed in the current run (drives survive objectives). */
   private elapsed = 0;
   /** The currently active player taxi fare, if the player is driving a cab. */
@@ -1118,12 +1124,19 @@ export class World {
       trafficSpeedMultiplier?: number;
       suppressNpcDriving?: boolean;
       wantedPressureBonus?: number;
+      blackoutIntersections?: boolean;
+      reservedRoutes?: readonly { points: readonly Vec2[]; radius: number }[];
     } | null,
   ): void {
     this.storyServiceLaneBlocks = new Set(effects?.serviceLaneBlocks ?? []);
     this.storyTrafficSpeedMultiplier = Math.max(0.25, effects?.trafficSpeedMultiplier ?? 1);
     this.storyNpcDrivingSuppressed = !!effects?.suppressNpcDriving;
     this.storyWantedPressureBonus = Math.max(0, Math.floor(effects?.wantedPressureBonus ?? 0));
+    this.storyBlackoutIntersections = !!effects?.blackoutIntersections;
+    this.storyReservedRoutes = (effects?.reservedRoutes ?? []).map((route) => ({
+      points: route.points.map((p) => ({ x: p.x, y: p.y })),
+      radius: route.radius,
+    }));
     if (this.storyServiceLaneBlocked('taxi')) {
       if (this.playerTaxiMission) this.cancelPlayerTaxiMission(this.focus);
       for (let i = 0; i < this.cars.length; i++) {
@@ -1147,6 +1160,18 @@ export class World {
 
   private storyWantedPressure(): number {
     return Math.min(6, this.wantedStars + this.storyWantedPressureBonus);
+  }
+
+  /** Speed multiplier applied to an NPC car near a story-reserved route lane
+   * (e.g. keeping a road clear for an escort or getaway). Cars within a
+   * reserved route's radius nearly stop; everyone else is unaffected. */
+  private storyReservedRouteMultiplier(pos: Vec2): number {
+    for (const route of this.storyReservedRoutes) {
+      for (const point of route.points) {
+        if (distance(pos, point) <= route.radius) return 0.08;
+      }
+    }
+    return 1;
   }
 
   /** Advance the simulation by `dt` seconds. */
@@ -1540,7 +1565,9 @@ export class World {
         continue;
       const car = this.cars[i];
       const cruiseSpeed =
-        trafficCruiseSpeedForKind(this.carKind(i)) * this.storyTrafficSpeedMultiplier;
+        trafficCruiseSpeedForKind(this.carKind(i)) *
+        this.storyTrafficSpeedMultiplier *
+        this.storyReservedRouteMultiplier(car.pos);
 
       let dir = ai.dir;
       let blocked = ai.blocked ?? 0;
@@ -1613,7 +1640,10 @@ export class World {
   /** Whether an NPC car is approaching an intersection it must stop at for a red
    * light. Looks a tile or two ahead along the car's direction. */
   private redLightAhead(car: Car, dir: Vec2): boolean {
-    if (!this.city || hasGreen(this.lights, dir)) return false; // our axis is green
+    if (!this.city) return false;
+    // During a story blackout every intersection is an all-way stop, so the
+    // normal green-light bypass never applies.
+    if (!this.storyBlackoutIntersections && hasGreen(this.lights, dir)) return false; // our axis is green
     const { tx, ty } = tileCoord(this.city.spec, car.pos);
     if (isIntersection(this.city, tx, ty)) return false; // already committed: clear the junction
     for (let step = 1; step <= 2; step++) {

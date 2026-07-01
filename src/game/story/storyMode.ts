@@ -104,6 +104,14 @@ export type StoryActorScript =
   | PedestrianRouteActorScript
   | PedestrianSquadActorScript;
 
+/** A road lane reserved by a scripted district state: NPC traffic near any of
+ * `points` (within `radius`) yields almost to a stop, keeping the lane clear
+ * for an escort or getaway route. */
+export interface StoryReservedRouteScript {
+  points: readonly Vec2[];
+  radius: number;
+}
+
 export interface StoryDistrictStateScript {
   label: string;
   summary?: string;
@@ -111,6 +119,11 @@ export interface StoryDistrictStateScript {
   trafficSpeedMultiplier?: number;
   suppressNpcDriving?: boolean;
   wantedPressureBonus?: number;
+  /** Every intersection behaves as an all-way stop instead of following the
+   * normal traffic-light cycle, for citywide blackout beats. */
+  blackoutIntersections?: boolean;
+  /** Lanes NPC traffic should stay clear of for the duration of this state. */
+  reservedRoutes?: readonly StoryReservedRouteScript[];
 }
 
 export interface LoseActorFailRule {
@@ -231,6 +244,60 @@ export function createEscortMissionScript(
     primaryActorId: actorId,
     actors: [escortRouteActor(actorId, route, speed, escortRadius)],
     failRules: [escortRadiusFailRule(actorId, failureText, failRadius, maxSeconds)],
+  };
+}
+
+/**
+ * Reusable authoring helper for the wanted-pressure pattern: fail the mission once the player's
+ * checkpoint/wanted pressure holds at or above `minStars` for longer than `maxSeconds`. Extends
+ * the escort-route helper treatment to the tail/wanted-pressure pattern used across chase and
+ * stealth-adjacent missions.
+ */
+export function wantedPressureFailRule(
+  minStars: number,
+  failureText: string,
+  maxSeconds = 2,
+): WantedPressureFailRule {
+  return { kind: 'wantedPressure', minStars, maxSeconds, failureText };
+}
+
+/**
+ * Reusable authoring helper for the protected-vehicle / fragile-cargo pattern: fail the mission
+ * once an actor's vehicle health drops below `minHealth` for longer than `maxSeconds`. Extends the
+ * escort-route helper treatment to the vehicle-condition pattern used by fragile-cargo missions.
+ */
+export function actorVehicleConditionFailRule(
+  actorId: string,
+  minHealth: number,
+  failureText: string,
+  maxSeconds = 3,
+): ActorVehicleConditionFailRule {
+  return { kind: 'actorVehicleCondition', actorId, minHealth, maxSeconds, failureText };
+}
+
+export interface ProtectedVehicleTailScriptOptions {
+  actorId: string;
+  vehicleKind: VehicleKind;
+  route: readonly Vec2[];
+  speed: number;
+  followRadius: number;
+  minHealth: number;
+  failureText: string;
+  maxSeconds?: number;
+}
+
+/** Build the standard single-actor "fragile cargo" runtime script: a vehicle actor drives a route
+ * while a vehicle-condition fail rule ends the mission if the escorted vehicle takes too much
+ * damage for too long. Pairs the vehicle-route actor shape with `actorVehicleConditionFailRule`. */
+export function createProtectedVehicleTailScript(
+  options: ProtectedVehicleTailScriptOptions,
+): StoryRuntimeScript {
+  const { actorId, vehicleKind, route, speed, followRadius, minHealth, failureText, maxSeconds } =
+    options;
+  return {
+    primaryActorId: actorId,
+    actors: [{ kind: 'vehicleRoute', actorId, vehicleKind, route, speed, followRadius }],
+    failRules: [actorVehicleConditionFailRule(actorId, minHealth, failureText, maxSeconds)],
   };
 }
 
@@ -480,6 +547,14 @@ export function chapterMissingSystems(chapter: StoryChapter): StorySystem[] {
     for (const system of mission.requiredSystems ?? []) missing.add(system);
   }
   return [...missing];
+}
+
+/** Turn a camelCase `StorySystem` id into a display label, e.g. `districtState` -> `District State`. */
+export function formatStorySystem(system: StorySystem): string {
+  return system
+    .replace(/([A-Z])/g, ' $1')
+    .replace(/^./, (c) => c.toUpperCase())
+    .trim();
 }
 
 export function validateStoryMode(story: StoryMode): StoryValidationIssue[] {

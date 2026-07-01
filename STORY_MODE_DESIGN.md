@@ -414,6 +414,9 @@ Implemented now:
 - Grouped free-order mission sets now extend beyond Spare Parts Gospel into later prototype chapters including Static On The Hospital Band, Meter Running, The Switchboard Name, Freight Union Morning, Neon Couriers, Glass Towers, Empty Floors, and Saints Of The Side Street.
 - Chapter 10, Saints Of The Side Street, is now a playable prototype campaign, rounding Act II out to four of its six planned chapters and bringing the runtime total to 10 chapters and 50 missions. This chapter was authored out of the intended base-first order (see Execution Note below); the base-hardening work it should have waited for is still outstanding.
 - The repeated escort-route mission pattern (a pedestrian actor walking a route paired with an escort-radius fail rule, used across 6 missions) is now a reusable authoring helper, `createEscortMissionScript` / `escortRouteActor` / `escortRadiusFailRule` in `src/game/story/storyMode.ts`, instead of hand-typed duplicate object literals in every chapter. This is the first concrete Stage 6 "reusable authoring helpers" outcome.
+- The wanted-pressure and protected-vehicle (actor-vehicle-condition) fail-rule patterns now have the same authoring-helper treatment: `wantedPressureFailRule`, `actorVehicleConditionFailRule`, and `createProtectedVehicleTailScript` in `src/game/story/storyMode.ts` replace all 8 previously hand-typed call sites across Spare Parts Gospel, Static On The Hospital Band, and Meter Running.
+- District-state scripts can now force a citywide blackout (`blackoutIntersections`, every intersection becomes an all-way stop regardless of the traffic-light cycle) and reserve a road lane for a scripted route (`reservedRoutes`, nearby NPC traffic yields almost to a stop). Both are implemented in `World` (`src/core/world.ts`) with unit coverage, and Four Minute Silence in The Switchboard Name now uses both so its blackout premise is mechanically real instead of a plain survive timer.
+- Chapter-map cards and mission scorecards now surface a per-chapter / per-mission systems badge line (`chapterMissingSystems` / `formatStorySystem` on the chapter map, a new `systemsText` field on the mission-summary card and scorecard), so both surfaces expose which runtime systems a chapter or mission exercises instead of only order/goal/reward text.
 - Focused Playwright coverage now covers story-mode entry, story-menu chapter selection across acts, recap archive presence, refresh-resume, manual save-slot persistence, authored mission transition panels, chapter restart into the next chapter, pause-menu chapter replay, and the current story-complete panel.
 - Focused Playwright coverage now also covers story mission-start markers, route markers, marked-target minimap dots, scripted chase-target minimap markers, grouped in-world mission selection, staged district-state labels, and the integrated launcher-owned pause flow.
 - A dedicated authored-mission browser regression now walks every current runtime story mission and verifies that each mission shell boots with the expected mission title and scripted district-state surface.
@@ -427,23 +430,14 @@ Prototype limitations right now:
 
 - Chapter 1 through Chapter 10 missions are playable approximations, not fully scripted bespoke set pieces.
 - Tail, capture, escort, stealth, defend, vehicle-condition, sabotage-order, and district-state behavior are still represented by simpler linear objective chains where needed.
-- The mission-actor layer now covers route-driven vehicles, staged convoy handoffs, escorts, decoy splits, named mission-target squads, district-state labels, service-lane blocks, traffic slowdowns, NPC-driving suppression, checkpoint pressure, stealth-pressure fail rules, defend holds, protected-vehicle fail rules, sabotage-order targets, and simple fail rules, but it still lacks richer custom encounter scripting beyond those patterns.
-- The launcher now has a stronger chapter-map style board and recent mission scorecards, but the story presentation is still a compact production prototype rather than a final authored front end.
+- The mission-actor layer now covers route-driven vehicles, staged convoy handoffs, escorts, decoy splits, named mission-target squads, district-state labels, service-lane blocks, traffic slowdowns, NPC-driving suppression, checkpoint pressure, stealth-pressure fail rules, defend holds, protected-vehicle fail rules, sabotage-order targets, citywide blackout intersections, reserved-route lane clearing, and simple fail rules, but it still lacks richer custom encounter scripting beyond those patterns.
+- The launcher now has a stronger chapter-map style board, recent mission scorecards, and per-chapter/per-mission systems badges, but the story presentation is still a compact production prototype rather than a final authored front end.
 - The grouped free-order model now also records choice outcomes, and the meter-running leads can carry different taxi / hospital setups forward, but the consequence chains are still limited to a few authored slices instead of the full story.
-- The new mission summary card now surfaces vehicle-condition deltas, service-lane state, and branch-driven faction shifts, but it still summarizes those outcomes in text rather than fully bespoke visual widgets.
+- The new mission summary card now surfaces vehicle-condition deltas, service-lane state, branch-driven faction shifts, and a per-mission systems tag, but it still summarizes those outcomes in text rather than fully bespoke visual widgets.
 
 ## Execution Note
 
-Chapter 10, Saints Of The Side Street, was authored before the base-hardening items below were finished. That was a process mistake against this doc's own base-first, gated execution rules (see "Grounded Implementation Plan"): new story content is not supposed to move ahead of the runtime and authoring work it depends on. The chapter's code and tests are being kept because reverting working, tested content would be wasted effort, but no further chapters should be authored until the items below are addressed. Extracting the repeated escort-route pattern into `createEscortMissionScript` is a first, small step on item 2 below, not a substitute for finishing it.
-
-## Next Steps From Here
-
-Remaining priorities, in order, before any more chapters are authored:
-
-1. Add more bespoke presentation to chapter-map, mission-summary, and scorecard surfaces once the broader story slice stabilizes.
-2. Broaden the current branch, protected-vehicle, and sabotage slices into more bespoke consequence chains, raid beats, and fragile-cargo encounters instead of more generic timer chains, continuing the authoring-helper work started with the escort-route pattern.
-3. Push district-state choreography beyond the current traffic/checkpoint hooks into deeper blackout, light-state, and route-reservation behavior.
-4. Only after items 1 through 3 are in a good enough state, resume authoring Chapter 11 and later story chapters.
+Chapter 10, Saints Of The Side Street, was authored before the base-hardening items were finished. That was a process mistake against this doc's own base-first, gated execution rules (see "Grounded Implementation Plan"): new story content is not supposed to move ahead of the runtime and authoring work it depends on. The chapter's code and tests were kept because reverting working, tested content would be wasted effort. The three base-hardening items originally listed under "Next Steps From Here" are now done (see the changelog above for specifics), all with unit and Playwright coverage, so the gate on new chapter authoring is lifted. Chapter 11 and later chapters have not been authored yet and remain a separate, explicit task.
 
 ## Grounded Implementation Plan
 
@@ -640,7 +634,7 @@ Scale order:
 
 1. Finish the next 2 to 3 chapters that best exercise the stabilized runtime primitives.
 2. Reassess missing systems.
-3. Chapter 10, Saints Of The Side Street, is authored, but was pulled forward out of order (see Execution Note above). Do not author Chapter 11 or Chapter 12 until the base-hardening items in "Next Steps From Here" are addressed.
+3. Chapter 10, Saints Of The Side Street, is authored, but was pulled forward out of order (see Execution Note above). The base-hardening items in "Next Steps From Here" are now done, so Chapter 11 and Chapter 12 are no longer gated.
 4. Reserve full-story expansion for after the branch, actor, save, and summary layers are no longer shifting underneath content.
 
 ### Revised Delivery Order
@@ -679,13 +673,4 @@ What is already true in code:
 What is still missing before it counts as a full slice:
 
 - Rich scripted encounter control beyond the current multi-stage actor layer and service-lane choreography.
-- Broader systemic district-state effects that change traffic, blackout pressure, and checkpoint flow in more ways than the current service-lane controls.
-
-## What To Do Next
-
-Recommended next production steps:
-
-1. Continue polishing the existing chapter-map, mission-summary, and scorecard surfaces into more bespoke presentation once the wider story slice stabilizes.
-2. Broaden the current branch, protected-vehicle, and sabotage slices into more bespoke consequence chains, raid beats, and fragile-cargo encounters instead of more generic timer chains. The new escort-route authoring helper is a first step; the same treatment should extend to the tail/wanted-pressure and vehicle-condition patterns next.
-3. Deepen the current traffic/checkpoint district-state layer into more visual blackout and route-reservation behavior.
-4. Do not author Chapter 11, Broadcast Teeth, Chapter 12, Debt Collection Weather, or any later chapter until items 1 through 3 above are addressed.
+- Districted-state effects now include blackout intersections and reserved-route lane clearing in addition to service-lane, traffic-speed, and checkpoint-pressure controls; richer light-state (e.g. per-axis overrides) and multi-lane reservation shapes are still open for future work.

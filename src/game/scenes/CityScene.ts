@@ -57,6 +57,7 @@ import {
 import { clearStoryLaunchRequest, loadStoryLaunchRequest } from '../story/storyLaunchState';
 import {
   compileStoryChapterRuntimeCampaign,
+  formatStorySystem,
   resolveStoryMissionPlan,
   STORY_MISSION_GROUP_SELECTION_INDEX,
   storyMissionStartPosition,
@@ -288,6 +289,7 @@ interface StoryMissionSummaryCard {
   vehicleConditionText: string;
   serviceLaneText: string;
   factionEffectText: string;
+  systemsText: string;
   unlockText: string;
   nextText: string;
 }
@@ -2646,6 +2648,7 @@ export class CityScene extends Phaser.Scene {
         vehicleConditionText: summary.vehicleConditionText,
         serviceLaneText: summary.serviceLaneText,
         factionEffectText: summary.factionEffectText,
+        systemsText: summary.systemsText,
         recordedAt: Date.now(),
       });
       this.showPersistentStoryPanel(this.storyMissionSummaryText(summary));
@@ -2722,6 +2725,12 @@ export class CityScene extends Phaser.Scene {
     );
     if (blocked.size === 0) return 'No service-lane shifts';
     return `Paused: ${[...blocked].join(' / ')}`;
+  }
+
+  private storySystemsText(mission: StoryMissionPlan): string {
+    const systems = mission.requiredSystems ?? [];
+    if (systems.length === 0) return 'No tracked systems';
+    return systems.map(formatStorySystem).join(' · ');
   }
 
   private storyFactionEffectSummary(
@@ -2845,6 +2854,7 @@ export class CityScene extends Phaser.Scene {
       vehicleConditionText,
       serviceLaneText: this.storyServiceLaneSummary(previousMission),
       factionEffectText: this.storyFactionEffectSummary(baseline, nextProgress),
+      systemsText: this.storySystemsText(previousMission),
       unlockText: unlockLines.length > 0 ? unlockLines.join(' • ') : 'No new unlocks',
       nextText,
     };
@@ -2867,6 +2877,7 @@ export class CityScene extends Phaser.Scene {
       `Vehicle Condition: ${card.vehicleConditionText}`,
       `Service Lanes: ${card.serviceLaneText}`,
       `Faction Effects: ${card.factionEffectText}`,
+      `Systems: ${card.systemsText}`,
       `Story Changes: ${card.unlockText}`,
       card.nextText,
     ].join('\n');
