@@ -100,6 +100,75 @@ async function forceStoryMissionRuntimeState(
   }, update);
 }
 
+async function movePlayerToActiveObjectiveTarget(page: import('@playwright/test').Page): Promise<void> {
+  await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: {
+        player: { pos: { x: number; y: number } };
+        drivingCarIndex: number | null;
+        cars: Array<{ pos: { x: number; y: number } }>;
+        mission?: {
+          currentIndex: number;
+          objectives: Array<
+            | { kind: 'reach' | 'defend'; target: { x: number; y: number } }
+            | { kind: 'route'; targets: Array<{ x: number; y: number }> }
+          >;
+          objectiveState?: { kind: 'route'; completed: number } | null;
+        } | null;
+      };
+    };
+    const mission = scene?.world.mission;
+    if (!scene || !mission) throw new Error('Missing active mission');
+    const objective = mission.objectives[mission.currentIndex];
+    if (!objective) throw new Error('Missing active objective');
+    const target =
+      objective.kind === 'route'
+        ? objective.targets[mission.objectiveState?.kind === 'route' ? mission.objectiveState.completed : 0]
+        : objective.target;
+    if (!target) throw new Error('Missing active target');
+    scene.world.player.pos = { x: target.x, y: target.y };
+    if (scene.world.drivingCarIndex !== null && scene.world.cars[scene.world.drivingCarIndex]) {
+      scene.world.cars[scene.world.drivingCarIndex] = {
+        ...scene.world.cars[scene.world.drivingCarIndex]!,
+        pos: { x: target.x, y: target.y },
+      };
+    }
+  });
+}
+
+async function shadowStoryActor(
+  page: import('@playwright/test').Page,
+  actorId: string,
+  offset = { x: -20, y: -12 },
+): Promise<void> {
+  await page.evaluate(
+    ({ actorId, offset }) => {
+      const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+      const scene = game?.scene.getScene('City') as {
+        storyScript?: { actorCarIndices: Record<string, number> } | null;
+        world: {
+          player: { pos: { x: number; y: number } };
+          drivingCarIndex: number | null;
+          cars: Array<{ pos: { x: number; y: number } }>;
+        };
+      };
+      const carIndex = scene?.storyScript?.actorCarIndices[actorId];
+      const actorPos = carIndex !== undefined ? scene.world.cars[carIndex]?.pos : null;
+      if (!scene || !actorPos) throw new Error(`Missing actor ${actorId}`);
+      const nextPos = { x: actorPos.x + offset.x, y: actorPos.y + offset.y };
+      scene.world.player.pos = nextPos;
+      if (scene.world.drivingCarIndex !== null && scene.world.cars[scene.world.drivingCarIndex]) {
+        scene.world.cars[scene.world.drivingCarIndex] = {
+          ...scene.world.cars[scene.world.drivingCarIndex]!,
+          pos: nextPos,
+        };
+      }
+    },
+    { actorId, offset },
+  );
+}
+
 test.afterEach(async ({ page }) => {
   await page.evaluate(() => {
     localStorage.removeItem('sindicate.gameState');
@@ -293,4 +362,174 @@ test('dead drop district missions expose scripted stage shifts for route and obj
       scene.storyStateText?.text.includes('The evidence room is live and the cleaners are holding the badge')
     );
   });
+});
+
+test('live route objectives advance through authored checkpoints without forced completion hooks', async ({
+  page,
+}) => {
+  await launchSindicate(page);
+  await restartIntoStoryMission(page, {
+    actId: 'find-the-missing-dispatcher',
+    chapterId: 'dead-drop-district',
+    missionId: 'burned-locker',
+    objectiveIndex: 0,
+    unlockedChapterIds: ['dead-drop-district'],
+    completedMissionIds: ['night-ferry-run'],
+  });
+  await acknowledgeStoryPanel(page);
+
+  for (const expectedCompleted of [1, 2]) {
+    await movePlayerToActiveObjectiveTarget(page);
+    await page.waitForFunction(
+      (expected) => {
+        const game = (
+          window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }
+        ).__game;
+        const scene = game?.scene.getScene('City') as {
+          world: { mission?: { objectiveState?: { kind: 'route'; completed: number } | null } | null };
+        };
+        return scene?.world.mission?.objectiveState?.kind === 'route'
+          ? scene.world.mission.objectiveState.completed === expected
+          : false;
+      },
+      expectedCompleted,
+    );
+  }
+
+  await movePlayerToActiveObjectiveTarget(page);
+  await waitForStoryProgress(page, {
+    missionId: 'wreck-before-dawn',
+    chapterId: 'dead-drop-district',
+    completedMissionId: 'burned-locker',
+  });
+});
+
+test('live scripted capture pressure builds from actor proximity instead of direct state mutation', async ({
+  page,
+}) => {
+  await launchSindicate(page);
+  await restartIntoStoryMission(page, {
+    actId: 'court-the-citys-middle-powers',
+    chapterId: 'glass-towers-empty-floors',
+    missionId: 'lobby-flood',
+    objectiveIndex: 1,
+    unlockedChapterIds: [
+      'dead-drop-district',
+      'spare-parts-gospel',
+      'static-on-the-hospital-band',
+      'meter-running',
+      'precinct-ashes',
+      'the-switchboard-name',
+      'freight-union-morning',
+      'neon-couriers',
+      'glass-towers-empty-floors',
+    ],
+    completedMissionIds: ['tenant-warning', 'window-tax'],
+    completedChapterIds: [
+      'dead-drop-district',
+      'spare-parts-gospel',
+      'static-on-the-hospital-band',
+      'meter-running',
+      'precinct-ashes',
+      'the-switchboard-name',
+      'freight-union-morning',
+      'neon-couriers',
+    ],
+  });
+  await acknowledgeStoryPanel(page);
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      storyScript?: { stageIndex: number; actorCarIndices: Record<string, number> } | null;
+    };
+    return (
+      scene?.storyScript?.stageIndex === 1 &&
+      scene.storyScript.actorCarIndices['broker-sedan'] !== undefined
+    );
+  });
+
+  for (let i = 0; i < 12; i++) {
+    await shadowStoryActor(page, 'broker-sedan');
+    await page.waitForTimeout(250);
+  }
+
+  const captureSeconds = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      storyScript?: { captureSeconds: number } | null;
+    };
+    return scene?.storyScript?.captureSeconds ?? 0;
+  });
+  expect(captureSeconds).toBeGreaterThan(0.75);
+});
+
+test('story actor pools stay bounded as scripted missions advance across a live chapter sequence', async ({
+  page,
+}) => {
+  await launchSindicate(page);
+  await restartIntoStoryMission(page, {
+    actId: 'court-the-citys-middle-powers',
+    chapterId: 'freight-union-morning',
+    missionId: 'harbor-echo',
+    objectiveIndex: 0,
+    unlockedChapterIds: [
+      'dead-drop-district',
+      'spare-parts-gospel',
+      'static-on-the-hospital-band',
+      'meter-running',
+      'precinct-ashes',
+      'the-switchboard-name',
+      'freight-union-morning',
+    ],
+    completedMissionIds: ['union-test-run', 'picket-line-breaker'],
+    completedChapterIds: [
+      'dead-drop-district',
+      'spare-parts-gospel',
+      'static-on-the-hospital-band',
+      'meter-running',
+      'precinct-ashes',
+      'the-switchboard-name',
+    ],
+    branchOutcomes: { 'double-booking': 'save-passenger-a' },
+  });
+  await acknowledgeStoryPanel(page);
+
+  const worldCounts = () =>
+    page.evaluate(() => {
+      const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+      const scene = game?.scene.getScene('City') as {
+        world: { cars: unknown[]; pedestrians: unknown[]; mission?: { id: string } | null };
+      };
+      return {
+        missionId: scene?.world.mission?.id ?? null,
+        cars: scene?.world.cars.length ?? 0,
+        pedestrians: scene?.world.pedestrians.length ?? 0,
+      };
+    });
+
+  const harborCounts = await worldCounts();
+  await completeActiveStoryMission(page);
+  await waitForStoryProgress(page, {
+    missionId: 'crane-jam',
+    chapterId: 'freight-union-morning',
+    completedMissionId: 'harbor-echo',
+  });
+  await acknowledgeStoryPanel(page);
+  const craneCounts = await worldCounts();
+
+  await completeActiveStoryMission(page);
+  await waitForStoryProgress(page, {
+    missionId: 'the-long-manifest',
+    chapterId: 'freight-union-morning',
+    completedMissionId: 'crane-jam',
+  });
+  await acknowledgeStoryPanel(page);
+  const manifestCounts = await worldCounts();
+
+  expect(harborCounts.missionId).toBe('harbor-echo');
+  expect(craneCounts.missionId).toBe('crane-jam');
+  expect(manifestCounts.missionId).toBe('the-long-manifest');
+  expect(craneCounts.cars).toBe(harborCounts.cars);
+  expect(manifestCounts.cars).toBe(harborCounts.cars);
+  expect(manifestCounts.pedestrians).toBeLessThanOrEqual(harborCounts.pedestrians + 1);
 });

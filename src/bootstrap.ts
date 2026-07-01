@@ -88,6 +88,9 @@ function chapterCards(progress = createStoryProgress(STORY_MODE_PROTOTYPE)): str
           const unlocked = progress.unlockedChapterIds.includes(chapter.id);
           const completed = progress.completedChapterIds.includes(chapter.id);
           const current = currentChapterId === chapter.id;
+          const completedMissionCount = chapter.missions.filter((mission) =>
+            progress.completedMissionIds.includes(mission.id),
+          ).length;
           const status = completed
             ? 'Completed'
             : current
@@ -107,8 +110,12 @@ function chapterCards(progress = createStoryProgress(STORY_MODE_PROTOTYPE)): str
               <span class="story-chapter-kicker">Chapter ${chapter.order}</span>
               <span class="story-chapter-title">${chapter.title}</span>
               <span class="story-chapter-copy">${chapter.combinedGoal}</span>
-              <span class="story-chapter-meta">${status} • ${chapter.missions.length} missions</span>
-              <span class="story-chapter-systems">${chapterMissingSystems(chapter).map(formatStorySystem).join(' · ')}</span>
+              <span class="story-chapter-meta">${status} • ${completedMissionCount}/${chapter.missions.length} missions</span>
+              ${renderTagList(
+                chapterMissingSystems(chapter).map(formatStorySystem),
+                'story-tag-list story-tag-list--chapter',
+                'No tracked systems',
+              )}
             </button>`;
         })
         .join('');
@@ -157,13 +164,42 @@ function missionScorecardItems(): string {
         <li class="story-scorecard-item">
           <span class="story-scorecard-kicker">${card.chapterTitle}${when ? ` • ${when}` : ''}</span>
           <strong class="story-scorecard-title">${card.missionTitle}</strong>
-          <span class="story-scorecard-copy">Reward: $${card.reward} • ${card.durationSeconds}s</span>
-          <span class="story-scorecard-copy">${card.vehicleConditionText}</span>
-          <span class="story-scorecard-copy">${card.serviceLaneText}</span>
-          <span class="story-scorecard-copy">${card.factionEffectText}</span>
-          <span class="story-scorecard-systems">${card.systemsText}</span>
+          <span class="story-scorecard-copy story-scorecard-copy--outcome">${card.outcome}</span>
+          <div class="story-scorecard-metrics">
+            <span class="story-scorecard-metric"><strong>Reward</strong><span>$${card.reward}</span></span>
+            <span class="story-scorecard-metric"><strong>Duration</strong><span>${card.durationSeconds}s</span></span>
+            <span class="story-scorecard-metric"><strong>Vehicle</strong><span>${card.vehicleConditionText}</span></span>
+            <span class="story-scorecard-metric"><strong>Service</strong><span>${card.serviceLaneText}</span></span>
+            <span class="story-scorecard-metric"><strong>Faction</strong><span>${card.factionEffectText}</span></span>
+            <span class="story-scorecard-metric"><strong>Story</strong><span>${card.unlockText}</span></span>
+          </div>
+          <span class="story-scorecard-copy">${card.nextText}</span>
+          ${renderTagList(
+            card.systemsText
+              .split('·')
+              .map((value) => value.trim())
+              .filter(Boolean),
+            'story-tag-list story-tag-list--scorecard',
+            'No tracked systems',
+          )}
         </li>`;
     })
+    .join('');
+}
+
+function activeConsequenceItems(progress = createStoryProgress(STORY_MODE_PROTOTYPE)): string {
+  const entries = Object.entries(progress.branchOutcomes);
+  if (entries.length === 0) {
+    return '<li class="story-archive-empty">No carried consequences yet.</li>';
+  }
+  return entries
+    .map(
+      ([branchId, outcomeId]) => `
+        <li class="story-archive-item">
+          <span class="story-archive-title">${storyBranchOutcomeTitle(branchId, outcomeId)}</span>
+          <span class="story-archive-copy">${branchId}</span>
+        </li>`,
+    )
     .join('');
 }
 
@@ -212,6 +248,34 @@ type StoryRunOverview = {
   scoreText: string;
   choiceTitles: string[];
 };
+
+function renderTagList(
+  tags: readonly string[],
+  className = 'story-tag-list',
+  emptyText = 'None',
+): string {
+  const values = tags.filter((tag) => tag.trim().length > 0);
+  if (values.length === 0) {
+    return `<span class="${className}"><span class="story-tag">${emptyText}</span></span>`;
+  }
+  return `<span class="${className}">${values
+    .map((tag) => `<span class="story-tag">${tag}</span>`)
+    .join('')}</span>`;
+}
+
+function storyBranchOutcomeTitle(branchId: string, outcomeId: string): string {
+  for (const act of STORY_MODE_PROTOTYPE.acts) {
+    for (const chapter of act.chapters) {
+      for (const mission of chapter.missions) {
+        const variant = mission.variants?.find(
+          (entry) => entry.branchId === branchId && entry.outcomeId === outcomeId,
+        );
+        if (variant?.title) return variant.title;
+      }
+    }
+  }
+  return `${branchId}: ${outcomeId}`;
+}
 
 const STORY_TOUCH_PREF_KEY = 'sindicate.touchEnabled';
 
@@ -487,6 +551,12 @@ function renderStoryMenu(game: ArcadeGame): void {
                     </article>`,
                 )
                 .join('')}
+            </div>
+            <div class="story-scorecard-block" aria-label="Active consequences">
+              <h3>Active Consequences</h3>
+              <ul class="story-archive-list">
+                ${activeConsequenceItems(progress)}
+              </ul>
             </div>
             <div class="story-scorecard-block" aria-label="Recent mission scorecards">
               <h3>Recent Scorecards</h3>

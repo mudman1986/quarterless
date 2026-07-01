@@ -1,5 +1,6 @@
 import {
   createEscortMissionScript,
+  vehicleRouteActor,
 } from './storyMode';
 import type { StoryChapter } from './storyMode';
 
@@ -183,6 +184,7 @@ export const FREIGHT_UNION_MORNING: StoryChapter = {
       failureState: 'Fail if the trap lane is lost before the convoy locks in.',
       payoff:
         'The trapped convoy confirms the forged manifest route and gives the union something worth broadcasting.',
+      requiredSystems: ['defend', 'scriptedEncounter', 'districtState'],
       prototypeRuntime: {
         id: 'crane-jam',
         title: 'Crane Jam',
@@ -202,6 +204,51 @@ export const FREIGHT_UNION_MORNING: StoryChapter = {
           },
         ],
         reward: 4700,
+      },
+      prototypeScript: {
+        primaryActorId: 'manifest-convoy-truck',
+        actors: [],
+        stages: [
+          {
+            id: 'crane-bait',
+            title: 'Box the convoy into the lane',
+            primaryActorId: 'manifest-convoy-truck',
+            districtState: {
+              label: 'The convoy is still hunting for a lane that is not closing',
+              summary:
+                'The dock cranes are still moving overhead while the union tries to bait the lead truck into the trap line.',
+              trafficSpeedMultiplier: 0.72,
+              serviceLaneBlocks: ['tow'],
+            },
+            actors: [
+              vehicleRouteActor(
+                'manifest-convoy-truck',
+                'pickup',
+                [
+                  { x: 3392, y: 2816 },
+                  { x: 3648, y: 2752 },
+                  { x: 3840, y: 2624 },
+                ],
+                108,
+                { followRadius: 280, tailDrainPerSecond: 1.5, loseGraceSeconds: 2.5 },
+              ),
+            ],
+            nextWhen: { kind: 'storyObjective', objectiveIndex: 1 },
+          },
+          {
+            id: 'crane-lock',
+            title: 'Hold the trap lane',
+            districtState: {
+              label: 'The crane trap is closing around the convoy nose',
+              summary:
+                'The lead truck is pinned in the loading lane long enough for the union to jam the whole corridor shut.',
+              suppressNpcDriving: true,
+              trafficSpeedMultiplier: 0.58,
+              serviceLaneBlocks: ['tow', 'police'],
+            },
+            actors: [],
+          },
+        ],
       },
     },
     {
@@ -228,6 +275,72 @@ export const FREIGHT_UNION_MORNING: StoryChapter = {
         ],
         reward: 5400,
       },
+      variants: [
+        {
+          branchId: 'double-booking',
+          outcomeId: 'save-passenger-a',
+          title: 'The Long Manifest: Club Backhaul',
+          hook: 'The uptown lead keeps one cleaner freight lane open through the harbor back streets.',
+          primaryGoal:
+            'Escort the union leader through the backhaul lane and keep the broadcast line stable until the readout clears the docks.',
+          failureState:
+            'Fail if the backhaul lane breaks before the manifesto reaches the harbor loudspeakers.',
+          prototypeRuntime: {
+            id: 'the-long-manifest',
+            title: 'The Long Manifest: Club Backhaul',
+            objectives: [
+              {
+                kind: 'survive',
+                description: 'Keep the backhaul broadcast lane alive for 18 seconds',
+                seconds: 18,
+              },
+            ],
+            reward: 5400,
+          },
+          prototypeScript: createEscortMissionScript({
+            actorId: 'union-leader',
+            route: [
+              { x: 3904, y: 2432 },
+              { x: 3648, y: 2240 },
+              { x: 3328, y: 2176 },
+            ],
+            speed: 42,
+            failureText: 'The union leader lost the cleaner backhaul lane before the readout landed.',
+          }),
+        },
+        {
+          branchId: 'double-booking',
+          outcomeId: 'save-passenger-b',
+          title: 'The Long Manifest: River Readout',
+          hook: 'The river lead gives the union a faster but more exposed line along the floodwall roads.',
+          primaryGoal:
+            'Escort the union leader through the river readout lane and keep the broadcast alive until the wall-road ambush burns out.',
+          failureState:
+            'Fail if the river readout lane breaks before the manifesto clears the floodwall speakers.',
+          prototypeRuntime: {
+            id: 'the-long-manifest',
+            title: 'The Long Manifest: River Readout',
+            objectives: [
+              {
+                kind: 'survive',
+                description: 'Keep the river readout lane alive for 18 seconds',
+                seconds: 18,
+              },
+            ],
+            reward: 5400,
+          },
+          prototypeScript: createEscortMissionScript({
+            actorId: 'union-leader',
+            route: [
+              { x: 4032, y: 2496 },
+              { x: 3904, y: 2240 },
+              { x: 3648, y: 2048 },
+            ],
+            speed: 44,
+            failureText: 'The union leader was cut off along the river readout before the broadcast held.',
+          }),
+        },
+      ],
       prototypeScript: createEscortMissionScript({
         actorId: 'union-leader',
         route: [

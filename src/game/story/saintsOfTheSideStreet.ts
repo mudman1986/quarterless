@@ -2,6 +2,7 @@ import {
   createEscortMissionScript,
   escortRadiusFailRule,
   escortRouteActor,
+  missionTargetSquadActor,
   wantedPressureFailRule,
 } from './storyMode';
 import type { StoryChapter } from './storyMode';
@@ -266,16 +267,56 @@ export const SAINTS_OF_THE_SIDE_STREET: StoryChapter = {
         ],
         reward: 5500,
       },
-      prototypeScript: createEscortMissionScript({
-        actorId: 'clinic-doctors',
-        route: [
-          { x: 1408, y: 2944 },
-          { x: 1600, y: 2752 },
-          { x: 1792, y: 2560 },
+      prototypeScript: {
+        primaryActorId: 'clinic-raiders',
+        actors: [],
+        stages: [
+          {
+            id: 'clinic-hold',
+            title: 'Hold the clinic doors',
+            primaryActorId: 'clinic-raiders',
+            districtState: {
+              label: 'The raid is still hammering the chapel doors',
+              summary:
+                'The front entrance is holding for now, but the aid network is burning through every safe lane around the church.',
+              serviceLaneBlocks: ['ambulance'],
+              wantedPressureBonus: 1,
+            },
+            actors: [missionTargetSquadActor('clinic-raiders', { x: 1408, y: 2944 }, 4, 22)],
+            nextWhen: { kind: 'storyObjective', objectiveIndex: 1 },
+          },
+          {
+            id: 'cemetery-fallback',
+            title: 'Get the doctors clear',
+            primaryActorId: 'clinic-doctors',
+            districtState: {
+              label: 'The front entrance failed and the doctors are breaking for the cemetery gate',
+              summary:
+                'The clinic is lost, but the doctors can still make the safe-house line if you keep the fallback corridor open.',
+              suppressNpcDriving: true,
+              trafficSpeedMultiplier: 0.64,
+              serviceLaneBlocks: ['ambulance', 'police'],
+            },
+            actors: [
+              escortRouteActor(
+                'clinic-doctors',
+                [
+                  { x: 1408, y: 2944 },
+                  { x: 1600, y: 2752 },
+                  { x: 1792, y: 2560 },
+                ],
+                38,
+              ),
+            ],
+            failRules: [
+              escortRadiusFailRule(
+                'clinic-doctors',
+                'The doctors were cut off before they reached the cemetery gate.',
+              ),
+            ],
+          },
         ],
-        speed: 38,
-        failureText: 'The doctors were cut off before they reached the cemetery gate.',
-      }),
+      },
     },
   ],
 };

@@ -315,7 +315,7 @@ button {
 .story-scorecard-item,
 .story-scorecard-empty {
   display: grid;
-  gap: 4px;
+  gap: 8px;
   border: 1px solid #293342;
   border-radius: 8px;
   padding: 12px;
@@ -342,10 +342,37 @@ button {
   line-height: 1.4;
 }
 
+.story-scorecard-copy--outcome {
+  color: #d8e8f8;
+}
+
 .story-scorecard-systems {
   color: #47d7ff;
   font-size: 0.78rem;
   letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.story-scorecard-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.story-scorecard-metric {
+  display: grid;
+  gap: 3px;
+  padding: 8px;
+  border-radius: 6px;
+  background: rgba(17, 24, 39, 0.9);
+  color: #b8c3d1;
+  line-height: 1.35;
+}
+
+.story-scorecard-metric strong {
+  color: #9fb0c4;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
@@ -507,8 +534,36 @@ button {
   text-transform: uppercase;
 }
 
+.story-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.story-tag-list--chapter {
+  margin-top: 2px;
+}
+
+.story-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border: 1px solid rgba(71, 215, 255, 0.24);
+  border-radius: 999px;
+  background: rgba(17, 24, 39, 0.95);
+  color: #47d7ff;
+  font-size: 0.72rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
 @media (max-width: 900px) {
   .story-menu-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .story-scorecard-metrics {
     grid-template-columns: 1fr;
   }
 }

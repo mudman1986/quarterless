@@ -364,6 +364,19 @@ describe('compileStoryChapterRuntimeCampaign', () => {
     );
   });
 
+  it('carries grouped-lead outcomes into later-act mission variants', () => {
+    const chapter = STORY_MODE_PROTOTYPE.acts[1]!.chapters[0]!;
+    const resolved = resolveStoryMissionPlan(chapter.missions[4]!, {
+      'double-booking': 'save-passenger-a',
+    });
+
+    expect(resolved.title).toBe('The Long Manifest: Club Backhaul');
+    expect(resolved.prototypeRuntime?.objectives[0]).toMatchObject({
+      kind: 'survive',
+      description: 'Keep the backhaul broadcast lane alive for 18 seconds',
+    });
+  });
+
   it('keeps fixed-position story markers out of water across all authored mission plans', () => {
     const city = buildCity(CITY_SPEC);
     let checkedTargets = 0;
