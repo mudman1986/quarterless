@@ -69,6 +69,16 @@ type TestHook = {
   poweredUp: boolean;
 };
 
+type TangramKeys = {
+  left: Phaser.Input.Keyboard.Key;
+  right: Phaser.Input.Keyboard.Key;
+  up: Phaser.Input.Keyboard.Key;
+  a: Phaser.Input.Keyboard.Key;
+  d: Phaser.Input.Keyboard.Key;
+  w: Phaser.Input.Keyboard.Key;
+  space: Phaser.Input.Keyboard.Key;
+};
+
 const levelPlatforms: readonly Platform[] = [
   { x: 0, y: 448, width: 480, height: 92, color: 0x73c66f, trim: 0x5aa65a },
   { x: 550, y: 404, width: 180, height: 24, color: 0xffd166, trim: 0xe3a938 },
@@ -129,7 +139,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   };
 
   private keys:
-    | ReturnType<Phaser.Input.Keyboard.KeyboardPlugin['addKeys']>
+    | TangramKeys
     | undefined;
   private player!: Phaser.GameObjects.Container;
   private playerAura!: Phaser.GameObjects.Ellipse;
@@ -198,7 +208,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       d: 'D',
       w: 'W',
       space: 'SPACE',
-    });
+    }) as TangramKeys | undefined;
     this.updateHud();
   }
 
@@ -650,7 +660,9 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     if (intersects(this.playerRect(), checkpointZone)) {
       this.checkpointActivated = true;
       this.lastCheckpoint = { x: checkpointZone.x + 12, y: checkpointZone.y - 8, label: checkpointZone.label };
-      this.checkpointBanner.list.forEach((child) => child.setTint(0x7dfc8a));
+      this.checkpointBanner.list.forEach((child) => {
+        if ('setTint' in child && typeof child.setTint === 'function') child.setTint(0x7dfc8a);
+      });
       this.setHint(`Checkpoint reached: ${checkpointZone.label}`);
       this.updateHud();
     }
@@ -770,7 +782,7 @@ function createHudPanel(parent: HTMLElement): {
   power: HTMLSpanElement;
   hint: HTMLParagraphElement;
 } {
-  const panel = document.createElement('section');
+  const panel = document.createElement('div');
   panel.className = 'tangram-platformer-hud';
   panel.innerHTML = `
     <div class="tangram-platformer-chip-grid">
@@ -914,6 +926,8 @@ function createConfig(parent: HTMLElement, scene: PenguinsOfTangramScene): Phase
     type: Phaser.AUTO,
     parent,
     backgroundColor: '#8fd8ff',
+    width: VIEWPORT_WIDTH,
+    height: VIEWPORT_HEIGHT,
     scale: {
       mode: Phaser.Scale.RESIZE,
       autoCenter: Phaser.Scale.CENTER_BOTH,
