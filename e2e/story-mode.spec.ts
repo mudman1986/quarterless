@@ -1309,6 +1309,68 @@ test('story mode fails quiet-route missions when the wanted level stays hot', as
   });
 });
 
+test('a route objective time-limit failure restarts the current story mission', async ({ page }) => {
+  await launchStoryMode(page);
+  await restartIntoStoryProgress(page, {
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'dead-drop-district',
+      missionId: 'burned-locker',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: ['dead-drop-district'],
+    completedChapterIds: [],
+    completedMissionIds: ['night-ferry-run'],
+    branchOutcomes: {},
+  });
+  await acknowledgeStoryPanel(page);
+
+  const failure = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      world: {
+        campaign?: {
+          missions: Array<{ status: string; failureReason?: string }>;
+          currentIndex: number;
+        } | null;
+      };
+      pendingStoryRestart?: unknown;
+      storyPanel?: { text: string; visible: boolean };
+      storyProgress?: { current: { objectiveIndex: number } | null } | null;
+      syncStoryScript?: (dt?: number) => void;
+    };
+    const campaign = scene?.world?.campaign;
+    if (!campaign || typeof scene?.syncStoryScript !== 'function') {
+      throw new Error('Missing time-limit fail hooks');
+    }
+
+    const mission = campaign.missions[campaign.currentIndex];
+    mission.status = 'failed';
+    mission.failureReason =
+      'Ran out of time: Reach the 3 storage lockers in sequence before the trail goes cold';
+    scene.syncStoryScript(0.1);
+    return {
+      pendingRestart: !!scene.pendingStoryRestart,
+      text: scene.storyPanel?.text ?? '',
+      objectiveIndex: scene.storyProgress?.current?.objectiveIndex ?? null,
+      visible: !!scene.storyPanel?.visible,
+    };
+  });
+
+  expect(failure).toEqual({
+    pendingRestart: true,
+    text:
+      'MISSION FAILED\n\n' +
+      'Ran out of time: Reach the 3 storage lockers in sequence before the trail goes cold\n\n' +
+      'Retrying Burned Locker...',
+    objectiveIndex: 0,
+    visible: true,
+  });
+});
+
 test('story mode can complete a longer multi-objective encounter and roll into the next chapter', async ({
   page,
 }) => {

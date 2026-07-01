@@ -17,7 +17,7 @@ import type { WorldOptions } from '../../core/world';
 import { CITY_SPEC } from '../citySpec';
 import { clearGameState, GAME_STATE_KEY, loadGameState, saveGameState } from '../../core/gameState';
 import { loadHighScore, saveHighScore, type KeyValueStore } from '../../core/highScore';
-import type { Mission } from '../../core/mission';
+import { isFailed, type Mission } from '../../core/mission';
 import type { Car } from '../../core/vehicle';
 import type { Pedestrian } from '../../core/pedestrianAI';
 import { type TrafficAI, openDirections, tileCoord } from '../../core/trafficAI';
@@ -700,6 +700,10 @@ export class CityScene extends Phaser.Scene {
     }
 
     this.runStoryScript(mission.prototypeScript, dt);
+    const missionState = this.world.mission;
+    if (missionState && isFailed(missionState) && !this.pendingStoryRestart) {
+      this.restartCurrentStoryMission(missionState.failureReason ?? `Ran out of time.`);
+    }
     this.world.setStoryObjectiveProgress({
       tailSeconds: this.storyScript.tailSeconds,
       captureSeconds: this.storyScript.captureSeconds,

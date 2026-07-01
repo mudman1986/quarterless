@@ -561,7 +561,7 @@ Main code areas:
 - src/bootstrap.ts
 - src/game/scenes/CityScene.ts
 
-### Stage 4 - Make The Runtime Observable
+### Stage 4 - Make The Runtime Observable (complete)
 
 Goal: expose the right runtime information to the player and to regression tests.
 
@@ -571,15 +571,15 @@ Why before visual polish:
 
 Required outcomes:
 
-1. Mission summaries report the real systemic outcomes the runtime produces.
-2. District-state surfaces and stage-shift messaging reflect actual mission state.
-3. Branch-driven setup changes are visible in mission briefings, markers, and summaries.
-4. Presentation text is driven by runtime facts, not duplicated assumptions.
+1. Mission summaries report the real systemic outcomes the runtime produces. — already true: `CityScene.buildStoryMissionSummaryCard` computes collateral, duration, vehicle-condition delta, service-lane state, and faction-effect text from live `world`/baseline deltas captured by `syncStoryMissionSummaryBaseline`, not from static authored text.
+2. District-state surfaces and stage-shift messaging reflect actual mission state. — already true: `syncStoryStateText` shows the active stage's `stageLabel` every frame, and `runStoryScript`'s stage-transition block shows a "STAGE SHIFT" panel built from the next stage's authored `districtState`, right where `despawnStoryActor` also runs (Stage 2 work) — verified directly by reading `CityScene.ts`.
+3. Branch-driven setup changes are visible in mission briefings, markers, and summaries. — already true: `currentStoryMission`/`currentStoryMissionChoices` resolve branch-dependent variants via `resolveStoryMissionPlan` before any briefing, marker, or summary reads mission fields, so variant title/hook/goal/payoff/systems flow through automatically.
+4. Presentation text is driven by runtime facts, not duplicated assumptions. — already true: summary text fields (collateral counts, vehicle health percentages, faction-effect deltas) are computed from live counters each time, not cached or hand-authored strings. **Real gap found and fixed**: several authored missions (e.g. `burned-locker`'s "Reach the 3 storage lockers..." route) carry a `timeLimitSeconds` on their pure `Mission` objective. Expiry called `failMission()` (Stage 1), setting `Mission.status = 'failed'` and `failureReason`, but nothing ever read that fact — `World.updateMissionProgress()` only reacts to `isComplete()`, and `CityScene` only surfaced failure via the separate actor-driven `StoryFailRule` → `restartCurrentStoryMission` path. A timed-out route/sabotage objective therefore froze silently forever with zero player feedback. Fixed by having `CityScene.syncStoryScript` check `this.world.mission` with `isFailed()` each frame and call `restartCurrentStoryMission(mission.failureReason)`, matching the existing actor-driven failure presentation exactly.
 
 Required tests before moving on:
 
-1. Browser coverage for stage shifts, summaries, branch-variant text, launcher resume, and chapter transitions.
-2. Regression coverage for mission outcome text and visible state updates.
+1. Browser coverage for stage shifts, summaries, branch-variant text, launcher resume, and chapter transitions. — covered by `story-mode.spec.ts` ("scripted district-state missions announce stage shifts...", "scripted encounter mission summaries keep their authored objective outcome text", "story mode resolves branch-dependent mission variants from saved outcomes", "story mode resolves branch-dependent mission variants from a live recorded outcome", "the integrated Sindicate launcher can replay an unlocked chapter selection after pausing", "story mode restarts into the next chapter after chapter completion", "story mode can progress across multiple chapter finales and preserve unlock state", "a route objective time-limit failure restarts the current story mission") — all re-run directly and pass.
+2. Regression coverage for mission outcome text and visible state updates. — covered by the same summary/stage-shift tests above, which assert on the actual rendered panel/state text rather than internal state alone.
 
 Main code areas:
 
