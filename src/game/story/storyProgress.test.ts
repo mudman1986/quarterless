@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { KeyValueStore } from '../../core/highScore';
-import { DEAD_DROP_DISTRICT, SPARE_PARTS_GOSPEL, STORY_MODE_PROTOTYPE } from './deadDropDistrict';
+import { DEAD_DROP_DISTRICT } from './deadDropDistrict';
+import { SPARE_PARTS_GOSPEL } from './sparePartsGospel';
+import { STORY_MODE_PROTOTYPE } from './storyCampaign';
 import {
   clearStoryProgress,
   completeStoryMission,

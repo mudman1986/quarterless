@@ -38,7 +38,7 @@ import { Sound } from '../audio/Sound';
 import { createGameTextures, TEX } from '../art/textures';
 import { NO_CONTROLS } from '../../core/types';
 import { buildSandboxCampaigns } from '../story/sandboxCampaigns';
-import { STORY_MODE_PROTOTYPE } from '../story/deadDropDistrict';
+import { STORY_MODE_PROTOTYPE } from '../story/storyCampaign';
 import {
   clearStoryProgress,
   completeStoryMission,
@@ -715,7 +715,7 @@ export class CityScene extends Phaser.Scene {
       };
     }
 
-    this.runStoryScript(mission.prototypeScript, dt);
+    this.runStoryScript(mission, dt);
     const missionState = this.world.mission;
     if (missionState && isFailed(missionState) && !this.pendingStoryRestart) {
       this.restartCurrentStoryMission(missionState.failureReason ?? `Ran out of time.`);
@@ -920,13 +920,22 @@ export class CityScene extends Phaser.Scene {
       ...this.storyProgress,
       current: { ...this.storyProgress.current, objectiveIndex: 0 },
     };
+    saveGameState(
+      this.store,
+      {
+        world: this.world.snapshot(),
+        timeOfDay: this.timeOfDay,
+      },
+      GAME_STATE_KEY,
+    );
+    saveStoryProgress(this.store, restart, storyProgressSaveKey(GAME_STATE_KEY));
     this.storyProgress = restart;
     this.showStoryPanel(
       `MISSION FAILED\n\n${failureText}\n\nRetrying ${currentStoryMission(STORY_MODE_PROTOTYPE, restart)?.title ?? 'mission'}...`,
       2.6,
     );
     this.pendingStoryRestart = restart;
-    this.pendingStoryRestartResume = false;
+    this.pendingStoryRestartResume = true;
   }
 
   private activeStoryStage(runtime: StoryRuntimeScript): StoryRuntimeStage | null {
@@ -936,8 +945,9 @@ export class CityScene extends Phaser.Scene {
     return stages[safeIndex] ?? null;
   }
 
-  private runStoryScript(runtime: StoryRuntimeScript | undefined, dt: number): void {
+  private runStoryScript(mission: StoryMissionPlan, dt: number): void {
     const script = this.storyScript!;
+    const runtime = mission.prototypeScript;
     if (!runtime) {
       script.tailSeconds = 0;
       script.captureSeconds = 0;
@@ -1053,7 +1063,21 @@ export class CityScene extends Phaser.Scene {
     script.failCounters = fail.progress.failCounters;
     if (fail.failureText) this.restartCurrentStoryMission(fail.failureText);
 
-    if (isStageTransitionMet(stage.nextWhen, fail.progress, routeIndices)) {
+    const storyObjectiveIndex = this.world.mission
+      ? storyObjectiveIndexFromRuntime(mission, this.world.mission.currentIndex)
+      : null;
+    const routeProgress =
+      this.world.mission?.objectiveState?.kind === 'route'
+        ? this.world.mission.objectiveState.completed
+        : 0;
+    if (
+      isStageTransitionMet(stage.nextWhen, {
+        progress: fail.progress,
+        routeIndices,
+        storyObjectiveIndex,
+        routeProgress,
+      })
+    ) {
       const stages = this.runtimeStages(runtime);
       if (script.stageIndex < stages.length - 1) {
         const nextStage = stages[script.stageIndex + 1]!;

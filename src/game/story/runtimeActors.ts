@@ -49,19 +49,29 @@ export interface StoryScriptTickResult {
   failureText: string | null;
 }
 
+export interface StoryStageTransitionContext {
+  progress: StoryProgressState;
+  routeIndices: Record<string, number>;
+  storyObjectiveIndex?: number | null;
+  routeProgress?: number;
+}
+
 export function isStageTransitionMet(
   transition: StoryStageTransition | undefined,
-  progress: StoryProgressState,
-  routeIndices: Record<string, number>,
+  context: StoryStageTransitionContext,
 ): boolean {
   if (!transition) return false;
   switch (transition.kind) {
     case 'routeComplete':
-      return routeIndices[transition.actorId] === Number.MAX_SAFE_INTEGER;
+      return context.routeIndices[transition.actorId] === Number.MAX_SAFE_INTEGER;
     case 'tailSeconds':
-      return progress.tailSeconds >= transition.seconds;
+      return context.progress.tailSeconds >= transition.seconds;
     case 'captureSeconds':
-      return progress.captureSeconds >= transition.seconds;
+      return context.progress.captureSeconds >= transition.seconds;
+    case 'storyObjective':
+      return (context.storyObjectiveIndex ?? -1) >= transition.objectiveIndex;
+    case 'routeProgress':
+      return (context.routeProgress ?? 0) >= transition.count;
   }
 }
 

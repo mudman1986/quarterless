@@ -2,7 +2,8 @@ import { buildCity } from '../../core/city';
 import { currentObjective } from '../../core/mission';
 import { describe, expect, it } from 'vitest';
 import { CITY_SPEC } from '../citySpec';
-import { DEAD_DROP_DISTRICT, STORY_MODE_PROTOTYPE } from './deadDropDistrict';
+import { DEAD_DROP_DISTRICT } from './deadDropDistrict';
+import { STORY_MODE_PROTOTYPE } from './storyCampaign';
 import { buildSandboxCampaigns } from './sandboxCampaigns';
 import {
   STORY_MISSION_GROUP_SELECTION_INDEX,
@@ -14,11 +15,15 @@ import {
   countStoryChapters,
   countStoryMissions,
   createEscortMissionScript,
+  createWantedPressureMissionScript,
+  createWantedPressureStage,
   escortRadiusFailRule,
   escortRouteActor,
   actorVehicleConditionFailRule,
   createProtectedVehicleTailScript,
   formatStorySystem,
+  missionTargetSquadActor,
+  vehicleRouteActor,
   wantedPressureFailRule,
   isChapterRuntimeReady,
   resolveStoryMissionPlan,
@@ -146,8 +151,8 @@ function withFirstMission(story: StoryMode, mission: StoryMissionPlan): StoryMod
 describe('validateStoryMode', () => {
   it('accepts the first implemented story slice', () => {
     expect(validateStoryMode(STORY_MODE_PROTOTYPE)).toEqual([]);
-    expect(countStoryChapters(STORY_MODE_PROTOTYPE)).toBe(10);
-    expect(countStoryMissions(STORY_MODE_PROTOTYPE)).toBe(50);
+    expect(countStoryChapters(STORY_MODE_PROTOTYPE)).toBe(12);
+    expect(countStoryMissions(STORY_MODE_PROTOTYPE)).toBe(60);
   });
 
   it('accepts a minimal well-formed fixture', () => {
@@ -225,6 +230,67 @@ describe('validateStoryMode', () => {
       ),
     ).toBe(true);
   });
+
+  it('flags a stage transition that references an unknown actor id', () => {
+    const story = minimalStoryMode();
+    const mission: StoryMissionPlan = {
+      ...minimalMission('chapter-1-m1'),
+      prototypeRuntime: {
+        id: 'chapter-1-m1',
+        title: 'Route setup',
+        objectives: [{ kind: 'survive', description: 'Hold', seconds: 5 }],
+      },
+      prototypeScript: {
+        primaryActorId: 'real-actor',
+        actors: [escortRouteActor('real-actor', [{ x: 0, y: 0 }], 100)],
+        stages: [
+          {
+            id: 'bad-transition',
+            title: 'Bad transition',
+            primaryActorId: 'real-actor',
+            actors: [escortRouteActor('real-actor', [{ x: 0, y: 0 }], 100)],
+            nextWhen: { kind: 'routeComplete', actorId: 'ghost-actor' },
+          },
+        ],
+      },
+    };
+    const malformed = withFirstMission(story, mission);
+    expect(
+      validateStoryMode(malformed).some((issue) =>
+        issue.message.includes('Stage transition "routeComplete" references unknown actor id'),
+      ),
+    ).toBe(true);
+  });
+
+  it('flags a stage transition that points past the authored objectives', () => {
+    const story = minimalStoryMode();
+    const mission: StoryMissionPlan = {
+      ...minimalMission('chapter-1-m1'),
+      prototypeRuntime: {
+        id: 'chapter-1-m1',
+        title: 'Single objective',
+        objectives: [{ kind: 'survive', description: 'Hold', seconds: 5 }],
+      },
+      prototypeScript: {
+        primaryActorId: 'watcher',
+        actors: [],
+        stages: [
+          {
+            id: 'too-far',
+            title: 'Too far',
+            actors: [],
+            nextWhen: { kind: 'storyObjective', objectiveIndex: 2 },
+          },
+        ],
+      },
+    };
+    const malformed = withFirstMission(story, mission);
+    expect(
+      validateStoryMode(malformed).some((issue) =>
+        issue.message.includes('references objective index 2'),
+      ),
+    ).toBe(true);
+  });
 });
 
 describe('chapter runtime readiness', () => {
@@ -240,6 +306,11 @@ describe('chapter runtime readiness', () => {
 
     expect(pending?.map((mission) => mission.id)).toEqual(['hook-chain', 'the-empty-shell']);
     expect(STORY_MISSION_GROUP_SELECTION_INDEX).toBe(-2);
+  });
+
+  it('treats the Stage 5 reference chapter as fully scripted, not just runtime-compiled', () => {
+    expect(DEAD_DROP_DISTRICT.missions.every((mission) => !!mission.prototypeRuntime)).toBe(true);
+    expect(DEAD_DROP_DISTRICT.missions.every((mission) => !!mission.prototypeScript)).toBe(true);
   });
 });
 
@@ -324,6 +395,50 @@ describe('buildSandboxCampaigns', () => {
     expect(campaigns[3]?.[0]).toBeDefined();
     const firstServiceMission = campaigns[3]?.[0];
     expect(firstServiceMission ? currentObjective(firstServiceMission)?.kind : null).toBe('reach');
+  });
+});
+
+describe('story authoring helpers', () => {
+  it('builds reusable vehicle, squad, and wanted-pressure helpers with sane defaults', () => {
+    expect(
+      vehicleRouteActor('runner', 'van', [{ x: 0, y: 0 }, { x: 1, y: 1 }], 90),
+    ).toMatchObject({
+      kind: 'vehicleRoute',
+      actorId: 'runner',
+      vehicleKind: 'van',
+      followRadius: 320,
+    });
+    expect(missionTargetSquadActor('crew', { x: 5, y: 6 }, 3, 20)).toMatchObject({
+      kind: 'pedestrianSquad',
+      actorId: 'crew',
+      missionTargets: true,
+    });
+    expect(
+      createWantedPressureStage({
+        id: 'quiet-lane',
+        title: 'Keep it quiet',
+        label: 'Readers are closing in',
+        summary: 'Stay cold.',
+        minStars: 2,
+        failureText: 'Burned.',
+      }),
+    ).toMatchObject({
+      id: 'quiet-lane',
+      failRules: [{ kind: 'wantedPressure', minStars: 2, failureText: 'Burned.', maxSeconds: 2 }],
+    });
+    expect(
+      createWantedPressureMissionScript({
+        id: 'quiet-lane',
+        title: 'Keep it quiet',
+        label: 'Readers are closing in',
+        summary: 'Stay cold.',
+        minStars: 2,
+        failureText: 'Burned.',
+      }),
+    ).toMatchObject({
+      primaryActorId: 'quiet-lane',
+      stages: [expect.objectContaining({ id: 'quiet-lane' })],
+    });
   });
 });
 
