@@ -1,5 +1,6 @@
 import {
   createEscortMissionScript,
+  vehicleRouteActor,
 } from './storyMode';
 import type { StoryChapter } from './storyMode';
 
@@ -154,6 +155,7 @@ export const GLASS_TOWERS_EMPTY_FLOORS: StoryChapter = {
       failureState: 'Fail if the broker route slips free before the garage lane is forced shut.',
       payoff:
         'The broker is pushed into the forged-deeds convoy that carries the transaction archive.',
+      requiredSystems: ['capture', 'scriptedEncounter', 'districtState'],
       prototypeRuntime: {
         id: 'lobby-flood',
         title: 'Lobby Flood',
@@ -171,6 +173,61 @@ export const GLASS_TOWERS_EMPTY_FLOORS: StoryChapter = {
           },
         ],
         reward: 4800,
+      },
+      prototypeScript: {
+        primaryActorId: 'broker-sedan',
+        actors: [],
+        stages: [
+          {
+            id: 'sprinkler-panic',
+            title: 'Force the broker into the exit lane',
+            districtState: {
+              label: 'The tower panic is still spilling tenants into the garage ramps',
+              summary:
+                'The broker has not broken cover yet, but the sprinkler hit is forcing the security cars to compress the exit lanes.',
+              suppressNpcDriving: true,
+              trafficSpeedMultiplier: 0.68,
+            },
+            actors: [],
+            nextWhen: { kind: 'storyObjective', objectiveIndex: 1 },
+          },
+          {
+            id: 'garage-lock',
+            title: 'Hold the broker lane',
+            primaryActorId: 'broker-sedan',
+            districtState: {
+              label: 'The broker is trying to knife through the garage lock',
+              summary:
+                'Stay on the sedan and pin the lane long enough for the sprinkler trap to hard-lock the ramp.',
+              serviceLaneBlocks: ['police'],
+              trafficSpeedMultiplier: 0.62,
+            },
+            actors: [
+              vehicleRouteActor(
+                'broker-sedan',
+                'sedan',
+                [
+                  { x: 3456, y: 1536 },
+                  { x: 3648, y: 1664 },
+                  { x: 3840, y: 1792 },
+                ],
+                96,
+                { followRadius: 240, captureRadius: 96, captureMaxSpeed: 16 },
+              ),
+              vehicleRouteActor(
+                'security-decoy',
+                'coupe',
+                [
+                  { x: 3392, y: 1600 },
+                  { x: 3584, y: 1728 },
+                  { x: 3776, y: 1856 },
+                ],
+                102,
+                { followRadius: 220 },
+              ),
+            ],
+          },
+        ],
       },
     },
     {
@@ -194,6 +251,70 @@ export const GLASS_TOWERS_EMPTY_FLOORS: StoryChapter = {
         ],
         reward: 5200,
       },
+      variants: [
+        {
+          branchId: 'double-booking',
+          outcomeId: 'save-passenger-a',
+          title: 'Fire Sale Run: Club Press Lane',
+          hook: 'The uptown lead opens a cleaner press route through the club-service streets.',
+          primaryGoal:
+            'Escort the archive truck through the club press lane until it reaches the tenants waiting with the cameras.',
+          failureState: 'Fail if the archive truck slips the club press lane before the deeds are aired.',
+          prototypeRuntime: {
+            id: 'fire-sale-run',
+            title: 'Fire Sale Run: Club Press Lane',
+            objectives: [
+              {
+                kind: 'survive',
+                description: 'Keep the archive truck moving through the club press lane for 18 seconds',
+                seconds: 18,
+              },
+            ],
+            reward: 5200,
+          },
+          prototypeScript: createEscortMissionScript({
+            actorId: 'archive-truck',
+            route: [
+              { x: 3584, y: 1664 },
+              { x: 3328, y: 1856 },
+              { x: 3072, y: 1984 },
+            ],
+            speed: 42,
+            failureText: 'The archive truck lost the cleaner club press lane before the cameras went live.',
+          }),
+        },
+        {
+          branchId: 'double-booking',
+          outcomeId: 'save-passenger-b',
+          title: 'Fire Sale Run: River Press Lane',
+          hook: 'The river lead leaves a faster press lane open along the retaining wall roads.',
+          primaryGoal:
+            'Escort the archive truck through the river press lane until the deeds hit the tenant press pool.',
+          failureState: 'Fail if the archive truck slips the river press lane before the deeds are aired.',
+          prototypeRuntime: {
+            id: 'fire-sale-run',
+            title: 'Fire Sale Run: River Press Lane',
+            objectives: [
+              {
+                kind: 'survive',
+                description: 'Keep the archive truck moving through the river press lane for 18 seconds',
+                seconds: 18,
+              },
+            ],
+            reward: 5200,
+          },
+          prototypeScript: createEscortMissionScript({
+            actorId: 'archive-truck',
+            route: [
+              { x: 3712, y: 1792 },
+              { x: 3520, y: 2048 },
+              { x: 3264, y: 2240 },
+            ],
+            speed: 44,
+            failureText: 'The archive truck lost the river press lane before the deeds reached the wall-road cameras.',
+          }),
+        },
+      ],
       prototypeScript: createEscortMissionScript({
         actorId: 'archive-truck',
         route: [

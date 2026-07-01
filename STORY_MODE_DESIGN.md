@@ -431,14 +431,13 @@ Implemented now:
 - The prototype now scales cleanly through Chapter 12: Broadcast Teeth and Debt Collection Weather are authored on top of the stabilized runtime, bringing the playable story to 12 chapters / 60 missions across Act I and Act II.
 - Story mission failure retries now preserve the current run state instead of wiping money, ammo, and health, and Flatline Gap now uses route-progress district beats instead of an impossible escort fail state.
 
-Prototype limitations right now:
+Current production status:
 
-- Chapter 1 through Chapter 12 missions are playable approximations, not fully scripted bespoke set pieces yet; the remaining bespoke-encounter work now lives in Stage 8 below instead of being an untracked gap.
-- Tail, capture, escort, stealth, defend, vehicle-condition, sabotage-order, and district-state behavior are now consistently wired through tested runtime primitives, but some missions still use simpler linear objective chains where a later bespoke Stage 8 encounter pass could push them further.
-- The mission-actor layer now covers route-driven vehicles, staged convoy handoffs, escorts, decoy splits, named mission-target squads, district-state labels, service-lane blocks, traffic slowdowns, NPC-driving suppression, checkpoint pressure, stealth-pressure fail rules, defend holds, protected-vehicle fail rules, sabotage-order targets, citywide blackout intersections, reserved-route lane clearing, objective-driven stage shifts, and simple fail rules; richer custom encounter scripting beyond those patterns is now explicitly tracked in Stage 8.
-- The launcher now has a stronger chapter-map style board, recent mission scorecards, and per-chapter/per-mission systems badges, but the story presentation is still a compact production prototype rather than a final authored front end; that polish is now tracked in Stage 9 instead of sitting outside the stage list.
-- The grouped free-order model now records choice outcomes, and the meter-running leads can carry different taxi / hospital setups forward, but the consequence chains are still limited to a few authored slices instead of the full story; broader consequence depth is now part of Stage 8.
-- The mission summary card now surfaces vehicle-condition deltas, service-lane state, branch-driven faction shifts, and per-mission systems tags, but it still summarizes those outcomes in text rather than fully bespoke visual widgets; final presentation treatment now belongs to Stage 9.
+- Chapter 1 through Chapter 12 remain the playable slice: 12 chapters, 60 missions, two full acts.
+- The encounter pass is no longer limited to the Dead Drop reference slice: later chapters now use multi-stage authored beats such as convoy traps, capture lanes, fallback evacuations, staged handoffs, blackout pressure, reserved routes, and branch-dependent escort routes.
+- Consequence chains now travel beyond Meter Running: grouped-lead outcomes alter later hospital, freight, and property-fraud mission setup instead of stopping at a single local branch.
+- The launcher now surfaces the useful long-run facts directly: chapter progress counts, active carried consequences, dense scorecards, and per-chapter system tags.
+- Mission-start slowdown from story actors piling up across live transitions is fixed by reusing mission-owned actor slots instead of growing the world state every time a scripted mission rolls forward.
 
 ## Execution Note
 
@@ -651,25 +650,55 @@ Scale order:
 3. Chapter 10, Saints Of The Side Street, was authored out of order (see Execution Note above). Chapter 11 and Chapter 12 are now in line with the stabilized base rather than ahead of it.
 4. Reserve full-story expansion for after the branch, actor, save, and summary layers are no longer shifting underneath content. — still the rule for later acts.
 
-### Stage 8 - Deepen Bespoke Encounter Control
+### Stage 8 - Deepen Bespoke Encounter Control (complete)
 
-Goal: replace the most obviously prototype-shaped missions with richer authored set pieces without weakening the now-stable base.
+Goal: replace the most obviously prototype-shaped missions with richer authored set pieces without weakening the stable base.
 
-Required outcomes:
+Completed outcomes:
 
-1. Add richer encounter scripting than the current route / stage / fail-rule grammar when a mission genuinely needs it.
-2. Expand consequence chains beyond a handful of authored slices so later-story branches feel systemic instead of isolated.
-3. Revisit the chapters already shipped in Stage 5-7 and deepen the missions whose prototype linearity is still visible.
+1. Later-chapter missions now use deeper authored encounter sequencing instead of only linear objective chains. Reference examples: Crane Jam, Lobby Flood, and Quiet Chapel now shift state and actor setup as the mission changes phase.
+2. Grouped-lead outcomes no longer stop inside Meter Running. The same branch now carries into later hospital, freight, and property-fraud missions, changing routes, hooks, failure states, and runtime setup.
+3. Scripted mission transitions no longer accumulate dead actor state across the run. Story-owned cars and pedestrians are reused across chapter advances so long sessions stay responsive.
 
-### Stage 9 - Finish Presentation And Story Surfacing
+### Stage 9 - Finish Presentation And Story Surfacing (complete)
 
 Goal: bring the launcher, summaries, and mission-result surfacing from a strong production prototype to a polished authored front end.
 
+Completed outcomes:
+
+1. The launcher now emphasizes reusable run facts instead of long text blocks: chapter progress counts, active consequences, dense scorecards, and system tags.
+2. Mission-result surfacing is now tuned for future reference: recent scorecards preserve outcome, vehicle, service-lane, faction, unlock, and next-step data in a compact format.
+3. Presentation now matches the deeper encounter/consequence work from Stage 8 closely enough that future content authoring can rely on it instead of treating it as temporary UI.
+
+### Stage 10 - Author Act III Against The Stable Base
+
+Goal: use the now-stable runtime, consequence layer, and launcher surfaces to build the remaining 12 chapters without reopening foundation work.
+
 Required outcomes:
 
-1. Replace the most text-heavy summary panels with bespoke widgets where that improves readability.
-2. Finish the chapter-board / archive / mission-history presentation so the larger story scale reads cleanly.
-3. Align the final UI polish pass with the deeper encounter and consequence work from Stage 8.
+1. Author Chapter 13 through Chapter 24 on top of the existing mission/runtime contracts.
+2. Keep each new chapter inside already-tested encounter patterns unless a new runtime feature is explicitly justified.
+3. Add regression coverage for every new chapter as it lands instead of banking test debt for later.
+
+### Stage 11 - Deepen Citywide Reactivity
+
+Goal: make later acts feel like the city remembers what the player changed, not just which mission variant loaded next.
+
+Required outcomes:
+
+1. Expand branch outcomes from route swaps into broader district-state, faction, and service-network consequences.
+2. Let later missions read accumulated city-state summaries, not only a single branch key.
+3. Surface those broader changes in both the launcher archive and mission summaries without hiding the raw runtime facts.
+
+### Stage 12 - Final Content, Balance, And Ship Gate
+
+Goal: close the remaining gap between a complete story prototype and a shippable story mode.
+
+Required outcomes:
+
+1. Balance mission timings, wanted pressure, escort tolerances, and economy across the full 24-chapter run.
+2. Finish the final quality gates: long-session performance, authored-content validation, end-to-end completion coverage, and regression triage.
+3. Cut or rewrite any chapter/mode surface that still does not earn its maintenance cost.
 
 ### Revised Delivery Order
 
@@ -682,6 +711,9 @@ Required outcomes:
 7. Build authoring helpers and only then widen the story.
 8. Scale to the next 2 chapters only once the runtime base is stable.
 9. Return for bespoke encounter depth and presentation polish after the widened slice holds.
+10. Author Act III only after the widened base stays stable in real long-form play.
+11. Expand consequences from mission-local variants into citywide reactivity.
+12. Finish the ship gate only after the full 24-chapter run is authored and balanced.
 
 ## Recommended Vertical Slice
 
@@ -708,5 +740,6 @@ What is already true in code:
 
 What still remains beyond the completed slice:
 
-- Rich scripted encounter control beyond the current multi-stage actor layer and service-lane choreography (Stage 8).
-- District-state effects now include blackout intersections and reserved-route lane clearing in addition to service-lane, traffic-speed, and checkpoint-pressure controls; richer light-state (e.g. per-axis overrides) and multi-lane reservation shapes are still future work (Stage 8).
+- Author and validate Act III (Chapter 13 through Chapter 24) on top of the now-stable runtime and launcher surfaces (Stage 10).
+- Broaden branch outcomes from route swaps into durable city-state and faction-state changes that can stack across acts (Stage 11).
+- Finish long-session balance, performance, and ship-quality validation across the full story run (Stage 12).

@@ -172,6 +172,75 @@ test('story mode opens a dedicated story menu with chapter select', async ({ pag
   await expect(page.getByLabel("Court The City's Middle Powers")).toBeVisible();
 });
 
+test('story menu surfaces active consequences and dense scorecards for later reference', async ({
+  page,
+}) => {
+  await page.goto('/quarterless/');
+  await page.evaluate(() => {
+    localStorage.setItem(
+      'sindicate.storyProgress',
+      JSON.stringify({
+        version: 1,
+        storyId: 'sindicate-story-mode',
+        current: {
+          actId: 'court-the-citys-middle-powers',
+          chapterId: 'freight-union-morning',
+          missionId: 'the-long-manifest',
+          objectiveIndex: 0,
+        },
+        unlockedChapterIds: [
+          'dead-drop-district',
+          'spare-parts-gospel',
+          'static-on-the-hospital-band',
+          'meter-running',
+          'precinct-ashes',
+          'the-switchboard-name',
+          'freight-union-morning',
+        ],
+        completedChapterIds: [
+          'dead-drop-district',
+          'spare-parts-gospel',
+          'static-on-the-hospital-band',
+          'meter-running',
+          'precinct-ashes',
+          'the-switchboard-name',
+        ],
+        completedMissionIds: [],
+        branchOutcomes: { 'double-booking': 'save-passenger-a' },
+      }),
+    );
+    localStorage.setItem(
+      'sindicate.storyMissionScorecards',
+      JSON.stringify([
+        {
+          chapterTitle: 'Freight Union Morning',
+          missionTitle: 'Harbor Echo',
+          reward: 4500,
+          outcome: 'Rook learned which crate carries the forged tags.',
+          durationSeconds: 34,
+          collateralText: 'Clean run',
+          unlockText: 'Unlocked: Crane Jam',
+          nextText: 'Next: Crane Jam',
+          vehicleConditionText: '92% → 80%',
+          serviceLaneText: 'Paused: tow',
+          factionEffectText: 'Union route secured',
+          systemsText: 'Tail · Scripted Encounter · District State',
+          recordedAt: Date.now(),
+        },
+      ]),
+    );
+  });
+  await page.getByRole('button', { name: 'Play Sindicate' }).click();
+
+  await expect(page.getByRole('heading', { name: 'Active Consequences' })).toBeVisible();
+  await expect(page.getByText('double-booking')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Recent Scorecards' })).toBeVisible();
+  await expect(page.getByText('Harbor Echo')).toBeVisible();
+  await expect(page.getByText('Reward')).toBeVisible();
+  await expect(page.getByText('Service')).toBeVisible();
+  await expect(page.getByLabel('Recent mission scorecards').getByText('Tail')).toBeVisible();
+});
+
 test('story menu can launch a later unlocked chapter from a different act', async ({ page }) => {
   await page.goto('/quarterless/');
   await page.evaluate(() => {
@@ -1035,6 +1104,85 @@ test('story mode carries grouped-lead outcomes into later mission setup', async 
     title: 'Meter Burn: River Slip',
     objective: 'Clear the river fare route through the checkpoint strip',
     state: 'DISTRICT STATE\nRiver-wall readers are sweeping the darker fare lane',
+  });
+});
+
+test('story mode carries grouped-lead outcomes into later-act mission variants', async ({
+  page,
+}) => {
+  await launchStoryMode(page);
+
+  await restartIntoStoryProgress(page, {
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'court-the-citys-middle-powers',
+      chapterId: 'freight-union-morning',
+      missionId: 'the-long-manifest',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: [
+      'dead-drop-district',
+      'spare-parts-gospel',
+      'static-on-the-hospital-band',
+      'meter-running',
+      'precinct-ashes',
+      'the-switchboard-name',
+      'freight-union-morning',
+    ],
+    completedChapterIds: [
+      'dead-drop-district',
+      'spare-parts-gospel',
+      'static-on-the-hospital-band',
+      'meter-running',
+      'precinct-ashes',
+      'the-switchboard-name',
+    ],
+    completedMissionIds: [
+      ...COMPLETED_THROUGH_WARD_6_EXIT,
+      'ward-6-exit',
+      'ghost-fare',
+      'double-booking',
+      'red-light-choir',
+      'meter-burn',
+      'farewell-signal',
+      'badge-borrower',
+      'suspect-carousel',
+      'lockup-blackout',
+      'riot-route',
+      'hard-copy',
+      'dead-letter-branch',
+      'relay-theft',
+      'blue-map-room',
+      'four-minute-silence',
+      'name-in-the-static',
+      'union-test-run',
+      'picket-line-breaker',
+      'harbor-echo',
+      'crane-jam',
+    ],
+    branchOutcomes: { 'double-booking': 'save-passenger-a' },
+  });
+
+  const variant = await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      world: {
+        mission?: { id: string; title: string } | null;
+        missionObjective?: { description: string } | null;
+      };
+    };
+    if (scene?.world?.mission?.id !== 'the-long-manifest') return null;
+    return {
+      title: scene.world.mission?.title ?? '',
+      objective: scene.world.missionObjective?.description ?? '',
+    };
+  });
+
+  expect(await variant.jsonValue()).toEqual({
+    title: 'The Long Manifest: Club Backhaul',
+    objective: 'Keep the backhaul broadcast lane alive for 18 seconds',
   });
 });
 

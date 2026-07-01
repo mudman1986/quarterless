@@ -429,6 +429,8 @@ export class CityScene extends Phaser.Scene {
   private storyProgress: StoryProgressSnapshot | null = null;
   private storyScript: StoryScriptState | null = null;
   private storyMissionSummaryBaseline: StoryMissionSummaryBaseline | null = null;
+  private storyReusableCarIndices: number[] = [];
+  private storyReusablePedIndices: number[] = [];
 
   constructor() {
     super('City');
@@ -506,6 +508,8 @@ export class CityScene extends Phaser.Scene {
     this.pendingStoryRestartResume = false;
     this.storyScript = null;
     this.storyMissionSummaryBaseline = null;
+    this.storyReusableCarIndices = [];
+    this.storyReusablePedIndices = [];
 
     this.city = buildCity(CITY_SPEC);
     createGameTextures(this);
@@ -749,28 +753,53 @@ export class CityScene extends Phaser.Scene {
     if (existing !== undefined && this.world.cars[existing]) {
       return existing;
     }
-    const index = this.world.cars.length;
-    this.world.cars.push({
+    const carDrivers = (this.world as unknown as { carDrivers: (TrafficAI | null)[] }).carDrivers;
+    const carKinds = (this.world as unknown as { carKinds: VehicleKind[] }).carKinds;
+    const taxiStates = (this.world as unknown as { taxiStates: null[] }).taxiStates;
+    const carRespawnsAtTow = (this.world as unknown as { carRespawnsAtTow: boolean[] }).carRespawnsAtTow;
+    const carHealth = (this.world as unknown as { carHealth: number[] }).carHealth;
+    const carBurnTimers = (this.world as unknown as { carBurnTimers: number[] }).carBurnTimers;
+    const carBurnByPlayer = (this.world as unknown as { carBurnByPlayer: boolean[] }).carBurnByPlayer;
+    const stolenServiceVehicles = (this.world as unknown as { stolenServiceVehicles: boolean[] })
+      .stolenServiceVehicles;
+    const towDispatchCooldowns = (this.world as unknown as { towDispatchCooldowns: number[] })
+      .towDispatchCooldowns;
+    const wreckedCars = (this.world as unknown as { wreckedCars: boolean[] }).wreckedCars;
+    const towedCars = (this.world as unknown as { towedCars: boolean[] }).towedCars;
+    const index = this.storyReusableCarIndices.pop() ?? this.world.cars.length;
+    const car = {
       pos,
       heading: 0,
       speed: 0,
       radius: vehicleBodySpecForKind(kind).radius,
-    });
-    (this.world as unknown as { carDrivers: (TrafficAI | null)[] }).carDrivers.push({
-      dir: vec2(1, 0),
-    });
-    (this.world as unknown as { carKinds: VehicleKind[] }).carKinds.push(kind);
-    (this.world as unknown as { taxiStates: null[] }).taxiStates.push(null);
-    (this.world as unknown as { carRespawnsAtTow: boolean[] }).carRespawnsAtTow.push(false);
-    (this.world as unknown as { carHealth: number[] }).carHealth.push(100);
-    (this.world as unknown as { carBurnTimers: number[] }).carBurnTimers.push(0);
-    (this.world as unknown as { carBurnByPlayer: boolean[] }).carBurnByPlayer.push(false);
-    (this.world as unknown as { stolenServiceVehicles: boolean[] }).stolenServiceVehicles.push(
-      false,
-    );
-    (this.world as unknown as { towDispatchCooldowns: number[] }).towDispatchCooldowns.push(0);
-    (this.world as unknown as { wreckedCars: boolean[] }).wreckedCars.push(false);
-    (this.world as unknown as { towedCars: boolean[] }).towedCars.push(false);
+    };
+    if (index < this.world.cars.length) {
+      this.world.cars[index] = car;
+      carDrivers[index] = { dir: vec2(1, 0) };
+      carKinds[index] = kind;
+      taxiStates[index] = null;
+      carRespawnsAtTow[index] = false;
+      carHealth[index] = 100;
+      carBurnTimers[index] = 0;
+      carBurnByPlayer[index] = false;
+      stolenServiceVehicles[index] = false;
+      towDispatchCooldowns[index] = 0;
+      wreckedCars[index] = false;
+      towedCars[index] = false;
+    } else {
+      this.world.cars.push(car);
+      carDrivers.push({ dir: vec2(1, 0) });
+      carKinds.push(kind);
+      taxiStates.push(null);
+      carRespawnsAtTow.push(false);
+      carHealth.push(100);
+      carBurnTimers.push(0);
+      carBurnByPlayer.push(false);
+      stolenServiceVehicles.push(false);
+      towDispatchCooldowns.push(0);
+      wreckedCars.push(false);
+      towedCars.push(false);
+    }
     script.actorCarIndices[actorId] = index;
     script.actorRouteIndices[actorId] = 0;
     return index;
@@ -806,8 +835,13 @@ export class CityScene extends Phaser.Scene {
         missionTarget: opts.missionTarget ?? false,
         uniform: opts.uniform,
       };
-      this.world.pedestrians.push(ped);
-      created.push(this.world.pedestrians.length - 1);
+      const index = this.storyReusablePedIndices.pop() ?? this.world.pedestrians.length;
+      if (index < this.world.pedestrians.length) {
+        this.world.pedestrians[index] = ped;
+      } else {
+        this.world.pedestrians.push(ped);
+      }
+      created.push(index);
     }
     script.actorPedIndices[actorId] = created;
     script.actorRouteIndices[actorId] = 0;
@@ -831,6 +865,7 @@ export class CityScene extends Phaser.Scene {
         pos: STORY_ACTOR_DESPAWN_POS,
         speed: 0,
       };
+      if (!this.storyReusableCarIndices.includes(carIndex)) this.storyReusableCarIndices.push(carIndex);
     }
     delete script.actorCarIndices[actorId];
 
@@ -844,6 +879,7 @@ export class CityScene extends Phaser.Scene {
           target: STORY_ACTOR_DESPAWN_POS,
           state: 'wait',
         };
+        if (!this.storyReusablePedIndices.includes(idx)) this.storyReusablePedIndices.push(idx);
       }
     }
     delete script.actorPedIndices[actorId];
