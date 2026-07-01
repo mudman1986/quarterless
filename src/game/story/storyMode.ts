@@ -186,6 +186,54 @@ export interface StoryRuntimeScript {
   stages?: readonly StoryRuntimeStage[];
 }
 
+/**
+ * Reusable authoring helpers for the escort-route pattern: a pedestrian actor walks a route
+ * while an escort-radius fail rule restarts the mission if the player drifts too far away.
+ * This is the most repeated mission shape in the current story data, so chapters should build
+ * escort actors and fail rules through these helpers instead of re-typing the same object shape.
+ */
+export function escortRouteActor(
+  actorId: string,
+  route: readonly Vec2[],
+  speed: number,
+  escortRadius = 180,
+): PedestrianRouteActorScript {
+  return { kind: 'pedestrianRoute', actorId, route, speed, escortRadius };
+}
+
+export function escortRadiusFailRule(
+  actorId: string,
+  failureText: string,
+  radius = 220,
+  maxSeconds = 3,
+): EscortRadiusFailRule {
+  return { kind: 'escortRadius', actorId, radius, maxSeconds, failureText };
+}
+
+export interface EscortMissionScriptOptions {
+  actorId: string;
+  route: readonly Vec2[];
+  speed: number;
+  failureText: string;
+  escortRadius?: number;
+  failRadius?: number;
+  maxSeconds?: number;
+}
+
+/** Build the standard single-actor escort runtime script from an escort actor plus its matching
+ * escort-radius fail rule. Use `escortRouteActor` / `escortRadiusFailRule` directly instead when a
+ * mission needs to combine the escort actor with other actors in the same script. */
+export function createEscortMissionScript(
+  options: EscortMissionScriptOptions,
+): StoryRuntimeScript {
+  const { actorId, route, speed, failureText, escortRadius, failRadius, maxSeconds } = options;
+  return {
+    primaryActorId: actorId,
+    actors: [escortRouteActor(actorId, route, speed, escortRadius)],
+    failRules: [escortRadiusFailRule(actorId, failureText, failRadius, maxSeconds)],
+  };
+}
+
 export interface StoryChapter {
   id: string;
   actId: string;

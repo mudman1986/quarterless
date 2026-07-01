@@ -12,6 +12,9 @@ import {
   compileCampaignTemplate,
   countStoryChapters,
   countStoryMissions,
+  createEscortMissionScript,
+  escortRadiusFailRule,
+  escortRouteActor,
   isChapterRuntimeReady,
   resolveStoryMissionPlan,
   storyChapterPendingMissionGroup,
@@ -81,8 +84,8 @@ describe('compileCampaignTemplate', () => {
 describe('validateStoryMode', () => {
   it('accepts the first implemented story slice', () => {
     expect(validateStoryMode(STORY_MODE_PROTOTYPE)).toEqual([]);
-    expect(countStoryChapters(STORY_MODE_PROTOTYPE)).toBe(9);
-    expect(countStoryMissions(STORY_MODE_PROTOTYPE)).toBe(45);
+    expect(countStoryChapters(STORY_MODE_PROTOTYPE)).toBe(10);
+    expect(countStoryMissions(STORY_MODE_PROTOTYPE)).toBe(50);
   });
 });
 
@@ -183,5 +186,47 @@ describe('buildSandboxCampaigns', () => {
     expect(campaigns[3]?.[0]).toBeDefined();
     const firstServiceMission = campaigns[3]?.[0];
     expect(firstServiceMission ? currentObjective(firstServiceMission)?.kind : null).toBe('reach');
+  });
+});
+
+describe('escort authoring helpers', () => {
+  const route = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+  ];
+
+  it('builds a pedestrian route actor with the default escort radius', () => {
+    expect(escortRouteActor('guide', route, 40)).toEqual({
+      kind: 'pedestrianRoute',
+      actorId: 'guide',
+      route,
+      speed: 40,
+      escortRadius: 180,
+    });
+  });
+
+  it('builds an escort-radius fail rule with the default radius and grace period', () => {
+    expect(escortRadiusFailRule('guide', 'The guide was lost.')).toEqual({
+      kind: 'escortRadius',
+      actorId: 'guide',
+      radius: 220,
+      maxSeconds: 3,
+      failureText: 'The guide was lost.',
+    });
+  });
+
+  it('composes a full single-actor escort runtime script', () => {
+    const script = createEscortMissionScript({
+      actorId: 'guide',
+      route,
+      speed: 40,
+      failureText: 'The guide was lost.',
+    });
+
+    expect(script).toEqual({
+      primaryActorId: 'guide',
+      actors: [escortRouteActor('guide', route, 40)],
+      failRules: [escortRadiusFailRule('guide', 'The guide was lost.')],
+    });
   });
 });

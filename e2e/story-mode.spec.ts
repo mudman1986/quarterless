@@ -1608,8 +1608,8 @@ test('story mode shows a prototype-complete panel when the current story slice f
 
     scene.storyProgress.current = {
       actId: 'court-the-citys-middle-powers',
-      chapterId: 'glass-towers-empty-floors',
-      missionId: 'vacancy-notice',
+      chapterId: 'saints-of-the-side-street',
+      missionId: 'quiet-chapel',
       objectiveIndex: 0,
     };
     scene.storyProgress.completedMissionIds = [
@@ -1627,8 +1627,13 @@ test('story mode shows a prototype-complete panel when the current story slice f
       'window-tax',
       'lobby-flood',
       'fire-sale-run',
+      'vacancy-notice',
+      'soup-line-watch',
+      'siren-swap',
+      'half-block-safehouse',
+      'medicine-debt',
     ];
-    scene.prevMissionId = 'vacancy-notice';
+    scene.prevMissionId = 'quiet-chapel';
     scene.prevMissionComplete = false;
     scene.world.campaign.currentIndex = scene.world.campaign.missions.length;
     scene.handleEvents();
