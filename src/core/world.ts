@@ -992,6 +992,24 @@ export class World {
     return world;
   }
 
+  /**
+   * Re-derive the active mission/campaign fresh from `missions`, discarding whatever
+   * campaign/objective-baseline state a restored snapshot carried over. A restored
+   * snapshot's `campaign` reflects whatever mission was active (often already complete)
+   * at save time, which is correct for a real save/load but wrong immediately after a
+   * story chapter transition: the run's stats (position, health, ammo, score) should
+   * carry over, but the mission/campaign must start fresh for the new chapter.
+   */
+  resetActiveMission(missions: Mission[] = []): void {
+    this.campaign = this.loopCampaigns
+      ? this.pickNextCampaign()
+      : missions.length > 0
+        ? createCampaign(missions)
+        : null;
+    this.objectiveBaseline = this.baselineNow();
+    this.syncMissionTargets();
+  }
+
   get isDriving(): boolean {
     return this.drivingCarIndex !== null;
   }
@@ -3464,9 +3482,13 @@ export class World {
         stepped.radius,
         this.nearbyWalls(offCars, stepped.radius),
       );
-      // When calm, a pedestrian keeps to the pavement and only steps onto the
-      // road at a crosswalk; a fleeing pedestrian will bolt across anywhere.
-      if (!returningTo && stepped.state === 'wander' && this.onForbiddenRoad(pos)) {
+      // A pedestrian may never end up standing in the river, no matter which
+      // steering behavior (wander, flee, panic-exit) chose the raw target.
+      if (this.isWaterAt(pos)) {
+        pos = ped.pos; // never let a pedestrian step into the water
+      } else if (!returningTo && stepped.state === 'wander' && this.onForbiddenRoad(pos)) {
+        // When calm, a pedestrian keeps to the pavement and only steps onto the
+        // road at a crosswalk; a fleeing pedestrian will bolt across anywhere.
         pos = ped.pos; // hold at the kerb instead of jaywalking
       }
       const blocked = pos.x !== stepped.pos.x || pos.y !== stepped.pos.y;
@@ -3519,6 +3541,16 @@ export class World {
       waypoint: flowWaypoint(grid, field, ped.pos),
       cache: { tx, ty, field },
     };
+  }
+
+  /** Whether a point sits over lethal water. Used to keep foot NPCs (pedestrians,
+   * police officers) out of the river regardless of which steering behavior
+   * (wander, flee, panic, pursuit) chose the raw target — unlike vehicles, foot
+   * actors don't route exclusively through a water-excluding grid at all times. */
+  private isWaterAt(pos: Vec2): boolean {
+    if (!this.city) return false;
+    const { tx, ty } = tileCoord(this.city.spec, pos);
+    return this.city.isWater(tx, ty);
   }
 
   /** Whether a point is on an open road lane that is not a marked crossing, so a
@@ -4010,9 +4042,10 @@ export class World {
         ? (flowWaypoint(this.navGrid, homeFlow, cop.pos) ?? home)
         : home;
     const stepped = stepPolice(cop, waypoint, dt, speed);
+    const resolvedPos = resolveCircleRects(stepped.pos, stepped.radius, this.walls);
     const resolved = {
       ...stepped,
-      pos: resolveCircleRects(stepped.pos, stepped.radius, this.walls),
+      pos: this.isWaterAt(resolvedPos) ? cop.pos : resolvedPos,
       speed: cop.kind === 'car' ? speed : 0,
       fireCooldown: 0,
       returningHome: cop.returningHome,
@@ -4087,8 +4120,9 @@ export class World {
           ? (flowWaypoint(this.navGrid, this.copFlow, cop.pos) ?? this.focus)
           : this.focus;
       const stepped = stepPolice(cop, waypoint, dt, policeSpeedFor(cop.kind, pressureStars));
+      const resolvedPos = resolveCircleRects(stepped.pos, stepped.radius, this.walls);
       return [
-        { ...stepped, pos: resolveCircleRects(stepped.pos, stepped.radius, this.walls), speed: 0 },
+        { ...stepped, pos: this.isWaterAt(resolvedPos) ? cop.pos : resolvedPos, speed: 0 },
       ];
     });
 

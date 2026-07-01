@@ -1493,6 +1493,117 @@ test('story mode can complete a longer multi-objective encounter and roll into t
   expect(longEncounterValue.panel).toContain('Ghost Fare');
 });
 
+test('chapter completion preserves money, ammo, and health instead of resetting the run', async ({
+  page,
+}) => {
+  await launchStoryMode(page);
+
+  await restartIntoStoryProgress(page, {
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'static-on-the-hospital-band',
+      missionId: 'ward-6-exit',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: UNLOCKED_THROUGH_STATIC_ON_THE_HOSPITAL_BAND,
+    completedChapterIds: ['dead-drop-district', 'spare-parts-gospel'],
+    completedMissionIds: COMPLETED_THROUGH_WARD_6_EXIT,
+    branchOutcomes: {},
+  });
+  await acknowledgeStoryPanel(page);
+
+  // Drive the run to a distinctive, non-default state before finishing the chapter.
+  await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      world: {
+        player: { pos: { x: number; y: number } };
+        health: { current: number };
+        weapon: { ammo: number };
+        score: { current: number };
+        elapsed: number;
+        kills: number;
+        targetKills: number;
+        campaign?: { currentIndex: number } | null;
+        updateMissionProgress?: () => void;
+      };
+      handleEvents?: () => void;
+    };
+    if (!scene?.world?.campaign || typeof scene.handleEvents !== 'function') {
+      throw new Error('Missing long encounter completion hooks');
+    }
+
+    scene.world.health.current = 42;
+    scene.world.weapon.ammo = 17;
+    scene.world.score.current = 640;
+
+    scene.world.player.pos = { x: 3776, y: 1280 };
+    scene.world.updateMissionProgress?.();
+    scene.handleEvents();
+
+    scene.world.kills += 5;
+    scene.world.targetKills += 5;
+    scene.world.updateMissionProgress?.();
+    scene.handleEvents();
+
+    scene.world.elapsed += 16;
+    scene.world.updateMissionProgress?.();
+    scene.handleEvents();
+  });
+
+  // Wait for the chapter-complete panel, then let the real restart timer fire.
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as { pendingStoryRestart?: unknown };
+    return !!scene?.pendingStoryRestart;
+  });
+
+  const result = await page.waitForFunction(
+    () => {
+      const game = (
+        window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }
+      ).__game;
+      const scene = game?.scene.getScene('City') as {
+        world: {
+          health: { current: number };
+          weapon: { ammo: number };
+          score: { current: number };
+          mission?: { title: string } | null;
+        };
+        pendingStoryRestart?: unknown;
+        storyProgress?: {
+          current: { chapterId: string; missionId: string } | null;
+        } | null;
+      };
+      if (scene?.pendingStoryRestart) return null;
+      if (scene?.storyProgress?.current?.chapterId !== 'meter-running') return null;
+      if (scene.storyProgress.current.missionId !== 'ghost-fare') return null;
+      // The in-world mission/campaign must also reflect the new chapter, not just the
+      // story-progress bookkeeping (a stale restored campaign would leave this null/wrong
+      // even though storyProgress itself already points at the new chapter).
+      if (scene.world.mission?.title !== 'Ghost Fare') return null;
+      return {
+        health: scene.world.health.current,
+        ammo: scene.world.weapon.ammo,
+        score: scene.world.score.current,
+      };
+    },
+    undefined,
+    { timeout: 8_000 },
+  );
+
+  const preserved = (await result.jsonValue()) as { health: number; ammo: number; score: number };
+  // Health/ammo carry over untouched; score only grows (mission completion pays a reward),
+  // so a reset-to-zero regression would fail this while a normal payout would not.
+  expect(preserved.health).toBe(42);
+  expect(preserved.ammo).toBe(17);
+  expect(preserved.score).toBeGreaterThanOrEqual(640);
+});
+
 test('False Ambulance can be completed from the start with its stop objective and rewards the next mission', async ({
   page,
 }) => {

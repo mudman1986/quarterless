@@ -248,6 +248,11 @@ interface CitySceneStartData {
   skipResume?: boolean;
   mode?: 'sandbox' | 'story';
   storyProgress?: StoryProgressSnapshot | null;
+  /** When resuming from a restored snapshot, rebuild the active mission/campaign
+   * fresh instead of keeping the snapshot's (often already-complete) one. Used for
+   * story chapter transitions, which must preserve run stats but not the just-
+   * finished chapter's mission state. */
+  freshMissionOnResume?: boolean;
 }
 
 interface StoryScriptState {
@@ -405,6 +410,13 @@ export class CityScene extends Phaser.Scene {
   private storyPanelRequiresAcknowledge = false;
   private storyPanelPauseGame = false;
   private pendingStoryRestart: StoryProgressSnapshot | null = null;
+  /** True when the pending restart should resume from the just-saved game
+   * state (e.g. a chapter-complete advance) instead of wiping progress (a
+   * mission-failure retry, which intentionally resets to a clean slate). */
+  private pendingStoryRestartResume = false;
+  /** True when a resumed restart should rebuild the active mission/campaign fresh
+   * rather than keep the restored snapshot's (often already-complete) one. */
+  private freshMissionOnResume = false;
   /** Elapsed time driving the day/night cycle, and its dimming overlay. */
   private timeOfDay = 0;
   private dayNightOverlay!: Phaser.GameObjects.Rectangle;
@@ -440,6 +452,7 @@ export class CityScene extends Phaser.Scene {
     }
     this.requestedLoadKey = data.loadSaveKey ?? launchRequest?.loadSaveKey ?? GAME_STATE_KEY;
     this.skipResumeOnCreate = !!(data.skipResume ?? launchRequest?.skipResume);
+    this.freshMissionOnResume = !!data.freshMissionOnResume;
     this.requestedMode = data.mode ?? launchRequest?.mode ?? this.queryRequestsStoryMode();
     this.requestedStoryProgress =
       data.storyProgress ?? launchRequest?.storyProgress ?? launchProgress ?? null;
@@ -490,6 +503,7 @@ export class CityScene extends Phaser.Scene {
     this.storyPanelRequiresAcknowledge = false;
     this.storyPanelPauseGame = false;
     this.pendingStoryRestart = null;
+    this.pendingStoryRestartResume = false;
     this.storyScript = null;
     this.storyMissionSummaryBaseline = null;
 
@@ -520,6 +534,7 @@ export class CityScene extends Phaser.Scene {
       try {
         this.world = World.fromSnapshot(worldOptions, savedState.world);
         this.timeOfDay = savedState.timeOfDay;
+        if (this.freshMissionOnResume) this.world.resetActiveMission(worldOptions.missions);
       } catch {
         clearGameState(this.store, loadKey ?? GAME_STATE_KEY);
         this.world = new World(worldOptions);
@@ -527,6 +542,7 @@ export class CityScene extends Phaser.Scene {
     } else {
       this.world = new World(worldOptions);
     }
+    this.freshMissionOnResume = false;
     this.prevDrivingCarIndex = this.world.drivingCarIndex;
     this.requestedLoadKey = GAME_STATE_KEY;
     this.skipResumeOnCreate = false;
@@ -910,6 +926,7 @@ export class CityScene extends Phaser.Scene {
       2.6,
     );
     this.pendingStoryRestart = restart;
+    this.pendingStoryRestartResume = false;
   }
 
   private activeStoryStage(runtime: StoryRuntimeScript): StoryRuntimeStage | null {
@@ -2351,11 +2368,18 @@ export class CityScene extends Phaser.Scene {
       }
       if (this.storyPanelRemaining <= 0) {
         const progress = this.pendingStoryRestart;
+        const resume = this.pendingStoryRestartResume;
         this.pendingStoryRestart = null;
+        this.pendingStoryRestartResume = false;
         this.storyPanel.setVisible(false);
         this.skipPersistOnShutdown = true;
-        clearGameState(this.store);
-        this.scene.restart({ skipResume: true, mode: 'story', storyProgress: progress });
+        if (!resume) clearGameState(this.store);
+        this.scene.restart({
+          skipResume: !resume,
+          mode: 'story',
+          storyProgress: progress,
+          freshMissionOnResume: resume,
+        });
       }
       this.prevTouchConfirm = !!touchSnapshot?.confirmPressed;
       return;
@@ -2535,6 +2559,7 @@ export class CityScene extends Phaser.Scene {
             2.4,
           );
           this.pendingStoryRestart = this.storyProgress;
+          this.pendingStoryRestartResume = true;
           return;
         }
         this.showStoryPanel(
