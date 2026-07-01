@@ -138,9 +138,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     onStateChange: (state: TestHook) => void;
   };
 
-  private keys:
-    | TangramKeys
-    | undefined;
+  private keys: TangramKeys | undefined;
   private player!: Phaser.GameObjects.Container;
   private playerAura!: Phaser.GameObjects.Ellipse;
   private checkpointBanner!: Phaser.GameObjects.Container;
@@ -229,10 +227,9 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   }
 
   private createBackdrop(): void {
-    this.add.rectangle(WORLD_WIDTH / 2, WORLD_HEIGHT / 2, WORLD_WIDTH, WORLD_HEIGHT, 0x8fd8ff).setScrollFactor(
-      0,
-      0,
-    );
+    this.add
+      .rectangle(WORLD_WIDTH / 2, WORLD_HEIGHT / 2, WORLD_WIDTH, WORLD_HEIGHT, 0x8fd8ff)
+      .setScrollFactor(0, 0);
     this.add.rectangle(WORLD_WIDTH / 2, 390, WORLD_WIDTH, 180, 0xb9ec7b).setScrollFactor(0.12, 0.2);
     for (let index = 0; index < 8; index++) {
       const cloudX = 160 + index * 440;
@@ -817,7 +814,6 @@ function createCharacterSelect(
   const title = document.createElement('section');
   title.className = 'tangram-platformer-panel';
   const description = document.createElement('p');
-  description.className = 'tangram-platformer-copy';
   const roster = document.createElement('div');
   roster.className = 'tangram-platformer-character-grid';
   const startButton = document.createElement('button');
