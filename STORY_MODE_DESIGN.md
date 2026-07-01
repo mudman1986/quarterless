@@ -395,7 +395,7 @@ Implemented now:
 
 - Typed story authoring exists in `src/game/story/storyMode.ts`.
 - Ordered story progression and persistence exist in `src/game/story/storyProgress.ts`.
-- Chapter 1, Dead Drop District, through Chapter 10, Saints Of The Side Street, are authored in code in `src/game/story/deadDropDistrict.ts`.
+- The authored campaign is now split by chapter under `src/game/story/` (`deadDropDistrict.ts`, `sparePartsGospel.ts`, `staticOnTheHospitalBand.ts`, `meterRunning.ts`, `precinctAshes.ts`, `theSwitchboardName.ts`, `freightUnionMorning.ts`, `neonCouriers.ts`, `glassTowersEmptyFloors.ts`, `saintsOfTheSideStreet.ts`, `broadcastTeeth.ts`, `debtCollectionWeather.ts`) and assembled in `src/game/story/storyCampaign.ts`.
 - The scene can boot into story mode and persist story progress alongside the normal world save.
 - Story mode now has a dedicated landing-page story menu with continue, new-story, and chapter-select entry points, while still supporting `?story=1` or `?mode=story` in the browser URL.
 - New `route`, `tail`, and `capture` objectives exist in `src/core/mission.ts`.
@@ -419,7 +419,7 @@ Implemented now:
 - Chapter-map cards and mission scorecards now surface a per-chapter / per-mission systems badge line (`chapterMissingSystems` / `formatStorySystem` on the chapter map, a new `systemsText` field on the mission-summary card and scorecard), so both surfaces expose which runtime systems a chapter or mission exercises instead of only order/goal/reward text.
 - Focused Playwright coverage now covers story-mode entry, story-menu chapter selection across acts, recap archive presence, refresh-resume, manual save-slot persistence, authored mission transition panels, chapter restart into the next chapter, pause-menu chapter replay, and the current story-complete panel.
 - Focused Playwright coverage now also covers story mission-start markers, route markers, marked-target minimap dots, scripted chase-target minimap markers, grouped in-world mission selection, staged district-state labels, and the integrated launcher-owned pause flow.
-- A dedicated authored-mission browser regression now walks every current runtime story mission and verifies that each mission shell boots with the expected mission title and scripted district-state surface.
+- A dedicated authored-mission browser regression now walks every current runtime story mission, verifies that each mission shell boots with the expected mission title and scripted district-state surface, and now also asserts that every authored mission can be completed and advances story progress cleanly.
 - Regression coverage now extends beyond mission-shell boot checks into longer multi-chapter story progression and lower-level world and scripted-actor seams, including consecutive chapter-finale unlock flow, scene-fed tail/capture objective progress, tail-drain behavior, and actor-loss fail rules.
 - Regression coverage now also includes live branch-recording flows, scripted failure-path restarts, and longer-running encounter completions for the new outcome-aware story runtime.
 - Story authoring can now resolve branch-dependent mission variants from saved story outcomes, and the current browser suite asserts scripted mission summaries, stage-shift district-state updates, and seeded branch-variant mission text against live story data.

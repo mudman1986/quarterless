@@ -2,7 +2,8 @@ import { buildCity } from '../../core/city';
 import { currentObjective } from '../../core/mission';
 import { describe, expect, it } from 'vitest';
 import { CITY_SPEC } from '../citySpec';
-import { DEAD_DROP_DISTRICT, STORY_MODE_PROTOTYPE } from './deadDropDistrict';
+import { DEAD_DROP_DISTRICT } from './deadDropDistrict';
+import { STORY_MODE_PROTOTYPE } from './storyCampaign';
 import { buildSandboxCampaigns } from './sandboxCampaigns';
 import {
   STORY_MISSION_GROUP_SELECTION_INDEX,

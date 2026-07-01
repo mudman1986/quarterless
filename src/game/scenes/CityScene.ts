@@ -38,7 +38,7 @@ import { Sound } from '../audio/Sound';
 import { createGameTextures, TEX } from '../art/textures';
 import { NO_CONTROLS } from '../../core/types';
 import { buildSandboxCampaigns } from '../story/sandboxCampaigns';
-import { STORY_MODE_PROTOTYPE } from '../story/deadDropDistrict';
+import { STORY_MODE_PROTOTYPE } from '../story/storyCampaign';
 import {
   clearStoryProgress,
   completeStoryMission,

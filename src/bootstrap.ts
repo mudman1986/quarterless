@@ -1,7 +1,7 @@
 import './arcade/arcade.css';
 import { startPreviews } from './arcade/previews';
 import type { GameRuntime, GameStarter } from './arcade/types';
-import { STORY_MODE_PROTOTYPE } from './game/story/deadDropDistrict';
+import { STORY_MODE_PROTOTYPE } from './game/story/storyCampaign';
 import {
   clearGameState,
   GAME_STATE_KEY,
