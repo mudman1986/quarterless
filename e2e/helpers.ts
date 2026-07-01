@@ -4,6 +4,15 @@ interface ArcadeGameTestHook {
   triggerGameOver(score?: number): void;
 }
 
+type TangramTestHook = {
+  state?: string;
+  completeCurrentLevel?: () => void;
+  jumpAudit?: {
+    allCriticalPlatformsReachable?: boolean;
+    unreachable?: string[];
+  };
+};
+
 export async function launchSindicate(page: Page): Promise<void> {
   await page.goto('/quarterless/');
   await expect(page.getByRole('heading', { name: 'Retro Arcade' })).toBeVisible({
@@ -43,6 +52,7 @@ export async function launchArcadeGame(page: Page, title: 'Pixel Sprint' | 'Void
 export async function launchPenguinsOfTangram(
   page: Page,
   character: 'Penguin' | 'Crocodile' | 'Monkey' | 'Turtle' | 'Kangaroo' | 'Lion' = 'Penguin',
+  level: string = 'School Gate Morning Run',
 ): Promise<void> {
   await page.goto('/quarterless/');
   await expect(page.getByRole('heading', { name: 'Retro Arcade' })).toBeVisible({ timeout: 10_000 });
@@ -51,11 +61,30 @@ export async function launchPenguinsOfTangram(
     timeout: 10_000,
   });
   await page.getByRole('button', { name: new RegExp(`^${character}`) }).click();
-  await page.getByRole('button', { name: 'Start adventure' }).click();
+  await page.getByRole('button', { name: 'Open school map' }).click();
+  await expect(page.getByRole('heading', { name: 'Five-zone adventure' })).toBeVisible({ timeout: 10_000 });
+  await page.getByRole('button', { name: `Play ${level}` }).click();
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
   await page.waitForFunction(
-    () => (window as unknown as { __penguinsOfTangram?: { state?: string } }).__penguinsOfTangram?.state === 'running',
+    () => (window as unknown as { __penguinsOfTangram?: TangramTestHook }).__penguinsOfTangram?.state === 'running',
   );
+}
+
+export async function completeTangramLevel(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const hook = (window as unknown as { __penguinsOfTangram?: TangramTestHook }).__penguinsOfTangram;
+    hook?.completeCurrentLevel?.();
+  });
+}
+
+export async function tangramJumpAudit(page: Page): Promise<{ reachable: boolean; unreachable: string[] }> {
+  return page.evaluate(() => {
+    const hook = (window as unknown as { __penguinsOfTangram?: TangramTestHook }).__penguinsOfTangram;
+    return {
+      reachable: Boolean(hook?.jumpAudit?.allCriticalPlatformsReachable),
+      unreachable: hook?.jumpAudit?.unreachable ?? [],
+    };
+  });
 }
 
 export async function triggerArcadeGameOver(page: Page, score?: number): Promise<void> {

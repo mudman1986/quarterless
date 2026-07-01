@@ -7,7 +7,7 @@ small.
 Current lineup:
 
 - **Sindicate** - the main playable game, now launched through a dedicated story-mode front end.
-- **Penguins of Tangram** - a cartoony Phaser platformer with character select, checkpoints, badges, and a school-festival finish.
+- **Penguins of Tangram** - a cartoony Phaser platformer with a five-zone school map, light character perks, secrets, checkpoints, and a school-festival finish.
 - **Pixel Sprint** - a small canvas runner, **Work in progress**.
 - **Void Sweep** - a small canvas shooter, **Work in progress**.
 
@@ -48,12 +48,12 @@ The repo has moved from a single-game page to a small retro arcade shell.
 
 - The root page renders the **Retro Arcade** landing page from [src/bootstrap.ts](src/bootstrap.ts).
 - Animated gameplay-style card previews are drawn with canvas in [src/arcade/previews.ts](src/arcade/previews.ts).
-- The extra arcade games live in [src/games](src/games); Penguins of Tangram uses Phaser, while Pixel Sprint and Void Sweep use small vanilla canvas loops.
+- The extra arcade games live in [src/games](src/games) with one folder per game plus a shared catalog; Penguins of Tangram uses Phaser, while Pixel Sprint and Void Sweep use small vanilla canvas loops.
 - Sindicate remains the main Phaser game and now opens through a dedicated story launcher instead of a sandbox entry point.
 - Story missions now begin from in-world mission markers, keep location and chase targets visible on the minimap, support grouped free-order mission picks across several chapters, and route pause back into the integrated Sindicate launcher instead of an in-game overlay.
 - The Sindicate launcher now owns resume, checkpoint restart, manual save/load slots, current-objective presentation, and chapter replay.
 - Story mission transitions now use a richer summary card with reward, outcome, duration, collateral, and unlock deltas.
-- Playwright smoke tests now verify both the landing page and the Sindicate launch flow, while story-mode browser tests cover current mission types, grouped chapter choices, launcher pause flow, and a full authored-mission regression sweep.
+- Playwright smoke tests now verify both the landing page and the Sindicate launch flow, while story-mode browser tests cover current mission types, grouped chapter choices, launcher pause flow, and a full authored-mission regression sweep. Penguins of Tangram also has a campaign gameplay browser test that checks every zone unlock plus jump-route reachability.
 
 Production bundle shape is intentionally split:
 
@@ -83,7 +83,7 @@ src/
   arcade/        Landing-page styles, animated previews, and shared game types
   core/          Pure Sindicate game logic, tested with Vitest
   game/          Sindicate Phaser adapter: scene, rendering, input, audio
-  games/         Penguins of Tangram and the lightweight extra arcade games
+  games/         Shared arcade catalog plus one folder per standalone arcade game
   bootstrap.ts   Arcade landing entry point and lazy game launcher
 ```
 
@@ -91,7 +91,7 @@ Sindicate keeps a clean split between simulation and rendering:
 
 - [src/core](src/core) contains deterministic TypeScript game logic with no Phaser import.
 - [src/game](src/game) adapts that logic to Phaser rendering, input, HUD, audio, and touch controls.
-- [e2e](e2e) exercises the built site in a real browser through Playwright.
+- [e2e](e2e) exercises the built site in a real browser through Playwright, including the Penguins of Tangram campaign map and jump-route audit.
 
 The two work-in-progress games are deliberately lightweight and dependency-free.
 They are useful placeholders for the arcade experience without increasing the

@@ -4,7 +4,7 @@ import {
   PLAYABLE_CHARACTERS,
   getTangramCharacter,
   isTangramCharacterId,
-} from './penguinsOfTangramData';
+} from './data';
 
 describe('penguins of tangram character roster', () => {
   it('keeps penguin as the default class hero', () => {
@@ -22,5 +22,16 @@ describe('penguins of tangram character roster', () => {
     expect(isTangramCharacterId('monkey')).toBe(true);
     expect(isTangramCharacterId('penguin')).toBe(true);
     expect(isTangramCharacterId('fox')).toBe(false);
+  });
+
+  it('adds light movement differences across the roster', () => {
+    const penguin = getTangramCharacter('penguin');
+    const kangaroo = getTangramCharacter('kangaroo');
+    const lion = getTangramCharacter('lion');
+    const turtle = getTangramCharacter('turtle');
+
+    expect(kangaroo.movement.jumpVelocity).toBeLessThan(penguin.movement.jumpVelocity);
+    expect(lion.movement.maxSpeed).toBeGreaterThan(penguin.movement.maxSpeed);
+    expect(turtle.movement.respawnShieldMs).toBeGreaterThan(penguin.movement.respawnShieldMs);
   });
 });
