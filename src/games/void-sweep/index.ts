@@ -1,5 +1,5 @@
-import type { GameRuntime } from '../arcade/types';
-import { createGameOverOverlay } from '../arcade/gameOverOverlay';
+import type { GameRuntime } from '../../arcade/types';
+import { createGameOverOverlay } from '../../arcade/gameOverOverlay';
 
 interface ArcadeGameTestHook {
   triggerGameOver(score?: number): void;

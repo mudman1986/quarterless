@@ -1,6 +1,6 @@
 import './arcade/arcade.css';
 import { startPreviews } from './arcade/previews';
-import type { GameRuntime, GameStarter } from './arcade/types';
+import type { GameRuntime } from './arcade/types';
 import { STORY_MODE_PROTOTYPE } from './game/story/storyCampaign';
 import {
   clearGameState,
@@ -28,53 +28,7 @@ import {
 } from './game/story/storyLaunchState';
 import { loadStoryMissionScorecards } from './game/story/storyMissionScorecards';
 import { chapterMissingSystems, formatStorySystem } from './game/story/storyMode';
-
-type LaunchMode = 'sandbox' | 'story';
-
-interface LaunchOption {
-  label: string;
-  mode: LaunchMode;
-}
-
-interface ArcadeGame {
-  id: string;
-  title: string;
-  badge?: string;
-  description: string;
-  accent: string;
-  launchOptions?: readonly LaunchOption[];
-  load: () => Promise<{ startGame: GameStarter }>;
-}
-
-const games: readonly ArcadeGame[] = [
-  {
-    id: 'sindicate',
-    title: 'Sindicate',
-    badge: 'Work in progress',
-    description:
-      'Top-down city chaos with traffic, wanted heat, service vehicles, taxis, and missions.',
-    accent: '#47d7ff',
-    load: () => import('./game/main'),
-  },
-  {
-    id: 'pixel-sprint',
-    title: 'Pixel Sprint',
-    badge: 'Work in progress',
-    description:
-      'A twitchy side-scroller built from chunky pixels, hazards, coins, and rising speed.',
-    accent: '#ffd166',
-    load: () => import('./games/pixelSprint'),
-  },
-  {
-    id: 'void-sweep',
-    title: 'Void Sweep',
-    badge: 'Work in progress',
-    description:
-      'A neon space sweep where auto-fire, drifting rocks, and quick dodges keep the screen hot.',
-    accent: '#ff4bb8',
-    load: () => import('./games/voidSweep'),
-  },
-];
+import { arcadeGames as games, type ArcadeGame, type LaunchMode } from './games/catalog';
 
 let activeGame: GameRuntime | null = null;
 let stopPreviews: (() => void) | null = null;
