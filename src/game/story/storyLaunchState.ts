@@ -13,8 +13,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-function isStoryProgressSnapshot(value: unknown): value is StoryProgressSnapshot | null {
-  if (value === null) return true;
+function isStoryProgressSnapshot(value: unknown): value is StoryProgressSnapshot | null | undefined {
+  if (value === null || value === undefined) return true;
   if (!isRecord(value)) return false;
   return typeof value.storyId === 'string' && Array.isArray(value.unlockedChapterIds) && Array.isArray(value.completedChapterIds);
 }

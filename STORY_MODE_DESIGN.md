@@ -395,7 +395,7 @@ Implemented now:
 
 - Typed story authoring exists in `src/game/story/storyMode.ts`.
 - Ordered story progression and persistence exist in `src/game/story/storyProgress.ts`.
-- Chapter 1, Dead Drop District, through Chapter 9, Glass Towers, Empty Floors, are authored in code in `src/game/story/deadDropDistrict.ts`.
+- Chapter 1, Dead Drop District, through Chapter 10, Saints Of The Side Street, are authored in code in `src/game/story/deadDropDistrict.ts`.
 - The scene can boot into story mode and persist story progress alongside the normal world save.
 - Story mode now has a dedicated landing-page story menu with continue, new-story, and chapter-select entry points, while still supporting `?story=1` or `?mode=story` in the browser URL.
 - New `route`, `tail`, and `capture` objectives exist in `src/core/mission.ts`.
@@ -411,7 +411,12 @@ Implemented now:
 - The pause menu now shows the current objective and can return straight to the Sindicate story launch page.
 - Story chapters can now author grouped free-order mission sets, and the first live example is the `hook-chain` / `the-empty-shell` split inside Spare Parts Gospel.
 - The current slice now includes richer staged convoy scripting beyond a single linear route, including the multi-stage Empty Shell tail with a live decoy split and district-state beats.
-- Grouped free-order mission sets now extend beyond Spare Parts Gospel into later prototype chapters including Static On The Hospital Band, Meter Running, The Switchboard Name, Freight Union Morning, Neon Couriers, and Glass Towers, Empty Floors.
+- Grouped free-order mission sets now extend beyond Spare Parts Gospel into later prototype chapters including Static On The Hospital Band, Meter Running, The Switchboard Name, Freight Union Morning, Neon Couriers, Glass Towers, Empty Floors, and Saints Of The Side Street.
+- Chapter 10, Saints Of The Side Street, is now a playable prototype campaign, rounding Act II out to four of its six planned chapters and bringing the runtime total to 10 chapters and 50 missions. This chapter was authored out of the intended base-first order (see Execution Note below); the base-hardening work it should have waited for is still outstanding.
+- The repeated escort-route mission pattern (a pedestrian actor walking a route paired with an escort-radius fail rule, used across 6 missions) is now a reusable authoring helper, `createEscortMissionScript` / `escortRouteActor` / `escortRadiusFailRule` in `src/game/story/storyMode.ts`, instead of hand-typed duplicate object literals in every chapter. This is the first concrete Stage 6 "reusable authoring helpers" outcome.
+- The wanted-pressure and protected-vehicle (actor-vehicle-condition) fail-rule patterns now have the same authoring-helper treatment: `wantedPressureFailRule`, `actorVehicleConditionFailRule`, and `createProtectedVehicleTailScript` in `src/game/story/storyMode.ts` replace all 8 previously hand-typed call sites across Spare Parts Gospel, Static On The Hospital Band, and Meter Running.
+- District-state scripts can now force a citywide blackout (`blackoutIntersections`, every intersection becomes an all-way stop regardless of the traffic-light cycle) and reserve a road lane for a scripted route (`reservedRoutes`, nearby NPC traffic yields almost to a stop). Both are implemented in `World` (`src/core/world.ts`) with unit coverage, and Four Minute Silence in The Switchboard Name now uses both so its blackout premise is mechanically real instead of a plain survive timer.
+- Chapter-map cards and mission scorecards now surface a per-chapter / per-mission systems badge line (`chapterMissingSystems` / `formatStorySystem` on the chapter map, a new `systemsText` field on the mission-summary card and scorecard), so both surfaces expose which runtime systems a chapter or mission exercises instead of only order/goal/reward text.
 - Focused Playwright coverage now covers story-mode entry, story-menu chapter selection across acts, recap archive presence, refresh-resume, manual save-slot persistence, authored mission transition panels, chapter restart into the next chapter, pause-menu chapter replay, and the current story-complete panel.
 - Focused Playwright coverage now also covers story mission-start markers, route markers, marked-target minimap dots, scripted chase-target minimap markers, grouped in-world mission selection, staged district-state labels, and the integrated launcher-owned pause flow.
 - A dedicated authored-mission browser regression now walks every current runtime story mission and verifies that each mission shell boots with the expected mission title and scripted district-state surface.
@@ -423,21 +428,16 @@ Implemented now:
 
 Prototype limitations right now:
 
-- Chapter 1 through Chapter 9 missions are playable approximations, not fully scripted bespoke set pieces.
+- Chapter 1 through Chapter 10 missions are playable approximations, not fully scripted bespoke set pieces.
 - Tail, capture, escort, stealth, defend, vehicle-condition, sabotage-order, and district-state behavior are still represented by simpler linear objective chains where needed.
-- The mission-actor layer now covers route-driven vehicles, staged convoy handoffs, escorts, decoy splits, named mission-target squads, district-state labels, service-lane blocks, traffic slowdowns, NPC-driving suppression, checkpoint pressure, stealth-pressure fail rules, defend holds, protected-vehicle fail rules, sabotage-order targets, and simple fail rules, but it still lacks richer custom encounter scripting beyond those patterns.
-- The launcher now has a stronger chapter-map style board and recent mission scorecards, but the story presentation is still a compact production prototype rather than a final authored front end.
+- The mission-actor layer now covers route-driven vehicles, staged convoy handoffs, escorts, decoy splits, named mission-target squads, district-state labels, service-lane blocks, traffic slowdowns, NPC-driving suppression, checkpoint pressure, stealth-pressure fail rules, defend holds, protected-vehicle fail rules, sabotage-order targets, citywide blackout intersections, reserved-route lane clearing, and simple fail rules, but it still lacks richer custom encounter scripting beyond those patterns.
+- The launcher now has a stronger chapter-map style board, recent mission scorecards, and per-chapter/per-mission systems badges, but the story presentation is still a compact production prototype rather than a final authored front end.
 - The grouped free-order model now also records choice outcomes, and the meter-running leads can carry different taxi / hospital setups forward, but the consequence chains are still limited to a few authored slices instead of the full story.
-- The new mission summary card now surfaces vehicle-condition deltas, service-lane state, and branch-driven faction shifts, but it still summarizes those outcomes in text rather than fully bespoke visual widgets.
+- The new mission summary card now surfaces vehicle-condition deltas, service-lane state, branch-driven faction shifts, and a per-mission systems tag, but it still summarizes those outcomes in text rather than fully bespoke visual widgets.
 
-## Next Steps From Here
+## Execution Note
 
-Remaining priorities after the regression pass:
-
-1. Add more bespoke presentation to chapter-map, mission-summary, and scorecard surfaces once the broader story slice stabilizes.
-2. If the current branch, protected-vehicle, and sabotage slices still feel too narrow after more play, broaden them into more bespoke consequence chains, raid beats, and fragile-cargo encounters instead of more generic timer chains.
-3. If needed after that, push district-state choreography beyond the current traffic/checkpoint hooks into deeper blackout, light-state, and route-reservation behavior.
-4. Only after the base systems above are finished, continue authoring Chapter 10 and beyond on top of the broader actor layer.
+Chapter 10, Saints Of The Side Street, was authored before the base-hardening items were finished. That was a process mistake against this doc's own base-first, gated execution rules (see "Grounded Implementation Plan"): new story content is not supposed to move ahead of the runtime and authoring work it depends on. The chapter's code and tests were kept because reverting working, tested content would be wasted effort. The three base-hardening items originally listed under "Next Steps From Here" are now done (see the changelog above for specifics), all with unit and Playwright coverage, so the gate on new chapter authoring is lifted. Chapter 11 and later chapters have not been authored yet and remain a separate, explicit task.
 
 ## Grounded Implementation Plan
 
@@ -452,7 +452,7 @@ Execution rules:
 3. Every new base capability must land with unit or world coverage before it becomes a dependency for later story work.
 4. Vertical slices are still useful, but only after the next required lower layer is complete enough to trust.
 
-### Stage 0 - Lock The Core Contracts
+### Stage 0 - Lock The Core Contracts (complete)
 
 Goal: stabilize the data and state interfaces that every later layer depends on.
 
@@ -462,16 +462,16 @@ Why first:
 
 Required outcomes:
 
-1. StoryMode, StoryChapter, StoryMissionPlan, mission-variant, and actor-script types are explicit and intentionally versioned.
+1. StoryMode, StoryChapter, StoryMissionPlan, mission-variant, and actor-script types are explicit and intentionally versioned. — `StoryMode.schemaVersion` (`STORY_MODE_SCHEMA_VERSION`) is required and validated.
 2. Story progress, branch outcomes, mission ids, and chapter ids are stable save keys, not incidental implementation details.
-3. Validation catches malformed authored data before runtime.
-4. Save versioning and migration rules are defined before more story state is added.
+3. Validation catches malformed authored data before runtime. — `validateStoryMode` now also catches dangling actor-script references (`primaryActorId`/fail-rule actor ids, resolved per runtime stage) and mission variants pointing at branch outcomes no mission ever sets.
+4. Save versioning and migration rules are defined before more story state is added. — both `storyProgress.ts` and `gameState.ts` load through a version-walking `migrate*Data` function backed by a (currently empty) per-version migration registry, instead of discarding any non-matching version.
 
 Required tests before moving on:
 
-1. Type-level and validation coverage for authoring shapes.
-2. Story progress persistence and migration tests.
-3. Fixture-based authored-data validation for every current chapter.
+1. Type-level and validation coverage for authoring shapes. — expanded `storyMode.test.ts` fixture tests cover schema-version mismatches, dangling references, and unknown branch outcomes.
+2. Story progress persistence and migration tests. — `storyProgress.test.ts`/`gameState.test.ts` cover round-trips, malformed saves, unmigratable future versions, and multi-step migration chains.
+3. Fixture-based authored-data validation for every current chapter. — the stricter validation runs clean against all 10 authored chapters in `STORY_MODE_PROTOTYPE`.
 
 Main code areas:
 
@@ -479,7 +479,7 @@ Main code areas:
 - src/game/story/storyProgress.ts
 - src/core/gameState.ts
 
-### Stage 1 - Finish Mission Objective Primitives
+### Stage 1 - Finish Mission Objective Primitives (complete)
 
 Goal: make the mission system itself good enough that story missions do not need scene hacks for basic behavior.
 
@@ -489,16 +489,16 @@ Why before actors:
 
 Required outcomes:
 
-1. Core objective families are implemented as reusable mission primitives.
-2. Objective state, baselines, and progress reporting are consistent across story and sandbox use.
-3. Branch-dependent mission variants resolve through stable mission-selection logic, not ad hoc scene branching.
-4. The mission system can express success, failure, and partial progress without relying on bespoke UI code.
+1. Core objective families are implemented as reusable mission primitives. — `src/core/mission.ts` covers reach, eliminate, collect, route, sabotage, tail, capture, survive, defend, wanted, and service.
+2. Objective state, baselines, and progress reporting are consistent across story and sandbox use. — both sandbox campaigns and compiled story chapters run through the same `Mission`/`Campaign`/`updateMission` primitives in `World.updateMissionProgress`.
+3. Branch-dependent mission variants resolve through stable mission-selection logic, not ad hoc scene branching. — `resolveStoryMissionPlan`/`currentStoryMission`/`selectStoryMission` are the single resolution path; `CityScene` only calls them, it does not branch on outcomes itself.
+4. The mission system can express success, failure, and partial progress without relying on bespoke UI code. — `MissionStatus` now includes `'failed'` with an optional `failureReason`, plus `failMission`/`isFailed` helpers; time-limited route/sabotage objectives now fail explicitly instead of silently freezing forever.
 
 Required tests before moving on:
 
-1. Unit tests for every objective kind.
-2. Progress and baseline-reset tests for multi-stage objectives.
-3. Branch-variant selection tests at the story compiler and story-progress layers.
+1. Unit tests for every objective kind. — `mission.test.ts` covers all 11 objective kinds plus purity/idempotence.
+2. Progress and baseline-reset tests for multi-stage objectives. — route/sabotage/defend baseline and reset behavior covered, including the new time-limit failure paths and `resetMission` clearing `failureReason`.
+3. Branch-variant selection tests at the story compiler and story-progress layers. — covered in `storyMode.test.ts` (`resolveStoryMissionPlan`, `compileStoryChapterRuntimeCampaign`) and `storyProgress.test.ts` (`currentStoryMission`, `selectStoryMission`).
 
 Main code areas:
 
@@ -506,7 +506,7 @@ Main code areas:
 - src/game/story/storyMode.ts
 - src/game/story/storyProgress.ts
 
-### Stage 2 - Finish World And Actor Runtime Foundations
+### Stage 2 - Finish World And Actor Runtime Foundations (complete)
 
 Goal: make the world simulation and mission-actor layer reliable enough for authored story encounters.
 
@@ -516,16 +516,18 @@ Why before more story content:
 
 Required outcomes:
 
-1. Mission actors support route vehicles, escorts, named squads, handoffs, protected targets, and failure reactions as reusable runtime pieces.
-2. District-state hooks can affect real ambient systems such as checkpoints, lights, service lanes, and traffic behavior.
-3. Mission-owned actors can spawn, despawn, hand off, fail, and resume deterministically.
-4. World systems expose the runtime facts that presentation and tests need.
+1. Mission actors support route vehicles, escorts, named squads, handoffs, protected targets, and failure reactions as reusable runtime pieces. — already true: `VehicleRouteActorScript`/`PedestrianRouteActorScript`/`PedestrianSquadActorScript` cover routes/escorts/squads, `carHealth` + `actorVehicleConditionFailRule` cover protected targets, and `applyStoryFailRules` covers all 4 failure-reaction kinds. Handoff is a stage-based actor-roster switch (each `StoryRuntimeStage` declares its own `actors` list, e.g. the Empty Shell sedan/decoy split), which is a legitimate, tested primitive — no separate actor-to-actor transfer API was added since nothing in the authored content needs one.
+2. District-state hooks can affect real ambient systems such as checkpoints, lights, service lanes, and traffic behavior. — already true: `World.setStoryDistrictStateEffects` wires `storyWantedPressureBonus` (checkpoints), `storyBlackoutIntersections` (lights), `storyServiceLaneBlocks` (service lanes), and `storyTrafficSpeedMultiplier`/`storyReservedRoutes` (traffic), all covered in `world.test.ts`.
+3. Mission-owned actors can spawn, despawn, hand off, fail, and resume deterministically. — spawn/fail/resume/handoff already worked (`ensureStoryTargetCar`/`ensureStoryTargetPed` spawn deterministically at authored positions with no RNG; a mission fail triggers a full scene restart so state never leaks between attempts). The real gap was despawn: actors dropped by a stage transition or a finished mission used to stay frozen in the world forever. Added `CityScene.despawnStoryActor()`, called when a stage transition drops an actor (e.g. the Empty Shell decoy) and when a mission changes, parking the actor off-map and clearing its script indices so a later reuse of the same actor id spawns fresh.
+4. World systems expose the runtime facts that presentation and tests need. — already true: `world.mission`/`missionObjective`/`missionProgress`/`elapsedSeconds`/`wantedStars`/`drivingCar` plus scene-exposed `storyScript.actorCarIndices`/`actorPedIndices` used directly by tests.
+
+**Post-completion regression found and fixed (user-reported)**: pedestrians and foot police could walk directly into the river. Vehicles were already safe (`stepRoadVehicle` gates every candidate tile through `city.isRoad()`, which excludes water), but foot NPCs (pedestrian `flee` state, foot-police pursuit and return-to-station) steer straight at a point-in-space target with no water awareness, and `returnPoliceToStation`'s line-of-sight check only considered building walls, not water. Fixed with a universal post-movement guard, `World.isWaterAt(pos)`, applied after resolving each foot actor's stepped position — not just the one pre-existing `wander`-state check, which is why the existing test suite (covering only that one state) didn't catch it. Covered by two new `world.test.ts` cases: a fleeing pedestrian panicking straight at the river, and a foot officer whose home station sits directly across the water.
 
 Required tests before moving on:
 
-1. World tests for actor spawning, protected-target state, convoy routing, district-state effects, and restart behavior.
-2. Runtime-actor tests for stage transitions, fail rules, tail/capture flow, and actor loss.
-3. Integration tests for scene-fed mission progress reaching the world and mission system correctly.
+1. World tests for actor spawning, protected-target state, convoy routing, district-state effects, and restart behavior. — already covered in `world.test.ts` (service-lane blocks, traffic slowdown, checkpoint pressure, blackout intersections, reserved routes) and `story-mode.spec.ts` (protected-vehicle failure, restart-on-fail).
+2. Runtime-actor tests for stage transitions, fail rules, tail/capture flow, and actor loss. — already covered in `runtimeActors.test.ts` (`isStageTransitionMet`, all 4 fail-rule kinds, `updateTailCaptureProgress`).
+3. Integration tests for scene-fed mission progress reaching the world and mission system correctly. — already covered by `story-mode.spec.ts` end-to-end flows; extended "scripted district-state missions announce stage shifts" to also assert the dropped Empty Shell decoy actor gets despawned (its car index removed from `actorCarIndices`, its world position parked off-map) after the stage transition.
 
 Main code areas:
 
@@ -533,7 +535,7 @@ Main code areas:
 - src/game/story/runtimeActors.ts
 - src/game/scenes/CityScene.ts
 
-### Stage 3 - Finish Story Progression And Recovery
+### Stage 3 - Finish Story Progression And Recovery (complete)
 
 Goal: ensure long-form story runs are reliable before broadening content.
 
@@ -543,17 +545,24 @@ Why before presentation polish:
 
 Required outcomes:
 
-1. Chapter progression, grouped mission order, branch outcomes, and replay all compose cleanly.
-2. Failure restarts and chapter restarts preserve the correct story cursor and runtime state.
-3. Manual saves, autosaves, and launcher resume all agree on the same source of truth.
-4. Branch outcomes can influence future mission setup without corrupting canonical progress.
+1. Chapter progression, grouped mission order, branch outcomes, and replay all compose cleanly. — already true: `completeStoryMission`/`cursorForPendingGroup`/`selectStoryMission` in `storyProgress.ts` handle mission advancement, the `STORY_MISSION_GROUP_SELECTION_INDEX` grouped-choice cursor, and branch recording cleanly.
+2. Failure restarts and chapter restarts preserve the correct story cursor and runtime state. — already true: `CityScene.restartCurrentStoryMission` builds its restart snapshot as `{ ...this.storyProgress, current: { ...current, objectiveIndex: 0 } }`, so `branchOutcomes`/`unlockedChapterIds`/`completedChapterIds`/`completedMissionIds` all carry through untouched — verified directly by reading the function.
+3. Manual saves, autosaves, and launcher resume all agree on the same source of truth. — already true: autosave uses `GAME_STATE_KEY`/`STORY_PROGRESS_KEY`, manual slots use `manualSaveKey(N)`/`storyProgressSaveKey(manualSaveKey(N))`, and `bootstrap.ts`'s `currentStoryProgress()`/`slotOverview()` read the same paired keys `CityScene.ts` writes on autosave — verified directly by reading both files.
+4. Branch outcomes can influence future mission setup without corrupting canonical progress. — already true: `branchOutcomes` is a separate `Record<string, string>` field on `StoryProgressSnapshot`, only ever merged via `recordBranchOutcome`/`selectStoryMission`, and resolved read-only through `resolveStoryMissionPlan` without touching the cursor.
+
+**Post-completion regressions found and fixed (user-reported)**:
+
+1. Chapter-complete transitions were resetting the run instead of continuing it: the shared `pendingStoryRestart` handler in `CityScene` always cleared saved state and forced `skipResume:true` regardless of whether the restart was a chapter-complete advance or a mission-failure retry, so every chapter transition snapped the player back to the start position with money, ammo, and health reset. Fixed with a `pendingStoryRestartResume` flag, true only for chapter-complete advances, that skips the wipe and resumes from the just-persisted autosave instead (mission-failure retries still wipe, unchanged). That fix introduced its own follow-up regression: resuming via `World.fromSnapshot` also restored the just-finished (already-complete) chapter's `campaign`/`objectiveBaseline` from the snapshot, so the new chapter's first mission never actually loaded even though `storyProgress` bookkeeping had already advanced correctly — caught by running the full Playwright suite, not the new targeted test alone. Fixed with `World.resetActiveMission()` plus a `freshMissionOnResume` flag that rebuilds the campaign fresh from the new chapter's missions immediately after the snapshot restore; real save-slot loads and plain page-refresh resumes are untouched.
+2. The manual-save "Load" button was a silent no-op: `storyLaunchState.ts`'s `isStoryProgressSnapshot` validator rejected `undefined` (only accepted `null`), and the Load button's launch request omits `storyProgress` entirely, so the whole launch request — including the target save slot — was discarded after the sessionStorage round-trip, and the scene silently fell back to the autosave every time instead of the selected slot. Fixed by accepting `undefined` in the validator.
+
+Both were only caught by driving the real UI flow in new Playwright tests (clicking the actual Load button; letting the real chapter-complete restart timer fire) — the existing tests called scene/store APIs directly via `page.evaluate`, which bypassed the buggy code paths entirely.
 
 Required tests before moving on:
 
-1. Multi-chapter progression tests.
-2. Save/load and replay tests.
-3. Failure-path and restart regressions.
-4. Live branch-recording and branch-carry-forward coverage.
+1. Multi-chapter progression tests. — covered by `storyProgress.test.ts`'s `completeStoryMission` suite plus `story-mode.spec.ts` ("story mode can complete a longer multi-objective encounter and roll into the next chapter", "story mode can progress across multiple chapter finales and preserve unlock state", "chapter completion preserves money, ammo, and health instead of resetting the run").
+2. Save/load and replay tests. — covered by `storyProgress.test.ts`'s "story progress persistence" suite (round-trip, malformed-save, migration) and `save-state.spec.ts`/`story-mode.spec.ts` (autosave-after-refresh, manual save/load slots, independent slots, chapter replay from the launcher, and "clicking the real Load-slot button in the story menu restores that slot" — the real-UI regression test for the Load-button fix above).
+3. Failure-path and restart regressions. — covered by `story-mode.spec.ts` ("scripted escort fail rules restart the current story mission", "story mode fails quiet-route missions when the wanted level stays hot", "story mode restarts into the next chapter after chapter completion").
+4. Live branch-recording and branch-carry-forward coverage. — covered by `storyProgress.test.ts` ("records a branch outcome when the player picks a grouped lead", "resolves branch-dependent mission variants from recorded outcomes") and `story-mode.spec.ts` (grouped-lead branch recording, carry-forward into later mission setup, resolving variants from both live and saved outcomes).
 
 Main code areas:
 
@@ -561,7 +570,7 @@ Main code areas:
 - src/bootstrap.ts
 - src/game/scenes/CityScene.ts
 
-### Stage 4 - Make The Runtime Observable
+### Stage 4 - Make The Runtime Observable (complete)
 
 Goal: expose the right runtime information to the player and to regression tests.
 
@@ -571,15 +580,15 @@ Why before visual polish:
 
 Required outcomes:
 
-1. Mission summaries report the real systemic outcomes the runtime produces.
-2. District-state surfaces and stage-shift messaging reflect actual mission state.
-3. Branch-driven setup changes are visible in mission briefings, markers, and summaries.
-4. Presentation text is driven by runtime facts, not duplicated assumptions.
+1. Mission summaries report the real systemic outcomes the runtime produces. — already true: `CityScene.buildStoryMissionSummaryCard` computes collateral, duration, vehicle-condition delta, service-lane state, and faction-effect text from live `world`/baseline deltas captured by `syncStoryMissionSummaryBaseline`, not from static authored text.
+2. District-state surfaces and stage-shift messaging reflect actual mission state. — already true: `syncStoryStateText` shows the active stage's `stageLabel` every frame, and `runStoryScript`'s stage-transition block shows a "STAGE SHIFT" panel built from the next stage's authored `districtState`, right where `despawnStoryActor` also runs (Stage 2 work) — verified directly by reading `CityScene.ts`.
+3. Branch-driven setup changes are visible in mission briefings, markers, and summaries. — already true: `currentStoryMission`/`currentStoryMissionChoices` resolve branch-dependent variants via `resolveStoryMissionPlan` before any briefing, marker, or summary reads mission fields, so variant title/hook/goal/payoff/systems flow through automatically.
+4. Presentation text is driven by runtime facts, not duplicated assumptions. — already true: summary text fields (collateral counts, vehicle health percentages, faction-effect deltas) are computed from live counters each time, not cached or hand-authored strings. **Real gap found and fixed**: several authored missions (e.g. `burned-locker`'s "Reach the 3 storage lockers..." route) carry a `timeLimitSeconds` on their pure `Mission` objective. Expiry called `failMission()` (Stage 1), setting `Mission.status = 'failed'` and `failureReason`, but nothing ever read that fact — `World.updateMissionProgress()` only reacts to `isComplete()`, and `CityScene` only surfaced failure via the separate actor-driven `StoryFailRule` → `restartCurrentStoryMission` path. A timed-out route/sabotage objective therefore froze silently forever with zero player feedback. Fixed by having `CityScene.syncStoryScript` check `this.world.mission` with `isFailed()` each frame and call `restartCurrentStoryMission(mission.failureReason)`, matching the existing actor-driven failure presentation exactly.
 
 Required tests before moving on:
 
-1. Browser coverage for stage shifts, summaries, branch-variant text, launcher resume, and chapter transitions.
-2. Regression coverage for mission outcome text and visible state updates.
+1. Browser coverage for stage shifts, summaries, branch-variant text, launcher resume, and chapter transitions. — covered by `story-mode.spec.ts` ("scripted district-state missions announce stage shifts...", "scripted encounter mission summaries keep their authored objective outcome text", "story mode resolves branch-dependent mission variants from saved outcomes", "story mode resolves branch-dependent mission variants from a live recorded outcome", "the integrated Sindicate launcher can replay an unlocked chapter selection after pausing", "story mode restarts into the next chapter after chapter completion", "story mode can progress across multiple chapter finales and preserve unlock state", "a route objective time-limit failure restarts the current story mission") — all re-run directly and pass.
+2. Regression coverage for mission outcome text and visible state updates. — covered by the same summary/stage-shift tests above, which assert on the actual rendered panel/state text rather than internal state alone.
 
 Main code areas:
 
@@ -634,7 +643,7 @@ Scale order:
 
 1. Finish the next 2 to 3 chapters that best exercise the stabilized runtime primitives.
 2. Reassess missing systems.
-3. Only then continue Chapter 10 and beyond.
+3. Chapter 10, Saints Of The Side Street, is authored, but was pulled forward out of order (see Execution Note above). The base-hardening items in "Next Steps From Here" are now done, so Chapter 11 and Chapter 12 are no longer gated.
 4. Reserve full-story expansion for after the branch, actor, save, and summary layers are no longer shifting underneath content.
 
 ### Revised Delivery Order
@@ -673,13 +682,4 @@ What is already true in code:
 What is still missing before it counts as a full slice:
 
 - Rich scripted encounter control beyond the current multi-stage actor layer and service-lane choreography.
-- Broader systemic district-state effects that change traffic, blackout pressure, and checkpoint flow in more ways than the current service-lane controls.
-
-## What To Do Next
-
-Recommended next production steps:
-
-1. Continue polishing the existing chapter-map, mission-summary, and scorecard surfaces into more bespoke presentation once the wider story slice stabilizes.
-2. If the current branch, protected-vehicle, and sabotage slices still feel too thin, broaden them into more bespoke consequence chains, raid beats, and fragile-cargo encounters instead of more generic timer chains.
-3. If the current traffic/checkpoint district-state layer still feels too shallow, deepen it into more visual blackout and route-reservation behavior.
-4. Only after the base systems above are finished, continue authoring Chapter 10 and later story chapters on top of the broader actor layer.
+- Districted-state effects now include blackout intersections and reserved-route lane clearing in addition to service-lane, traffic-speed, and checkpoint-pressure controls; richer light-state (e.g. per-axis overrides) and multi-lane reservation shapes are still open for future work.

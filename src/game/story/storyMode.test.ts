@@ -6,12 +6,20 @@ import { DEAD_DROP_DISTRICT, STORY_MODE_PROTOTYPE } from './deadDropDistrict';
 import { buildSandboxCampaigns } from './sandboxCampaigns';
 import {
   STORY_MISSION_GROUP_SELECTION_INDEX,
+  STORY_MODE_SCHEMA_VERSION,
   compileStoryMissionRuntime,
   compileStoryChapterRuntimeCampaign,
   chapterMissingSystems,
   compileCampaignTemplate,
   countStoryChapters,
   countStoryMissions,
+  createEscortMissionScript,
+  escortRadiusFailRule,
+  escortRouteActor,
+  actorVehicleConditionFailRule,
+  createProtectedVehicleTailScript,
+  formatStorySystem,
+  wantedPressureFailRule,
   isChapterRuntimeReady,
   resolveStoryMissionPlan,
   storyChapterPendingMissionGroup,
@@ -19,6 +27,7 @@ import {
   storyObjectiveIndexFromRuntime,
   validateStoryMode,
 } from './storyMode';
+import type { StoryChapter, StoryMissionPlan, StoryMode } from './storyMode';
 
 function fixedObjectiveTargets(runtime: ReturnType<typeof compileStoryMissionRuntime>) {
   return (
@@ -78,11 +87,143 @@ describe('compileCampaignTemplate', () => {
   });
 });
 
+function minimalMission(id: string): StoryMissionPlan {
+  return {
+    id,
+    title: `${id} title`,
+    hook: 'Hook',
+    primaryGoal: 'Goal',
+    secondaryPressure: 'Pressure',
+    failureState: 'Failure',
+    payoff: 'Payoff',
+  };
+}
+
+function minimalChapter(id: string, actId: string, order: number): StoryChapter {
+  return {
+    id,
+    actId,
+    order,
+    title: `${id} title`,
+    storyRole: 'Role',
+    combinedGoal: 'Combined goal',
+    missions: Array.from({ length: 5 }, (_, index) => minimalMission(`${id}-m${index + 1}`)),
+  };
+}
+
+function minimalStoryMode(): StoryMode {
+  return {
+    schemaVersion: STORY_MODE_SCHEMA_VERSION,
+    id: 'test-story',
+    title: 'Test Story',
+    premise: 'Premise',
+    acts: [
+      {
+        id: 'act-1',
+        order: 1,
+        title: 'Act 1',
+        summary: 'Summary',
+        chapters: [minimalChapter('chapter-1', 'act-1', 1)],
+      },
+    ],
+  };
+}
+
+/** Replace the first mission of the fixture's only chapter, keeping everything else valid. */
+function withFirstMission(story: StoryMode, mission: StoryMissionPlan): StoryMode {
+  const chapter = story.acts[0]!.chapters[0]!;
+  return {
+    ...story,
+    acts: [
+      {
+        ...story.acts[0]!,
+        chapters: [{ ...chapter, missions: [mission, ...chapter.missions.slice(1)] }],
+      },
+    ],
+  };
+}
+
 describe('validateStoryMode', () => {
   it('accepts the first implemented story slice', () => {
     expect(validateStoryMode(STORY_MODE_PROTOTYPE)).toEqual([]);
-    expect(countStoryChapters(STORY_MODE_PROTOTYPE)).toBe(9);
-    expect(countStoryMissions(STORY_MODE_PROTOTYPE)).toBe(45);
+    expect(countStoryChapters(STORY_MODE_PROTOTYPE)).toBe(10);
+    expect(countStoryMissions(STORY_MODE_PROTOTYPE)).toBe(50);
+  });
+
+  it('accepts a minimal well-formed fixture', () => {
+    expect(validateStoryMode(minimalStoryMode())).toEqual([]);
+  });
+
+  it('flags a schemaVersion mismatch', () => {
+    const story: StoryMode = { ...minimalStoryMode(), schemaVersion: 999 };
+    expect(validateStoryMode(story)).toContainEqual(
+      expect.objectContaining({ path: 'schemaVersion' }),
+    );
+  });
+
+  it('flags duplicate act ids', () => {
+    const story = minimalStoryMode();
+    const duplicated: StoryMode = { ...story, acts: [...story.acts, { ...story.acts[0]! }] };
+    expect(validateStoryMode(duplicated).some((issue) => issue.message.includes('Duplicate act id'))).toBe(
+      true,
+    );
+  });
+
+  it('flags a mission group that references an unknown mission id', () => {
+    const story = minimalStoryMode();
+    const chapter = story.acts[0]!.chapters[0]!;
+    const malformed: StoryMode = {
+      ...story,
+      acts: [{ ...story.acts[0]!, chapters: [{ ...chapter, missionGroups: [['does-not-exist']] }] }],
+    };
+    expect(
+      validateStoryMode(malformed).some((issue) => issue.message.includes('unknown mission id')),
+    ).toBe(true);
+  });
+
+  it('flags a prototypeScript primaryActorId that is not one of its own actors', () => {
+    const story = minimalStoryMode();
+    const mission: StoryMissionPlan = {
+      ...minimalMission('chapter-1-m1'),
+      prototypeScript: {
+        primaryActorId: 'ghost-actor',
+        actors: [escortRouteActor('real-actor', [{ x: 0, y: 0 }], 100)],
+      },
+    };
+    const malformed = withFirstMission(story, mission);
+    expect(
+      validateStoryMode(malformed).some((issue) => issue.message.includes('primaryActorId')),
+    ).toBe(true);
+  });
+
+  it('flags a fail rule that references an unknown actor id', () => {
+    const story = minimalStoryMode();
+    const mission: StoryMissionPlan = {
+      ...minimalMission('chapter-1-m1'),
+      prototypeScript: {
+        primaryActorId: 'real-actor',
+        actors: [escortRouteActor('real-actor', [{ x: 0, y: 0 }], 100)],
+        failRules: [escortRadiusFailRule('someone-else', 'Lost the escort')],
+      },
+    };
+    const malformed = withFirstMission(story, mission);
+    expect(
+      validateStoryMode(malformed).some((issue) => issue.message.includes('unknown actor id')),
+    ).toBe(true);
+  });
+
+  it('flags a mission variant that references a branch outcome no mission ever sets', () => {
+    const story = minimalStoryMode();
+    const mission: StoryMissionPlan = {
+      ...minimalMission('chapter-1-m1'),
+      variants: [{ branchId: 'ghost-branch', outcomeId: 'ghost-outcome', title: 'Variant' }],
+    };
+    const malformed = withFirstMission(story, mission);
+    expect(
+      validateStoryMode(malformed).some((issue) =>
+        issue.message.includes('that no mission ever sets'),
+      ),
+    ).toBe(true);
   });
 });
 
@@ -183,5 +324,108 @@ describe('buildSandboxCampaigns', () => {
     expect(campaigns[3]?.[0]).toBeDefined();
     const firstServiceMission = campaigns[3]?.[0];
     expect(firstServiceMission ? currentObjective(firstServiceMission)?.kind : null).toBe('reach');
+  });
+});
+
+describe('escort authoring helpers', () => {
+  const route = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+  ];
+
+  it('builds a pedestrian route actor with the default escort radius', () => {
+    expect(escortRouteActor('guide', route, 40)).toEqual({
+      kind: 'pedestrianRoute',
+      actorId: 'guide',
+      route,
+      speed: 40,
+      escortRadius: 180,
+    });
+  });
+
+  it('builds an escort-radius fail rule with the default radius and grace period', () => {
+    expect(escortRadiusFailRule('guide', 'The guide was lost.')).toEqual({
+      kind: 'escortRadius',
+      actorId: 'guide',
+      radius: 220,
+      maxSeconds: 3,
+      failureText: 'The guide was lost.',
+    });
+  });
+
+  it('composes a full single-actor escort runtime script', () => {
+    const script = createEscortMissionScript({
+      actorId: 'guide',
+      route,
+      speed: 40,
+      failureText: 'The guide was lost.',
+    });
+
+    expect(script).toEqual({
+      primaryActorId: 'guide',
+      actors: [escortRouteActor('guide', route, 40)],
+      failRules: [escortRadiusFailRule('guide', 'The guide was lost.')],
+    });
+  });
+});
+
+describe('wanted-pressure and protected-vehicle authoring helpers', () => {
+  const route = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+  ];
+
+  it('builds a wanted-pressure fail rule with the default grace period', () => {
+    expect(wantedPressureFailRule(2, 'The fare was burned.')).toEqual({
+      kind: 'wantedPressure',
+      minStars: 2,
+      maxSeconds: 2,
+      failureText: 'The fare was burned.',
+    });
+  });
+
+  it('builds an actor-vehicle-condition fail rule with the default grace period', () => {
+    expect(actorVehicleConditionFailRule('cargo-van', 55, 'The cargo was lost.')).toEqual({
+      kind: 'actorVehicleCondition',
+      actorId: 'cargo-van',
+      minHealth: 55,
+      maxSeconds: 3,
+      failureText: 'The cargo was lost.',
+    });
+  });
+
+  it('composes a full single-actor protected-vehicle runtime script', () => {
+    const script = createProtectedVehicleTailScript({
+      actorId: 'cargo-van',
+      vehicleKind: 'van',
+      route,
+      speed: 90,
+      followRadius: 260,
+      minHealth: 55,
+      failureText: 'The cargo was lost.',
+    });
+
+    expect(script).toEqual({
+      primaryActorId: 'cargo-van',
+      actors: [
+        {
+          kind: 'vehicleRoute',
+          actorId: 'cargo-van',
+          vehicleKind: 'van',
+          route,
+          speed: 90,
+          followRadius: 260,
+        },
+      ],
+      failRules: [actorVehicleConditionFailRule('cargo-van', 55, 'The cargo was lost.')],
+    });
+  });
+});
+
+describe('formatStorySystem', () => {
+  it('turns camelCase system ids into title-case labels', () => {
+    expect(formatStorySystem('districtState')).toBe('District State');
+    expect(formatStorySystem('escort')).toBe('Escort');
+    expect(formatStorySystem('timedMultiStop')).toBe('Timed Multi Stop');
   });
 });

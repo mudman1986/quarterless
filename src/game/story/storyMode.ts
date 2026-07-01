@@ -104,6 +104,14 @@ export type StoryActorScript =
   | PedestrianRouteActorScript
   | PedestrianSquadActorScript;
 
+/** A road lane reserved by a scripted district state: NPC traffic near any of
+ * `points` (within `radius`) yields almost to a stop, keeping the lane clear
+ * for an escort or getaway route. */
+export interface StoryReservedRouteScript {
+  points: readonly Vec2[];
+  radius: number;
+}
+
 export interface StoryDistrictStateScript {
   label: string;
   summary?: string;
@@ -111,6 +119,11 @@ export interface StoryDistrictStateScript {
   trafficSpeedMultiplier?: number;
   suppressNpcDriving?: boolean;
   wantedPressureBonus?: number;
+  /** Every intersection behaves as an all-way stop instead of following the
+   * normal traffic-light cycle, for citywide blackout beats. */
+  blackoutIntersections?: boolean;
+  /** Lanes NPC traffic should stay clear of for the duration of this state. */
+  reservedRoutes?: readonly StoryReservedRouteScript[];
 }
 
 export interface LoseActorFailRule {
@@ -186,6 +199,108 @@ export interface StoryRuntimeScript {
   stages?: readonly StoryRuntimeStage[];
 }
 
+/**
+ * Reusable authoring helpers for the escort-route pattern: a pedestrian actor walks a route
+ * while an escort-radius fail rule restarts the mission if the player drifts too far away.
+ * This is the most repeated mission shape in the current story data, so chapters should build
+ * escort actors and fail rules through these helpers instead of re-typing the same object shape.
+ */
+export function escortRouteActor(
+  actorId: string,
+  route: readonly Vec2[],
+  speed: number,
+  escortRadius = 180,
+): PedestrianRouteActorScript {
+  return { kind: 'pedestrianRoute', actorId, route, speed, escortRadius };
+}
+
+export function escortRadiusFailRule(
+  actorId: string,
+  failureText: string,
+  radius = 220,
+  maxSeconds = 3,
+): EscortRadiusFailRule {
+  return { kind: 'escortRadius', actorId, radius, maxSeconds, failureText };
+}
+
+export interface EscortMissionScriptOptions {
+  actorId: string;
+  route: readonly Vec2[];
+  speed: number;
+  failureText: string;
+  escortRadius?: number;
+  failRadius?: number;
+  maxSeconds?: number;
+}
+
+/** Build the standard single-actor escort runtime script from an escort actor plus its matching
+ * escort-radius fail rule. Use `escortRouteActor` / `escortRadiusFailRule` directly instead when a
+ * mission needs to combine the escort actor with other actors in the same script. */
+export function createEscortMissionScript(
+  options: EscortMissionScriptOptions,
+): StoryRuntimeScript {
+  const { actorId, route, speed, failureText, escortRadius, failRadius, maxSeconds } = options;
+  return {
+    primaryActorId: actorId,
+    actors: [escortRouteActor(actorId, route, speed, escortRadius)],
+    failRules: [escortRadiusFailRule(actorId, failureText, failRadius, maxSeconds)],
+  };
+}
+
+/**
+ * Reusable authoring helper for the wanted-pressure pattern: fail the mission once the player's
+ * checkpoint/wanted pressure holds at or above `minStars` for longer than `maxSeconds`. Extends
+ * the escort-route helper treatment to the tail/wanted-pressure pattern used across chase and
+ * stealth-adjacent missions.
+ */
+export function wantedPressureFailRule(
+  minStars: number,
+  failureText: string,
+  maxSeconds = 2,
+): WantedPressureFailRule {
+  return { kind: 'wantedPressure', minStars, maxSeconds, failureText };
+}
+
+/**
+ * Reusable authoring helper for the protected-vehicle / fragile-cargo pattern: fail the mission
+ * once an actor's vehicle health drops below `minHealth` for longer than `maxSeconds`. Extends the
+ * escort-route helper treatment to the vehicle-condition pattern used by fragile-cargo missions.
+ */
+export function actorVehicleConditionFailRule(
+  actorId: string,
+  minHealth: number,
+  failureText: string,
+  maxSeconds = 3,
+): ActorVehicleConditionFailRule {
+  return { kind: 'actorVehicleCondition', actorId, minHealth, maxSeconds, failureText };
+}
+
+export interface ProtectedVehicleTailScriptOptions {
+  actorId: string;
+  vehicleKind: VehicleKind;
+  route: readonly Vec2[];
+  speed: number;
+  followRadius: number;
+  minHealth: number;
+  failureText: string;
+  maxSeconds?: number;
+}
+
+/** Build the standard single-actor "fragile cargo" runtime script: a vehicle actor drives a route
+ * while a vehicle-condition fail rule ends the mission if the escorted vehicle takes too much
+ * damage for too long. Pairs the vehicle-route actor shape with `actorVehicleConditionFailRule`. */
+export function createProtectedVehicleTailScript(
+  options: ProtectedVehicleTailScriptOptions,
+): StoryRuntimeScript {
+  const { actorId, vehicleKind, route, speed, followRadius, minHealth, failureText, maxSeconds } =
+    options;
+  return {
+    primaryActorId: actorId,
+    actors: [{ kind: 'vehicleRoute', actorId, vehicleKind, route, speed, followRadius }],
+    failRules: [actorVehicleConditionFailRule(actorId, minHealth, failureText, maxSeconds)],
+  };
+}
+
 export interface StoryChapter {
   id: string;
   actId: string;
@@ -205,7 +320,16 @@ export interface StoryAct {
   chapters: readonly StoryChapter[];
 }
 
+/**
+ * Schema version for the authored story-data contracts (StoryMode / StoryChapter /
+ * StoryMissionPlan / mission variants / actor-script types). Bump this when one of those
+ * shapes changes in a way that would make older authored data or saved branch/mission ids
+ * ambiguous, and update `validateStoryMode` and any migration logic that depends on it.
+ */
+export const STORY_MODE_SCHEMA_VERSION = 1;
+
 export interface StoryMode {
+  schemaVersion: number;
   id: string;
   title: string;
   premise: string;
@@ -434,10 +558,102 @@ export function chapterMissingSystems(chapter: StoryChapter): StorySystem[] {
   return [...missing];
 }
 
+/** Turn a camelCase `StorySystem` id into a display label, e.g. `districtState` -> `District State`. */
+export function formatStorySystem(system: StorySystem): string {
+  return system
+    .replace(/([A-Z])/g, ' $1')
+    .replace(/^./, (c) => c.toUpperCase())
+    .trim();
+}
+
+interface ResolvedStoryStage {
+  label: string;
+  actorIds: Set<string>;
+  primaryActorId: string;
+  failRules: readonly StoryFailRule[];
+}
+
+/** Mirrors CityScene's stage resolution: a script with no authored `stages` runs as one
+ * synthetic stage built from its top-level actors/failRules/primaryActorId. Each stage only
+ * ever sees its own `actors` list, never actors from other stages, so id references must stay
+ * within the stage that declares them. */
+function resolvedStoryStages(script: StoryRuntimeScript): ResolvedStoryStage[] {
+  if (script.stages && script.stages.length > 0) {
+    return script.stages.map((stage, index) => ({
+      label: stage.id || `stages[${index}]`,
+      actorIds: new Set(stage.actors.map((actor) => actor.actorId)),
+      primaryActorId: stage.primaryActorId ?? script.primaryActorId,
+      failRules: stage.failRules ?? script.failRules ?? [],
+    }));
+  }
+  return [
+    {
+      label: `${script.primaryActorId}-stage`,
+      actorIds: new Set(script.actors.map((actor) => actor.actorId)),
+      primaryActorId: script.primaryActorId,
+      failRules: script.failRules ?? [],
+    },
+  ];
+}
+
+/** Fail rules that reference a specific actor id; `wantedPressure` does not. */
+function failRuleActorId(rule: StoryFailRule): string | null {
+  return rule.kind === 'wantedPressure' ? null : rule.actorId;
+}
+
+function validateStoryRuntimeScript(
+  script: StoryRuntimeScript,
+  path: string,
+  issues: StoryValidationIssue[],
+): void {
+  for (const stage of resolvedStoryStages(script)) {
+    const stagePath = `${path} (${stage.label})`;
+    // A stage with no actors (pure district-state / wanted-pressure beats) has no actor to
+    // track, so `primaryActorId` is just a stable label rather than a real reference.
+    if (stage.actorIds.size > 0 && !stage.actorIds.has(stage.primaryActorId)) {
+      issues.push({
+        path: stagePath,
+        message: `primaryActorId "${stage.primaryActorId}" is not one of this stage's actors`,
+      });
+    }
+    for (const rule of stage.failRules) {
+      const actorId = failRuleActorId(rule);
+      if (actorId && !stage.actorIds.has(actorId)) {
+        issues.push({
+          path: stagePath,
+          message: `Fail rule "${rule.kind}" references unknown actor id "${actorId}"`,
+        });
+      }
+    }
+  }
+}
+
+function collectStoryBranchOutcomes(story: StoryMode): Set<string> {
+  const outcomes = new Set<string>();
+  for (const act of story.acts) {
+    for (const chapter of act.chapters) {
+      for (const mission of chapter.missions) {
+        if (mission.branchOutcome) {
+          outcomes.add(`${mission.branchOutcome.branchId}::${mission.branchOutcome.outcomeId}`);
+        }
+      }
+    }
+  }
+  return outcomes;
+}
+
 export function validateStoryMode(story: StoryMode): StoryValidationIssue[] {
   const issues: StoryValidationIssue[] = [];
   const actIds = new Set<string>();
   const chapterIds = new Set<string>();
+  const knownBranchOutcomes = collectStoryBranchOutcomes(story);
+
+  if (story.schemaVersion !== STORY_MODE_SCHEMA_VERSION) {
+    issues.push({
+      path: 'schemaVersion',
+      message: `Story schemaVersion should be ${STORY_MODE_SCHEMA_VERSION}, got ${story.schemaVersion}`,
+    });
+  }
 
   for (const [actIndex, act] of story.acts.entries()) {
     const actPath = `acts[${actIndex}]`;
@@ -505,6 +721,25 @@ export function validateStoryMode(story: StoryMode): StoryValidationIssue[] {
             path: `${missionPath}.failureState`,
             message: 'Mission failureState must not be empty',
           });
+        }
+        if (mission.prototypeScript) {
+          validateStoryRuntimeScript(mission.prototypeScript, `${missionPath}.prototypeScript`, issues);
+        }
+        for (const [variantIndex, variant] of (mission.variants ?? []).entries()) {
+          const variantPath = `${missionPath}.variants[${variantIndex}]`;
+          if (!knownBranchOutcomes.has(`${variant.branchId}::${variant.outcomeId}`)) {
+            issues.push({
+              path: variantPath,
+              message: `Variant references branch outcome "${variant.branchId}=${variant.outcomeId}" that no mission ever sets`,
+            });
+          }
+          if (variant.prototypeScript) {
+            validateStoryRuntimeScript(
+              variant.prototypeScript,
+              `${variantPath}.prototypeScript`,
+              issues,
+            );
+          }
         }
       }
 

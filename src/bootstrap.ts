@@ -27,6 +27,7 @@ import {
   type StoryLaunchRequest,
 } from './game/story/storyLaunchState';
 import { loadStoryMissionScorecards } from './game/story/storyMissionScorecards';
+import { chapterMissingSystems, formatStorySystem } from './game/story/storyMode';
 
 type LaunchMode = 'sandbox' | 'story';
 
@@ -107,6 +108,7 @@ function chapterCards(progress = createStoryProgress(STORY_MODE_PROTOTYPE)): str
               <span class="story-chapter-title">${chapter.title}</span>
               <span class="story-chapter-copy">${chapter.combinedGoal}</span>
               <span class="story-chapter-meta">${status} • ${chapter.missions.length} missions</span>
+              <span class="story-chapter-systems">${chapterMissingSystems(chapter).map(formatStorySystem).join(' · ')}</span>
             </button>`;
         })
         .join('');
@@ -159,6 +161,7 @@ function missionScorecardItems(): string {
           <span class="story-scorecard-copy">${card.vehicleConditionText}</span>
           <span class="story-scorecard-copy">${card.serviceLaneText}</span>
           <span class="story-scorecard-copy">${card.factionEffectText}</span>
+          <span class="story-scorecard-systems">${card.systemsText}</span>
         </li>`;
     })
     .join('');
