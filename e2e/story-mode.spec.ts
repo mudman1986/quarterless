@@ -1309,6 +1309,131 @@ test('story mode fails quiet-route missions when the wanted level stays hot', as
   });
 });
 
+test('flatline gap no longer fails a few seconds after mission start', async ({ page }) => {
+  await launchStoryMode(page);
+  await restartIntoStoryProgress(page, {
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'static-on-the-hospital-band',
+      missionId: 'flatline-gap',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: UNLOCKED_THROUGH_STATIC_ON_THE_HOSPITAL_BAND,
+    completedChapterIds: ['dead-drop-district', 'spare-parts-gospel'],
+    completedMissionIds: COMPLETED_THROUGH_WARD_6_EXIT,
+    branchOutcomes: {},
+  });
+  await acknowledgeStoryPanel(page);
+  await page.waitForTimeout(4000);
+
+  const state = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      world: { mission?: { id: string } | null };
+      pendingStoryRestart?: unknown;
+      storyPanel?: { text: string; visible: boolean };
+    };
+    return {
+      missionId: scene?.world.mission?.id ?? null,
+      pendingRestart: !!scene?.pendingStoryRestart,
+      panel: scene?.storyPanel?.text ?? '',
+      visible: !!scene?.storyPanel?.visible,
+    };
+  });
+
+  expect(state.missionId).toBe('flatline-gap');
+  expect(state.pendingRestart).toBe(false);
+  expect(state.panel).not.toContain('MISSION FAILED');
+  expect(state.visible).toBe(false);
+});
+
+test('story mission retries preserve the current run state', async ({ page }) => {
+  await launchStoryMode(page);
+  await restartIntoStoryProgress(page, {
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'meter-running',
+      missionId: 'ghost-fare',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: UNLOCKED_THROUGH_METER_RUNNING,
+    completedChapterIds: [
+      'dead-drop-district',
+      'spare-parts-gospel',
+      'static-on-the-hospital-band',
+    ],
+    completedMissionIds: COMPLETED_THROUGH_WARD_6_EXIT,
+    branchOutcomes: {},
+  });
+  await acknowledgeStoryPanel(page);
+
+  const beforeRestart = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).
+      __game;
+    const scene = game?.scene.getScene('City') as {
+      world: {
+        score: { current: number };
+        weapon: { ammo: number };
+        health: { current: number };
+        player: { pos: { x: number; y: number } };
+      };
+      restartCurrentStoryMission?: (failureText: string) => void;
+    };
+    if (!scene?.world || typeof scene.restartCurrentStoryMission !== 'function') {
+      throw new Error('Missing story retry hooks');
+    }
+    scene.world.score.current = 9876;
+    scene.world.weapon.ammo = 17;
+    scene.world.health.current = 63;
+    scene.world.player.pos = { x: 1472, y: 1920 };
+    scene.restartCurrentStoryMission('Manual retry');
+    return {
+      score: scene.world.score.current,
+      ammo: scene.world.weapon.ammo,
+      health: scene.world.health.current,
+      pos: { ...scene.world.player.pos },
+    };
+  });
+
+  expect(beforeRestart).toEqual({
+    score: 9876,
+    ammo: 17,
+    health: 63,
+    pos: { x: 1472, y: 1920 },
+  });
+
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      world: {
+        mission?: { id: string } | null;
+        score: { current: number };
+        weapon: { ammo: number };
+        health: { current: number };
+        player: { pos: { x: number; y: number } };
+      };
+      pendingStoryRestart?: unknown;
+      storyProgress?: { current: { missionId: string; objectiveIndex: number } | null };
+    };
+    return (
+      scene?.world?.mission?.id === 'ghost-fare' &&
+      !scene?.pendingStoryRestart &&
+      scene?.storyProgress?.current?.objectiveIndex === 0 &&
+      scene.world.score.current === 9876 &&
+      scene.world.weapon.ammo === 17 &&
+      scene.world.health.current === 63 &&
+      scene.world.player.pos.x === 1472 &&
+      scene.world.player.pos.y === 1920
+    );
+  });
+});
+
 test('a route objective time-limit failure restarts the current story mission', async ({ page }) => {
   await launchStoryMode(page);
   await restartIntoStoryProgress(page, {
@@ -1789,8 +1914,8 @@ test('story mode shows a prototype-complete panel when the current story slice f
 
     scene.storyProgress.current = {
       actId: 'court-the-citys-middle-powers',
-      chapterId: 'saints-of-the-side-street',
-      missionId: 'quiet-chapel',
+      chapterId: 'debt-collection-weather',
+      missionId: 'rain-of-receipts',
       objectiveIndex: 0,
     };
     scene.storyProgress.completedMissionIds = [
@@ -1813,8 +1938,18 @@ test('story mode shows a prototype-complete panel when the current story slice f
       'siren-swap',
       'half-block-safehouse',
       'medicine-debt',
+      'quiet-chapel',
+      'antenna-climb',
+      'open-mic-trap',
+      'jingle-bomb',
+      'studio-sweep',
+      'citywide-readout',
+      'missed-payment',
+      'three-stores-down',
+      'ledger-heat',
+      'storm-drain-exit',
     ];
-    scene.prevMissionId = 'quiet-chapel';
+    scene.prevMissionId = 'rain-of-receipts';
     scene.prevMissionComplete = false;
     scene.world.campaign.currentIndex = scene.world.campaign.missions.length;
     scene.handleEvents();

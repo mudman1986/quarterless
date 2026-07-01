@@ -1,7 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { launchSindicate } from './helpers';
 import { STORY_MODE_PROTOTYPE } from '../src/game/story/deadDropDistrict';
-import { storyMissionInitialObjectiveIndex } from '../src/game/story/storyMode';
 
 const authoredMissions = STORY_MODE_PROTOTYPE.acts.flatMap((act) =>
   act.chapters.flatMap((chapter) =>
@@ -116,7 +115,7 @@ test('every authored runtime mission boots into the expected mission shell', asy
   await launchSindicate(page);
 
   for (const entry of authoredMissions) {
-    const objectiveIndex = storyMissionInitialObjectiveIndex(entry.mission);
+    const objectiveIndex = entry.mission.prototypeScript ? 0 : -1;
     await restartIntoStoryMission(page, {
       actId: entry.actId,
       chapterId: entry.chapter.id,

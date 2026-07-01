@@ -921,45 +921,22 @@ export const STATIC_ON_THE_HOSPITAL_BAND: StoryChapter = {
         reward: 3200,
       },
       prototypeScript: {
-        primaryActorId: 'relay-tech',
+        primaryActorId: 'flatline-gap-window',
         actors: [],
         stages: [
           {
-            id: 'relay-tech-route',
-            title: 'Protect the relay tech',
-            primaryActorId: 'relay-tech',
+            id: 'relay-dead-zones',
+            title: 'Re-open the first dead zones',
             districtState: {
               label: 'The blackout pockets are still narrow enough for a runner',
               summary:
-                'A clinic runner is still threading the first dead zones before the jammer vans close them for good.',
+                'The early relay sites are still open if you keep moving before the jammer vans stitch the dead zones back together.',
               trafficSpeedMultiplier: 0.7,
               suppressNpcDriving: true,
               serviceLaneBlocks: ['taxi'],
             },
-            actors: [
-              {
-                kind: 'pedestrianRoute',
-                actorId: 'relay-tech',
-                route: [
-                  { x: 1216, y: 3136 },
-                  { x: 1728, y: 3136 },
-                  { x: 2048, y: 3072 },
-                ],
-                speed: 44,
-                uniform: 'medic',
-                escortRadius: 180,
-              },
-            ],
-            failRules: [
-              {
-                kind: 'escortRadius',
-                actorId: 'relay-tech',
-                radius: 220,
-                maxSeconds: 3,
-                failureText: 'The relay tech was cut off before the dead zones were mapped.',
-              },
-            ],
-            nextWhen: { kind: 'routeComplete', actorId: 'relay-tech' },
+            actors: [],
+            nextWhen: { kind: 'routeProgress', count: 2 },
           },
           {
             id: 'jammer-van-window',
@@ -974,18 +951,17 @@ export const STATIC_ON_THE_HOSPITAL_BAND: StoryChapter = {
               serviceLaneBlocks: ['ambulance', 'taxi'],
             },
             actors: [
-              {
-                kind: 'vehicleRoute',
-                actorId: 'jammer-van',
-                vehicleKind: 'van',
-                route: [
+              vehicleRouteActor(
+                'jammer-van',
+                'van',
+                [
                   { x: 2048, y: 3072 },
                   { x: 2240, y: 2944 },
                   { x: 2752, y: 2816 },
                 ],
-                speed: 102,
-                followRadius: 280,
-              },
+                102,
+                { followRadius: 280 },
+              ),
             ],
           },
         ],
@@ -3164,6 +3140,718 @@ export const SAINTS_OF_THE_SIDE_STREET: StoryChapter = {
   ],
 };
 
+export const BROADCAST_TEETH: StoryChapter = {
+  id: 'broadcast-teeth',
+  actId: 'court-the-citys-middle-powers',
+  order: 5,
+  title: 'Broadcast Teeth',
+  storyRole:
+    'Rook leans on a pirate-radio network to expose Switchboard routes, only to find the station web full of compromised hosts and retaliation crews.',
+  combinedGoal:
+    'Rebuild the radio network, flush out the compromised host, and keep the final citywide broadcast alive long enough to turn proof into open pressure.',
+  missions: [
+    {
+      id: 'antenna-climb',
+      title: 'Antenna Climb',
+      hook: 'Three repeaters have to come back online before the pirate band can speak above the city noise again.',
+      primaryGoal:
+        'Reach the three hilltop repeaters in sequence and keep the last one alive long enough to re-stabilize the network.',
+      secondaryPressure:
+        'The route should feel like a positional scramble across exposed ridges rather than a single static hold.',
+      failureState: 'Fail if the repeaters are not restored before the response wave locks down the hills.',
+      payoff:
+        'The radio network comes back online just long enough to bait the compromised hosts into reacting.',
+      prototypeRuntime: {
+        id: 'antenna-climb',
+        title: 'Antenna Climb',
+        objectives: [
+          {
+            kind: 'route',
+            description: 'Reach the 3 hilltop repeaters before the sweep locks them down again',
+            targets: [
+              { x: 704, y: 768 },
+              { x: 1344, y: 640 },
+              { x: 1984, y: 704 },
+            ],
+            radius: 84,
+            timeLimitSeconds: 85,
+          },
+          {
+            kind: 'survive',
+            description: 'Hold the final repeater for 12 seconds while the network re-stabilizes',
+            seconds: 12,
+          },
+        ],
+        reward: 3600,
+      },
+      prototypeScript: {
+        primaryActorId: 'antenna-window',
+        actors: [],
+        stages: [
+          {
+            id: 'antenna-first-climb',
+            title: 'Hit the first repeater',
+            districtState: {
+              label: 'The first repeater is still outside the full security cone',
+              summary:
+                'The first ridge is exposed, but the sweep has not fully climbed the hill network yet.',
+              trafficSpeedMultiplier: 0.8,
+              wantedPressureBonus: 1,
+            },
+            actors: [],
+            nextWhen: { kind: 'routeProgress', count: 1 },
+          },
+          {
+            id: 'antenna-second-climb',
+            title: 'Push the higher ridge',
+            districtState: {
+              label: 'Security cars are climbing toward the second ridge',
+              summary:
+                'The pirate band is audible again, which means the hostile watchers are now reading the hill routes much more aggressively.',
+              trafficSpeedMultiplier: 0.68,
+              wantedPressureBonus: 1,
+              serviceLaneBlocks: ['police'],
+            },
+            actors: [],
+            nextWhen: { kind: 'storyObjective', objectiveIndex: 1 },
+          },
+          {
+            id: 'antenna-hold',
+            title: 'Keep the final repeater breathing',
+            districtState: {
+              label: 'The last repeater is live and drawing every hostile scanner uphill',
+              summary:
+                'Hold the hilltop a little longer while the repaired antenna floods the radio net with the station handshake.',
+              suppressNpcDriving: true,
+              serviceLaneBlocks: ['police', 'ambulance'],
+            },
+            actors: [],
+          },
+        ],
+      },
+    },
+    {
+      id: 'open-mic-trap',
+      title: 'Open Mic Trap',
+      hook: 'Bait intel only works if Rook reaches the ambush block before the compromised host warns their backup.',
+      primaryGoal:
+        'Reach the ambush site first, shape the kill lane, and hold it until the bait call drags the target convoy into view.',
+      secondaryPressure:
+        'The preparation phase should feel tense rather than passive, because every second gives the moles another chance to spoil the setup.',
+      failureState: 'Fail if the ambush block is lost before the target convoy commits.',
+      payoff:
+        'The compromised host takes the bait and reveals which station feeds the Switchboard its real-time route intelligence.',
+      prototypeRuntime: {
+        id: 'open-mic-trap',
+        title: 'Open Mic Trap',
+        objectives: [
+          {
+            kind: 'reach',
+            description: 'Reach the ambush block before the convoy reroutes',
+            target: { x: 2176, y: 960 },
+            radius: 84,
+          },
+          {
+            kind: 'defend',
+            description: 'Hold the ambush block for 12 seconds while the bait broadcast goes out',
+            target: { x: 2176, y: 960 },
+            radius: 120,
+            seconds: 12,
+          },
+        ],
+        reward: 3900,
+      },
+      prototypeScript: {
+        primaryActorId: 'open-mic-block',
+        actors: [],
+        stages: [
+          {
+            id: 'open-mic-setup',
+            title: 'Shape the kill lane',
+            districtState: {
+              label: 'The host has not warned the convoy yet',
+              summary:
+                'Reach the block early enough to turn the street furniture and parked traffic into a proper ambush lane.',
+              trafficSpeedMultiplier: 0.78,
+              serviceLaneBlocks: ['tow'],
+            },
+            actors: [],
+            nextWhen: { kind: 'storyObjective', objectiveIndex: 1 },
+          },
+          {
+            id: 'open-mic-hold',
+            title: 'Keep the lane live until the convoy commits',
+            districtState: {
+              label: 'The compromised host is stalling while the convoy lines up the street',
+              summary:
+                'Hold the block a little longer so the target arrives inside the prepared kill lane instead of peeling away.',
+              suppressNpcDriving: true,
+              wantedPressureBonus: 1,
+              serviceLaneBlocks: ['police'],
+            },
+            actors: [],
+          },
+        ],
+      },
+    },
+    {
+      id: 'jingle-bomb',
+      title: 'Jingle Bomb',
+      hook: 'A propaganda van is blaring the false narrative that keeps frightened neighborhoods compliant.',
+      primaryGoal:
+        'Chase down the propaganda van, pin it without destroying the audio master, and rip the broadcast reel out intact.',
+      secondaryPressure:
+        'The takedown should reward clean control instead of raw firepower, because a wrecked van kills the evidence.',
+      failureState: 'Fail if the propaganda van is destroyed before the audio master is recovered.',
+      payoff:
+        'The intact reel proves which host packages Switchboard talking points into the city’s panic cycles.',
+      requiredSystems: ['capture', 'vehicleCondition', 'scriptedEncounter'],
+      prototypeRuntime: {
+        id: 'jingle-bomb',
+        title: 'Jingle Bomb',
+        objectives: [
+          {
+            kind: 'capture',
+            description: 'Pin the propaganda van long enough to cut the audio master free',
+            seconds: 3,
+          },
+        ],
+        reward: 4300,
+      },
+      prototypeScript: {
+        primaryActorId: 'propaganda-van',
+        actors: [],
+        stages: [
+          {
+            id: 'jingle-bomb-chase',
+            title: 'Get the van boxed in',
+            primaryActorId: 'propaganda-van',
+            districtState: {
+              label: 'The propaganda van is still using busy commercial lanes as cover',
+              summary:
+                'Catch it cleanly and hold it still long enough to seize the reel before the driver panics and smashes the cargo.',
+              trafficSpeedMultiplier: 0.82,
+            },
+            actors: [
+              vehicleRouteActor(
+                'propaganda-van',
+                'van',
+                [
+                  { x: 2816, y: 1152 },
+                  { x: 3072, y: 1216 },
+                  { x: 3328, y: 1280 },
+                  { x: 3584, y: 1216 },
+                ],
+                110,
+                {
+                  followRadius: 320,
+                  captureRadius: 135,
+                  captureMaxSpeed: 65,
+                  tailDrainPerSecond: 2,
+                  loseGraceSeconds: 2.5,
+                },
+              ),
+            ],
+            failRules: [
+              actorVehicleConditionFailRule(
+                'propaganda-van',
+                45,
+                'The propaganda van burned with the audio master still inside.',
+                0.5,
+              ),
+            ],
+          },
+        ],
+      },
+    },
+    {
+      id: 'studio-sweep',
+      title: 'Studio Sweep',
+      hook: 'The station is still live, but one of the hosts is about to erase the backup tape and disappear into the staff.',
+      primaryGoal:
+        'Reach the studio, identify the compromised host, drop them before the tape is wiped, and survive the first panic wave.',
+      secondaryPressure:
+        'The studio should feel crowded and volatile, forcing a fast read instead of a long standoff.',
+      failureState: 'Fail if the mole escapes with the tape or the backup reel is erased during the confusion.',
+      payoff:
+        'Rook exposes the station mole and learns where the final rooftop broadcast can turn proof into a citywide rupture.',
+      prototypeRuntime: {
+        id: 'studio-sweep',
+        title: 'Studio Sweep',
+        objectives: [
+          {
+            kind: 'reach',
+            description: 'Reach the live station before the mole wipes the backup tape',
+            target: { x: 3136, y: 1728 },
+            radius: 84,
+          },
+          {
+            kind: 'eliminate',
+            description: 'Drop the marked mole before the backup reel disappears',
+            count: 1,
+            targetsOnly: true,
+          },
+          {
+            kind: 'survive',
+            description: 'Survive the station panic for 10 seconds',
+            seconds: 10,
+          },
+        ],
+        reward: 4700,
+      },
+      prototypeScript: {
+        primaryActorId: 'studio-mole',
+        actors: [],
+        stages: [
+          {
+            id: 'studio-entry',
+            title: 'Break into the live booth',
+            districtState: {
+              label: 'The station is still live and the staff has not scattered yet',
+              summary:
+                'Reach the studio fast enough that the compromised host cannot vanish into the live-broadcast chaos.',
+              trafficSpeedMultiplier: 0.76,
+              serviceLaneBlocks: ['taxi'],
+            },
+            actors: [],
+            nextWhen: { kind: 'storyObjective', objectiveIndex: 1 },
+          },
+          {
+            id: 'studio-mole',
+            title: 'Find and drop the mole',
+            primaryActorId: 'studio-mole',
+            districtState: {
+              label: 'The mole is moving through the panicked studio staff',
+              summary:
+                'The backup reel is still in the building, but only if the marked host drops before they can flush the evidence.',
+              suppressNpcDriving: true,
+              wantedPressureBonus: 1,
+            },
+            actors: [missionTargetSquadActor('studio-mole', { x: 3136, y: 1728 }, 1, 1)],
+            nextWhen: { kind: 'storyObjective', objectiveIndex: 2 },
+          },
+          {
+            id: 'studio-panic',
+            title: 'Live through the panic wave',
+            districtState: {
+              label: 'The station panic is spilling onto the surrounding blocks',
+              summary:
+                'The mole is down, but the live-broadcast panic still has to burn itself out before the rooftop route is clear.',
+              suppressNpcDriving: true,
+              serviceLaneBlocks: ['police', 'ambulance'],
+            },
+            actors: [],
+          },
+        ],
+      },
+    },
+    {
+      id: 'citywide-readout',
+      title: 'Citywide Readout',
+      hook: 'The rooftop transmitter can finally dump the evidence across the whole city, if Rook can keep it alive long enough.',
+      primaryGoal:
+        'Reach the rooftop transmitter, defend it while the evidence plays citywide, and survive the final convergence wave.',
+      secondaryPressure:
+        'This should feel like open-war escalation, with every faction collapsing onto one exposed high point.',
+      failureState: 'Fail if the rooftop transmitter drops before the readout finishes.',
+      payoff:
+        'The pirate network turns proof into public rupture, forcing the Switchboard out of the shadows and into direct retaliation.',
+      prototypeRuntime: {
+        id: 'citywide-readout',
+        title: 'Citywide Readout',
+        objectives: [
+          {
+            kind: 'reach',
+            description: 'Reach the rooftop transmitter before the last security ring seals it',
+            target: { x: 3520, y: 640 },
+            radius: 88,
+          },
+          {
+            kind: 'defend',
+            description: 'Defend the transmitter for 18 seconds while the evidence broadcasts citywide',
+            target: { x: 3520, y: 640 },
+            radius: 125,
+            seconds: 18,
+          },
+          {
+            kind: 'survive',
+            description: 'Survive the final convergence push for 12 seconds',
+            seconds: 12,
+          },
+        ],
+        reward: 6000,
+      },
+      prototypeScript: {
+        primaryActorId: 'citywide-readout-roof',
+        actors: [],
+        stages: [
+          {
+            id: 'citywide-readout-entry',
+            title: 'Reach the transmitter roof',
+            districtState: {
+              label: 'The evidence rig is still one push away from going fully live',
+              summary:
+                'Reach the roof before the last contractor ring closes and the pirate feed dies under static.',
+              trafficSpeedMultiplier: 0.7,
+              serviceLaneBlocks: ['police'],
+            },
+            actors: [],
+            nextWhen: { kind: 'storyObjective', objectiveIndex: 1 },
+          },
+          {
+            id: 'citywide-readout-hold',
+            title: 'Keep the evidence on the air',
+            districtState: {
+              label: 'Every hostile faction is converging while the citywide readout stays live',
+              summary:
+                'Hold the rooftop long enough for the pirate network to dump the proof into every district at once.',
+              suppressNpcDriving: true,
+              wantedPressureBonus: 2,
+              blackoutIntersections: true,
+              serviceLaneBlocks: ['police', 'ambulance', 'tow'],
+            },
+            actors: [],
+            nextWhen: { kind: 'storyObjective', objectiveIndex: 2 },
+          },
+          {
+            id: 'citywide-readout-fallout',
+            title: 'Survive the fallout',
+            districtState: {
+              label: 'The readout landed and the city is reacting in the open',
+              summary:
+                'The proof is out now; survive the first retaliation wave long enough for the hostile response to lose its synchronized edge.',
+              suppressNpcDriving: true,
+              wantedPressureBonus: 2,
+              blackoutIntersections: true,
+            },
+            actors: [],
+          },
+        ],
+      },
+    },
+  ],
+};
+
+export const DEBT_COLLECTION_WEATHER: StoryChapter = {
+  id: 'debt-collection-weather',
+  actId: 'court-the-citys-middle-powers',
+  order: 6,
+  title: 'Debt Collection Weather',
+  storyRole:
+    'Rook turns from propaganda to the street-level damage cycle itself, exposing the fake service-call traps that keep entire blocks in permanent debt.',
+  combinedGoal:
+    'Save the trapped witnesses, steal the collectors’ records, and collapse the fake-callout debt market before the district can be reset.',
+  missions: [
+    {
+      id: 'missed-payment',
+      title: 'Missed Payment',
+      hook: 'A shop owner is about to disappear into an enforcer van under the cover of a fake service callout.',
+      primaryGoal:
+        'Intercept the enforcer van before it clears the block and hold it still long enough to pull the shop owner free.',
+      secondaryPressure:
+        'The mission should hit hard and fast, rewarding a clean interception over a long chase.',
+      failureState: 'Fail if the van escapes the block before the shop owner is pulled out.',
+      payoff:
+        'The rescued owner confirms the collectors are recycling fake damage claims through a rotating set of extorted businesses.',
+      requiredSystems: ['capture', 'scriptedEncounter'],
+      prototypeRuntime: {
+        id: 'missed-payment',
+        title: 'Missed Payment',
+        objectives: [
+          {
+            kind: 'capture',
+            description: 'Hold the enforcer van long enough to pull the shop owner free',
+            seconds: 3,
+          },
+        ],
+        reward: 3900,
+      },
+      prototypeScript: {
+        primaryActorId: 'missed-payment-van',
+        actors: [],
+        stages: [
+          {
+            id: 'missed-payment-chase',
+            title: 'Cut off the enforcer van',
+            primaryActorId: 'missed-payment-van',
+            districtState: {
+              label: 'The collectors are still trying to clear the block with the witness inside',
+              summary:
+                'Get the van boxed in before the fake service call route turns into another disappeared debtor.',
+              trafficSpeedMultiplier: 0.82,
+            },
+            actors: [
+              vehicleRouteActor(
+                'missed-payment-van',
+                'van',
+                [
+                  { x: 704, y: 3008 },
+                  { x: 960, y: 3008 },
+                  { x: 1216, y: 2944 },
+                ],
+                108,
+                {
+                  followRadius: 300,
+                  captureRadius: 135,
+                  captureMaxSpeed: 65,
+                  tailDrainPerSecond: 2,
+                  loseGraceSeconds: 2.5,
+                },
+              ),
+            ],
+          },
+        ],
+      },
+    },
+    {
+      id: 'three-stores-down',
+      title: 'Three Stores Down',
+      hook: 'Three extorted businesses will talk, but only if Rook can keep each owner alive long enough to reach the final meet.',
+      primaryGoal:
+        'Visit the three threatened storefronts in sequence and keep the surviving witnesses moving until the final rendezvous.',
+      secondaryPressure:
+        'The route should make the district feel interconnected, with each stop tightening the pressure on the next witness.',
+      failureState: 'Fail if the witness chain collapses before the final rendezvous is secured.',
+      payoff:
+        'The collected testimony maps the fake repair bills back to a single rotating collector team.',
+      requiredSystems: ['timedMultiStop', 'escort'],
+      prototypeRuntime: {
+        id: 'three-stores-down',
+        title: 'Three Stores Down',
+        objectives: [
+          {
+            kind: 'route',
+            description: 'Reach the 3 threatened storefronts before the witness chain collapses',
+            targets: [
+              { x: 1216, y: 2304 },
+              { x: 1600, y: 2304 },
+              { x: 2112, y: 2240 },
+            ],
+            radius: 80,
+            timeLimitSeconds: 80,
+          },
+          {
+            kind: 'survive',
+            description: 'Keep the witness group moving to the final rendezvous',
+            seconds: 14,
+          },
+        ],
+        reward: 4300,
+      },
+      prototypeScript: createEscortMissionScript({
+        actorId: 'storefront-witnesses',
+        route: [
+          { x: 2112, y: 2240 },
+          { x: 2368, y: 2176 },
+          { x: 2624, y: 2112 },
+        ],
+        speed: 38,
+        failureText: 'The witness chain collapsed before the final rendezvous could be reached.',
+      }),
+    },
+    {
+      id: 'ledger-heat',
+      title: 'Ledger Heat',
+      hook: "The collectors' own car can clone the debt ledger, but only if it is driven through the right checkpoints before the system locks.",
+      primaryGoal:
+        'Steal the collector car and drive it through the marked checkpoints before the auto-lock system wipes the account cache.',
+      secondaryPressure:
+        'The puzzle should come from traversal tempo and route choice rather than simple pursuit alone.',
+      failureState: 'Fail if the collector car locks down before every checkpoint pass is copied.',
+      payoff:
+        'Rook pulls the encrypted debt map and learns where the witnesses can still escape through the maintenance network.',
+      prototypeRuntime: {
+        id: 'ledger-heat',
+        title: 'Ledger Heat',
+        objectives: [
+          {
+            kind: 'route',
+            description: 'Drive the collector car through the 4 marked checkpoints before it self-locks',
+            targets: [
+              { x: 2624, y: 1664 },
+              { x: 3072, y: 1600 },
+              { x: 3456, y: 1856 },
+              { x: 3200, y: 2240 },
+            ],
+            radius: 88,
+            timeLimitSeconds: 75,
+          },
+        ],
+        reward: 4700,
+      },
+      prototypeScript: createWantedPressureMissionScript({
+        id: 'ledger-heat-window',
+        title: 'Keep the collector car clean',
+        label: 'The collector car is still passing as a normal debt-run vehicle',
+        summary:
+          'A full police read locks the onboard ledger before you can clone the remaining checkpoint passes.',
+        minStars: 2,
+        failureText: 'The collector car locked down once the checkpoint sweep got a full read.',
+        trafficSpeedMultiplier: 0.72,
+        wantedPressureBonus: 1,
+      }),
+    },
+    {
+      id: 'storm-drain-exit',
+      title: 'Storm Drain Exit',
+      hook: 'The surface lanes are closing, so the last witnesses have to move through maintenance roads and underpasses instead.',
+      primaryGoal:
+        'Stay with the maintenance van through the storm-drain lanes until the witness route clears the tightening surface patrols.',
+      secondaryPressure:
+        'The mission should feel spatially different, with the safer path becoming longer and more claustrophobic.',
+      failureState: 'Fail if the maintenance van is lost before the witnesses clear the underpass route.',
+      payoff:
+        'The surviving witnesses reach safety and identify the auction site where the collectors sell the forged claims in bulk.',
+      requiredSystems: ['tail', 'deliver', 'scriptedEncounter'],
+      prototypeRuntime: {
+        id: 'storm-drain-exit',
+        title: 'Storm Drain Exit',
+        objectives: [
+          {
+            kind: 'tail',
+            description: 'Stay with the maintenance van through the storm-drain escape route',
+            seconds: 14,
+          },
+        ],
+        reward: 5000,
+      },
+      prototypeScript: {
+        primaryActorId: 'storm-drain-van',
+        actors: [],
+        stages: [
+          {
+            id: 'storm-drain-lane',
+            title: 'Stay with the underpass escape route',
+            primaryActorId: 'storm-drain-van',
+            districtState: {
+              label: 'The surface patrols are tightening while the drain roads still breathe',
+              summary:
+                'Stick with the maintenance van through the underpasses before the surface closure ripples down into the low lanes.',
+              trafficSpeedMultiplier: 0.72,
+              suppressNpcDriving: true,
+              serviceLaneBlocks: ['police'],
+            },
+            actors: [
+              vehicleRouteActor(
+                'storm-drain-van',
+                'van',
+                [
+                  { x: 3136, y: 2560 },
+                  { x: 2880, y: 2816 },
+                  { x: 2624, y: 3008 },
+                  { x: 2368, y: 3136 },
+                ],
+                96,
+                {
+                  followRadius: 300,
+                  tailDrainPerSecond: 2,
+                  loseGraceSeconds: 2.5,
+                },
+              ),
+            ],
+            failRules: [
+              wantedPressureFailRule(
+                2,
+                'The underpass route was compromised once the surface patrols got a full read.',
+              ),
+            ],
+          },
+        ],
+      },
+    },
+    {
+      id: 'rain-of-receipts',
+      title: 'Rain Of Receipts',
+      hook: 'The fake-claims market is open for one night only, and every boss in the chain is standing in the same auction block.',
+      primaryGoal:
+        'Crash the debt auction, drop the marked bosses, then burn the claim archive before the private reinforcements seal the exits.',
+      secondaryPressure:
+        'The finale should escalate from breach to execution to destruction instead of becoming one flat firefight.',
+      failureState: 'Fail if the marked bosses escape with the ledger or the claim archive survives the lockdown.',
+      payoff:
+        'Rook breaks the debt cycle in the open and leaves the middle-city collectors unable to hide the paper trail anymore.',
+      requiredSystems: ['sabotage', 'scriptedEncounter'],
+      prototypeRuntime: {
+        id: 'rain-of-receipts',
+        title: 'Rain Of Receipts',
+        objectives: [
+          {
+            kind: 'reach',
+            description: 'Reach the debt auction before the private exits seal',
+            target: { x: 3456, y: 2624 },
+            radius: 88,
+          },
+          {
+            kind: 'eliminate',
+            description: 'Drop the 5 marked debt bosses',
+            count: 5,
+            targetsOnly: true,
+          },
+          {
+            kind: 'sabotage',
+            description: 'Burn the 3 claim archive stacks before reinforcements seal the block',
+            targets: [
+              { x: 3328, y: 2496 },
+              { x: 3520, y: 2432 },
+              { x: 3648, y: 2624 },
+            ],
+            radius: 84,
+            timeLimitSeconds: 70,
+          },
+        ],
+        reward: 6200,
+      },
+      prototypeScript: {
+        primaryActorId: 'auction-bosses',
+        actors: [],
+        stages: [
+          {
+            id: 'rain-of-receipts-breach',
+            title: 'Crash the auction block',
+            districtState: {
+              label: 'The auction exits are still soft enough to breach',
+              summary:
+                'Reach the block before the private security ring turns the auction into another sealed debtor disappearance.',
+              trafficSpeedMultiplier: 0.74,
+              serviceLaneBlocks: ['tow'],
+            },
+            actors: [],
+            nextWhen: { kind: 'storyObjective', objectiveIndex: 1 },
+          },
+          {
+            id: 'rain-of-receipts-bosses',
+            title: 'Drop the marked bosses',
+            primaryActorId: 'auction-bosses',
+            districtState: {
+              label: 'The auction bosses are still clustered around the live ledger tables',
+              summary:
+                'Take the marked bosses off the floor before the archive runners scatter the claims into private exits.',
+              suppressNpcDriving: true,
+              wantedPressureBonus: 1,
+              serviceLaneBlocks: ['police'],
+            },
+            actors: [missionTargetSquadActor('auction-bosses', { x: 3456, y: 2624 }, 5, 24)],
+            nextWhen: { kind: 'storyObjective', objectiveIndex: 2 },
+          },
+          {
+            id: 'rain-of-receipts-archive',
+            title: 'Burn the claim archive',
+            districtState: {
+              label: 'Private reinforcements are sealing the block while the archive still burns',
+              summary:
+                'The bosses are down; now torch the live claims before the contractor ring turns the auction site into another off-books cleanup.',
+              suppressNpcDriving: true,
+              trafficSpeedMultiplier: 0.58,
+              serviceLaneBlocks: ['police', 'ambulance'],
+            },
+            actors: [],
+          },
+        ],
+      },
+    },
+  ],
+};
+
 export const FIND_THE_MISSING_DISPATCHER: StoryAct = {
   id: 'find-the-missing-dispatcher',
   order: 1,
@@ -3191,6 +3879,8 @@ export const COURT_THE_CITYS_MIDDLE_POWERS: StoryAct = {
     NEON_COURIERS,
     GLASS_TOWERS_EMPTY_FLOORS,
     SAINTS_OF_THE_SIDE_STREET,
+    BROADCAST_TEETH,
+    DEBT_COLLECTION_WEATHER,
   ],
 };
 

@@ -920,13 +920,22 @@ export class CityScene extends Phaser.Scene {
       ...this.storyProgress,
       current: { ...this.storyProgress.current, objectiveIndex: 0 },
     };
+    saveGameState(
+      this.store,
+      {
+        world: this.world.snapshot(),
+        timeOfDay: this.timeOfDay,
+      },
+      GAME_STATE_KEY,
+    );
+    saveStoryProgress(this.store, restart, storyProgressSaveKey(GAME_STATE_KEY));
     this.storyProgress = restart;
     this.showStoryPanel(
       `MISSION FAILED\n\n${failureText}\n\nRetrying ${currentStoryMission(STORY_MODE_PROTOTYPE, restart)?.title ?? 'mission'}...`,
       2.6,
     );
     this.pendingStoryRestart = restart;
-    this.pendingStoryRestartResume = false;
+    this.pendingStoryRestartResume = true;
   }
 
   private activeStoryStage(runtime: StoryRuntimeScript): StoryRuntimeStage | null {

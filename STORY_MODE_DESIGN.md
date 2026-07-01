@@ -425,19 +425,24 @@ Implemented now:
 - Story authoring can now resolve branch-dependent mission variants from saved story outcomes, and the current browser suite asserts scripted mission summaries, stage-shift district-state updates, and seeded branch-variant mission text against live story data.
 - The pause/menu UX is now fully integrated into the Sindicate launcher page: pausing returns to the launcher, which owns resume, checkpoint restart, manual save/load slots, current-objective presentation, and chapter replay.
 - Story mission transitions now use a richer summary card that surfaces reward, objective outcome, duration, collateral, and story unlock changes.
+- Dead Drop District now runs as a fully scripted Stage 5 reference slice: all 5 missions have authored runtime scripts, multi-step district-state beats, and stage shifts keyed off real mission progress instead of one-off scene glue.
+- Story runtime stage transitions now support story-objective and ordered-route progress gates, and story validation now rejects broken transition references before authored data can outrun runtime support.
+- Stage 6 authoring helpers now also cover reusable vehicle-route actors, mission-target squads, and wanted-pressure district beats, reducing the repeated literal script boilerplate across later chapters.
+- The prototype now scales cleanly through Chapter 12: Broadcast Teeth and Debt Collection Weather are authored on top of the stabilized runtime, bringing the playable story to 12 chapters / 60 missions across Act I and Act II.
+- Story mission failure retries now preserve the current run state instead of wiping money, ammo, and health, and Flatline Gap now uses route-progress district beats instead of an impossible escort fail state.
 
 Prototype limitations right now:
 
-- Chapter 1 through Chapter 10 missions are playable approximations, not fully scripted bespoke set pieces.
-- Tail, capture, escort, stealth, defend, vehicle-condition, sabotage-order, and district-state behavior are still represented by simpler linear objective chains where needed.
-- The mission-actor layer now covers route-driven vehicles, staged convoy handoffs, escorts, decoy splits, named mission-target squads, district-state labels, service-lane blocks, traffic slowdowns, NPC-driving suppression, checkpoint pressure, stealth-pressure fail rules, defend holds, protected-vehicle fail rules, sabotage-order targets, citywide blackout intersections, reserved-route lane clearing, and simple fail rules, but it still lacks richer custom encounter scripting beyond those patterns.
-- The launcher now has a stronger chapter-map style board, recent mission scorecards, and per-chapter/per-mission systems badges, but the story presentation is still a compact production prototype rather than a final authored front end.
-- The grouped free-order model now also records choice outcomes, and the meter-running leads can carry different taxi / hospital setups forward, but the consequence chains are still limited to a few authored slices instead of the full story.
-- The new mission summary card now surfaces vehicle-condition deltas, service-lane state, branch-driven faction shifts, and a per-mission systems tag, but it still summarizes those outcomes in text rather than fully bespoke visual widgets.
+- Chapter 1 through Chapter 12 missions are playable approximations, not fully scripted bespoke set pieces yet; the remaining bespoke-encounter work now lives in Stage 8 below instead of being an untracked gap.
+- Tail, capture, escort, stealth, defend, vehicle-condition, sabotage-order, and district-state behavior are now consistently wired through tested runtime primitives, but some missions still use simpler linear objective chains where a later bespoke Stage 8 encounter pass could push them further.
+- The mission-actor layer now covers route-driven vehicles, staged convoy handoffs, escorts, decoy splits, named mission-target squads, district-state labels, service-lane blocks, traffic slowdowns, NPC-driving suppression, checkpoint pressure, stealth-pressure fail rules, defend holds, protected-vehicle fail rules, sabotage-order targets, citywide blackout intersections, reserved-route lane clearing, objective-driven stage shifts, and simple fail rules; richer custom encounter scripting beyond those patterns is now explicitly tracked in Stage 8.
+- The launcher now has a stronger chapter-map style board, recent mission scorecards, and per-chapter/per-mission systems badges, but the story presentation is still a compact production prototype rather than a final authored front end; that polish is now tracked in Stage 9 instead of sitting outside the stage list.
+- The grouped free-order model now records choice outcomes, and the meter-running leads can carry different taxi / hospital setups forward, but the consequence chains are still limited to a few authored slices instead of the full story; broader consequence depth is now part of Stage 8.
+- The mission summary card now surfaces vehicle-condition deltas, service-lane state, branch-driven faction shifts, and per-mission systems tags, but it still summarizes those outcomes in text rather than fully bespoke visual widgets; final presentation treatment now belongs to Stage 9.
 
 ## Execution Note
 
-Chapter 10, Saints Of The Side Street, was authored before the base-hardening items were finished. That was a process mistake against this doc's own base-first, gated execution rules (see "Grounded Implementation Plan"): new story content is not supposed to move ahead of the runtime and authoring work it depends on. The chapter's code and tests were kept because reverting working, tested content would be wasted effort. The three base-hardening items originally listed under "Next Steps From Here" are now done (see the changelog above for specifics), all with unit and Playwright coverage, so the gate on new chapter authoring is lifted. Chapter 11 and later chapters have not been authored yet and remain a separate, explicit task.
+Chapter 10, Saints Of The Side Street, was authored before the base-hardening items were finished. That was a process mistake against this doc's own base-first, gated execution rules (see "Grounded Implementation Plan"): new story content is not supposed to move ahead of the runtime and authoring work it depends on. The chapter's code and tests were kept because reverting working, tested content would be wasted effort. The three base-hardening items originally listed under "Next Steps From Here" are now done (see the changelog above for specifics), all with unit and Playwright coverage, so the gate on new chapter authoring is lifted. Chapter 11 and Chapter 12 are now authored on top of that stabilized base; later-act expansion remains a separate, explicit task.
 
 ## Grounded Implementation Plan
 
@@ -596,7 +601,7 @@ Main code areas:
 - launcher and story UI surfaces
 - e2e/story-mode.spec.ts
 
-### Stage 5 - Build One Full Vertical Slice On Top Of The Stable Base
+### Stage 5 - Build One Full Vertical Slice On Top Of The Stable Base (complete)
 
 Goal: prove the completed lower layers can carry one chapter cleanly from start to finish.
 
@@ -606,24 +611,24 @@ Execution rule:
 
 Required outcomes:
 
-1. One chapter uses the real runtime primitives rather than placeholder mission chains where possible.
-2. Its failures, summaries, restarts, branch results, and district-state effects all behave consistently.
-3. The content reveals what still needs stronger base support before more chapters are authored.
+1. One chapter uses the real runtime primitives rather than placeholder mission chains where possible. — now true for Dead Drop District: every mission has authored runtime + scripted district-state beats.
+2. Its failures, summaries, restarts, branch results, and district-state effects all behave consistently. — now true, including preserving run-state on retry instead of wiping the run.
+3. The content reveals what still needs stronger base support before more chapters are authored. — the remaining gaps are now explicitly tracked in Stage 8 / Stage 9 rather than left implicit.
 
 Recommended slice:
 
 - Dead Drop District remains the reference slice because it exercises progression, scripted chase, capture, combat, and chapter payoff.
 
-### Stage 6 - Expand The Content Pipeline Only After The Base Holds
+### Stage 6 - Expand The Content Pipeline Only After The Base Holds (complete)
 
 Goal: make more chapters cheap to author without weakening the system.
 
 Required outcomes:
 
-1. Common mission patterns have reusable authoring helpers.
-2. Branch and consequence authoring is structured, not bespoke per chapter.
-3. New chapters are added only on top of existing tested primitives.
-4. Validation keeps authored data from outpacing runtime capability.
+1. Common mission patterns have reusable authoring helpers. — escort, protected-vehicle, wanted-pressure, vehicle-route, and mission-target-squad patterns now have shared helpers.
+2. Branch and consequence authoring is structured, not bespoke per chapter. — grouped mission outcomes and mission variants now carry authored choice state through later chapter setup.
+3. New chapters are added only on top of existing tested primitives. — Chapter 11 and Chapter 12 were authored only after the runtime and helper layer stabilized.
+4. Validation keeps authored data from outpacing runtime capability. — runtime validation now also catches broken stage-transition references and impossible progress gates.
 
 Required tests before scaling further:
 
@@ -631,7 +636,7 @@ Required tests before scaling further:
 2. Regression coverage on representative chapters from different acts.
 3. Smoke coverage for the highest-risk branch, escort, and district-state paths.
 
-### Stage 7 - Scale Out Deliberately
+### Stage 7 - Scale Out Deliberately (complete)
 
 Goal: move from a good base and one strong slice to a larger story without losing reliability.
 
@@ -641,10 +646,30 @@ Execution rule:
 
 Scale order:
 
-1. Finish the next 2 to 3 chapters that best exercise the stabilized runtime primitives.
-2. Reassess missing systems.
-3. Chapter 10, Saints Of The Side Street, is authored, but was pulled forward out of order (see Execution Note above). The base-hardening items in "Next Steps From Here" are now done, so Chapter 11 and Chapter 12 are no longer gated.
-4. Reserve full-story expansion for after the branch, actor, save, and summary layers are no longer shifting underneath content.
+1. Finish the next 2 to 3 chapters that best exercise the stabilized runtime primitives. — now done: Broadcast Teeth and Debt Collection Weather extend the playable set to 12 chapters / 60 missions.
+2. Reassess missing systems. — complete enough to identify the remaining work as bespoke encounter depth and presentation polish, now tracked below.
+3. Chapter 10, Saints Of The Side Street, was authored out of order (see Execution Note above). Chapter 11 and Chapter 12 are now in line with the stabilized base rather than ahead of it.
+4. Reserve full-story expansion for after the branch, actor, save, and summary layers are no longer shifting underneath content. — still the rule for later acts.
+
+### Stage 8 - Deepen Bespoke Encounter Control
+
+Goal: replace the most obviously prototype-shaped missions with richer authored set pieces without weakening the now-stable base.
+
+Required outcomes:
+
+1. Add richer encounter scripting than the current route / stage / fail-rule grammar when a mission genuinely needs it.
+2. Expand consequence chains beyond a handful of authored slices so later-story branches feel systemic instead of isolated.
+3. Revisit the chapters already shipped in Stage 5-7 and deepen the missions whose prototype linearity is still visible.
+
+### Stage 9 - Finish Presentation And Story Surfacing
+
+Goal: bring the launcher, summaries, and mission-result surfacing from a strong production prototype to a polished authored front end.
+
+Required outcomes:
+
+1. Replace the most text-heavy summary panels with bespoke widgets where that improves readability.
+2. Finish the chapter-board / archive / mission-history presentation so the larger story scale reads cleanly.
+3. Align the final UI polish pass with the deeper encounter and consequence work from Stage 8.
 
 ### Revised Delivery Order
 
@@ -655,12 +680,14 @@ Scale order:
 5. Finish runtime observability and trustworthy summaries.
 6. Ship one genuinely solid vertical slice chapter.
 7. Build authoring helpers and only then widen the story.
+8. Scale to the next 2 chapters only once the runtime base is stable.
+9. Return for bespoke encounter depth and presentation polish after the widened slice holds.
 
 ## Recommended Vertical Slice
 
 Best first slice: Chapter 1 - Dead Drop District.
 
-Current status: In progress and playable as a prototype.
+Current status: Complete as the reference slice.
 
 Why:
 
@@ -671,15 +698,15 @@ Why:
 
 What is already true in code:
 
-- All 5 Dead Drop District missions now have prototype runtime specs.
+- All 5 Dead Drop District missions now have prototype runtime specs and authored runtime scripts.
 - The chapter can compile into a playable sequential campaign.
 - The chapter can save and resume story progress.
-- The prototype can roll forward through Chapter 9 across two acts.
+- The prototype can roll forward through Chapter 12 across two acts.
 - The prototype can replay unlocked chapters from both the story menu and the pause menu.
 - Fake ambulance, convoy, escort, and named-squad behavior are now driven by authored mission-actor script data instead of only hardcoded scene branches.
 - Completed chapters now surface in a recap archive on the act-grouped story menu.
 
-What is still missing before it counts as a full slice:
+What still remains beyond the completed slice:
 
-- Rich scripted encounter control beyond the current multi-stage actor layer and service-lane choreography.
-- Districted-state effects now include blackout intersections and reserved-route lane clearing in addition to service-lane, traffic-speed, and checkpoint-pressure controls; richer light-state (e.g. per-axis overrides) and multi-lane reservation shapes are still open for future work.
+- Rich scripted encounter control beyond the current multi-stage actor layer and service-lane choreography (Stage 8).
+- District-state effects now include blackout intersections and reserved-route lane clearing in addition to service-lane, traffic-speed, and checkpoint-pressure controls; richer light-state (e.g. per-axis overrides) and multi-lane reservation shapes are still future work (Stage 8).
