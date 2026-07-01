@@ -811,8 +811,12 @@ test('scripted district-state missions announce stage shifts and update the acti
     };
     const storyScript = scene?.storyScript;
     const carIndex = storyScript?.actorCarIndices?.['empty-shell-sedan'];
+    const decoyCarIndex = storyScript?.actorCarIndices?.['empty-shell-decoy'];
     if (!storyScript || carIndex === undefined || typeof scene?.syncStoryScript !== 'function') {
       throw new Error('Missing scripted actor stage hooks');
+    }
+    if (decoyCarIndex === undefined) {
+      throw new Error('Missing empty shell decoy hooks');
     }
     const car = scene.world.cars[carIndex];
     scene.world.cars[carIndex] = { ...car, pos: { x: 2496, y: 2112 } };
@@ -823,6 +827,8 @@ test('scripted district-state missions announce stage shifts and update the acti
       visible: !!scene.storyPanel?.visible,
       panel: scene.storyPanel?.text ?? '',
       state: scene.storyStateText?.text ?? '',
+      decoyDespawned: storyScript.actorCarIndices['empty-shell-decoy'] === undefined,
+      decoyCarPos: scene.world.cars[decoyCarIndex]?.pos ?? null,
     };
   });
 
@@ -831,6 +837,8 @@ test('scripted district-state missions announce stage shifts and update the acti
   expect(shift.panel).toContain('Confirm the receiving yard');
   expect(shift.panel).toContain('Hold the tail until the receiving yard is unmistakable.');
   expect(shift.state).toContain('The real shell is slipping through the salvage gate');
+  expect(shift.decoyDespawned).toBe(true);
+  expect(shift.decoyCarPos).toEqual({ x: -100000, y: -100000 });
 });
 
 test('scripted encounter mission summaries keep their authored objective outcome text', async ({

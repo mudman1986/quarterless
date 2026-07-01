@@ -506,7 +506,7 @@ Main code areas:
 - src/game/story/storyMode.ts
 - src/game/story/storyProgress.ts
 
-### Stage 2 - Finish World And Actor Runtime Foundations
+### Stage 2 - Finish World And Actor Runtime Foundations (complete)
 
 Goal: make the world simulation and mission-actor layer reliable enough for authored story encounters.
 
@@ -516,16 +516,16 @@ Why before more story content:
 
 Required outcomes:
 
-1. Mission actors support route vehicles, escorts, named squads, handoffs, protected targets, and failure reactions as reusable runtime pieces.
-2. District-state hooks can affect real ambient systems such as checkpoints, lights, service lanes, and traffic behavior.
-3. Mission-owned actors can spawn, despawn, hand off, fail, and resume deterministically.
-4. World systems expose the runtime facts that presentation and tests need.
+1. Mission actors support route vehicles, escorts, named squads, handoffs, protected targets, and failure reactions as reusable runtime pieces. — already true: `VehicleRouteActorScript`/`PedestrianRouteActorScript`/`PedestrianSquadActorScript` cover routes/escorts/squads, `carHealth` + `actorVehicleConditionFailRule` cover protected targets, and `applyStoryFailRules` covers all 4 failure-reaction kinds. Handoff is a stage-based actor-roster switch (each `StoryRuntimeStage` declares its own `actors` list, e.g. the Empty Shell sedan/decoy split), which is a legitimate, tested primitive — no separate actor-to-actor transfer API was added since nothing in the authored content needs one.
+2. District-state hooks can affect real ambient systems such as checkpoints, lights, service lanes, and traffic behavior. — already true: `World.setStoryDistrictStateEffects` wires `storyWantedPressureBonus` (checkpoints), `storyBlackoutIntersections` (lights), `storyServiceLaneBlocks` (service lanes), and `storyTrafficSpeedMultiplier`/`storyReservedRoutes` (traffic), all covered in `world.test.ts`.
+3. Mission-owned actors can spawn, despawn, hand off, fail, and resume deterministically. — spawn/fail/resume/handoff already worked (`ensureStoryTargetCar`/`ensureStoryTargetPed` spawn deterministically at authored positions with no RNG; a mission fail triggers a full scene restart so state never leaks between attempts). The real gap was despawn: actors dropped by a stage transition or a finished mission used to stay frozen in the world forever. Added `CityScene.despawnStoryActor()`, called when a stage transition drops an actor (e.g. the Empty Shell decoy) and when a mission changes, parking the actor off-map and clearing its script indices so a later reuse of the same actor id spawns fresh.
+4. World systems expose the runtime facts that presentation and tests need. — already true: `world.mission`/`missionObjective`/`missionProgress`/`elapsedSeconds`/`wantedStars`/`drivingCar` plus scene-exposed `storyScript.actorCarIndices`/`actorPedIndices` used directly by tests.
 
 Required tests before moving on:
 
-1. World tests for actor spawning, protected-target state, convoy routing, district-state effects, and restart behavior.
-2. Runtime-actor tests for stage transitions, fail rules, tail/capture flow, and actor loss.
-3. Integration tests for scene-fed mission progress reaching the world and mission system correctly.
+1. World tests for actor spawning, protected-target state, convoy routing, district-state effects, and restart behavior. — already covered in `world.test.ts` (service-lane blocks, traffic slowdown, checkpoint pressure, blackout intersections, reserved routes) and `story-mode.spec.ts` (protected-vehicle failure, restart-on-fail).
+2. Runtime-actor tests for stage transitions, fail rules, tail/capture flow, and actor loss. — already covered in `runtimeActors.test.ts` (`isStageTransitionMet`, all 4 fail-rule kinds, `updateTailCaptureProgress`).
+3. Integration tests for scene-fed mission progress reaching the world and mission system correctly. — already covered by `story-mode.spec.ts` end-to-end flows; extended "scripted district-state missions announce stage shifts" to also assert the dropped Empty Shell decoy actor gets despawned (its car index removed from `actorCarIndices`, its world position parked off-map) after the stage transition.
 
 Main code areas:
 

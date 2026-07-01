@@ -239,6 +239,9 @@ const MOVING_TRAFFIC_MIX: readonly VehicleKind[] = [
   'van',
   'car',
 ];
+/** Parking spot for story actors that have been handed off / dropped by a stage transition or
+ * mission change. Far enough outside any city bounds to stay off-screen and off the minimap. */
+const STORY_ACTOR_DESPAWN_POS: Vec2 = vec2(-100000, -100000);
 
 interface CitySceneStartData {
   loadSaveKey?: string | null;
@@ -669,6 +672,14 @@ export class CityScene extends Phaser.Scene {
       this.storyScript.chapterId !== chapter.id ||
       this.storyScript.missionId !== mission.id
     ) {
+      if (this.storyScript) {
+        for (const actorId of Object.keys(this.storyScript.actorCarIndices)) {
+          this.despawnStoryActor(actorId);
+        }
+        for (const actorId of Object.keys(this.storyScript.actorPedIndices)) {
+          this.despawnStoryActor(actorId);
+        }
+      }
       this.storyScript = {
         chapterId: chapter.id,
         missionId: mission.id,
@@ -781,6 +792,42 @@ export class CityScene extends Phaser.Scene {
     script.actorPedIndices[actorId] = created;
     script.actorRouteIndices[actorId] = 0;
     return created;
+  }
+
+  /**
+   * Remove a mission actor from active play: park its car/pedestrians off-map and forget its
+   * script indices, so a later stage or mission reusing the same actor id spawns fresh instead of
+   * resuming a stale, already-handed-off actor. Used when a stage transition drops an actor
+   * (e.g. the Empty Shell decoy split) and when a mission ends, so actors do not pile up frozen
+   * in the world for the rest of the story run.
+   */
+  private despawnStoryActor(actorId: string): void {
+    const script = this.storyScript;
+    if (!script) return;
+    const carIndex = script.actorCarIndices[actorId];
+    if (carIndex !== undefined && this.world.cars[carIndex]) {
+      this.world.cars[carIndex] = {
+        ...this.world.cars[carIndex]!,
+        pos: STORY_ACTOR_DESPAWN_POS,
+        speed: 0,
+      };
+    }
+    delete script.actorCarIndices[actorId];
+
+    const pedIndices = script.actorPedIndices[actorId];
+    if (pedIndices) {
+      for (const idx of pedIndices) {
+        if (!this.world.pedestrians[idx]) continue;
+        this.world.pedestrians[idx] = {
+          ...this.world.pedestrians[idx],
+          pos: STORY_ACTOR_DESPAWN_POS,
+          target: STORY_ACTOR_DESPAWN_POS,
+          state: 'wait',
+        };
+      }
+    }
+    delete script.actorPedIndices[actorId];
+    delete script.actorRouteIndices[actorId];
   }
 
   private storyTargetCarDisabled(carIndex: number): boolean {
@@ -988,9 +1035,13 @@ export class CityScene extends Phaser.Scene {
     if (isStageTransitionMet(stage.nextWhen, fail.progress, routeIndices)) {
       const stages = this.runtimeStages(runtime);
       if (script.stageIndex < stages.length - 1) {
+        const nextStage = stages[script.stageIndex + 1]!;
+        const nextActorIds = new Set(nextStage.actors.map((nextActor) => nextActor.actorId));
+        for (const actor of stage.actors) {
+          if (!nextActorIds.has(actor.actorId)) this.despawnStoryActor(actor.actorId);
+        }
         script.stageIndex += 1;
         script.failCounters = {};
-        const nextStage = stages[script.stageIndex]!;
         this.showStoryPanel(
           `STAGE SHIFT\n${nextStage.title}\n\n${nextStage.districtState?.summary ?? 'The city is changing around the mission.'}`,
           3.2,

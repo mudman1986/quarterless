@@ -537,12 +537,41 @@ function drawPoliceCar(g: Phaser.GameObjects.Graphics): void {
   g.fillRect(18, 1, 3, 3);
 }
 
+const PANTS = 0x27272a;
+const HAIR = 0x2b2118;
+
 function drawPerson(g: Phaser.GameObjects.Graphics, shirt: number, skin: number): void {
   const c = PERSON / 2;
+
+  // A soft ground shadow anchors the sprite to the street instead of it
+  // looking like it's floating.
+  g.fillStyle(0x000000, 0.24);
+  g.fillEllipse(c, c + 0.5, 11, 6);
+
+  // Feet/legs trail slightly behind the torso, hinting at a walking figure.
+  g.fillStyle(PANTS, 1);
+  g.fillCircle(c - 3.2, c - 2.8, 2.4);
+  g.fillCircle(c - 3.2, c + 2.8, 2.4);
+
+  // Torso: two-tone shirt (darker trailing edge) for a hint of volume, with
+  // a thin outline so the body reads clearly against any background.
+  g.fillStyle(shade(shirt, 0.7), 1);
+  g.fillCircle(c - 1.5, c, 6);
   g.fillStyle(shirt, 1);
-  g.fillCircle(c - 1, c, 6);
+  g.fillCircle(c - 0.5, c - 0.4, 5.6);
+  g.lineStyle(1, OUTLINE, 0.4);
+  g.strokeCircle(c - 0.5, c - 0.4, 5.6);
+
+  // Head leads the body toward the facing direction (+x): a shaded hairline,
+  // an outlined face, and a subtle highlight so it isn't a flat dot.
+  g.fillStyle(HAIR, 1);
+  g.fillCircle(c + 4, c - 0.3, 3.6);
   g.fillStyle(skin, 1);
-  g.fillCircle(c + 3, c, 3.5);
+  g.fillCircle(c + 4.6, c + 0.2, 3.1);
+  g.lineStyle(1, OUTLINE, 0.4);
+  g.strokeCircle(c + 4.6, c + 0.2, 3.1);
+  g.fillStyle(shade(skin, 1.25), 0.6);
+  g.fillCircle(c + 3.8, c - 0.8, 1);
 }
 
 /** Generate all game textures into the scene's texture manager. */
