@@ -1140,10 +1140,7 @@ export class CityScene extends Phaser.Scene {
         }
         script.stageIndex += 1;
         script.failCounters = {};
-        this.showBanner(
-          `STAGE SHIFT\n${nextStage.title}\n${nextStage.districtState?.summary ?? 'The city is changing around the mission.'}`,
-          { stageBound: true },
-        );
+        this.showBanner(`STAGE SHIFT\n${nextStage.title}`, { stageBound: true });
       }
     }
   }
@@ -2748,7 +2745,7 @@ export class CityScene extends Phaser.Scene {
     }
     this.banner.setText(content).setVisible(true);
     this.bannerCloseButton.setVisible(true);
-    this.announceRemaining = Math.max(0, options.seconds ?? 5);
+    this.announceRemaining = Math.max(0, options.seconds ?? 15);
     this.bannerStageKey = options.stageBound ? this.currentStoryStageKey() : null;
     this.layoutHud();
   }

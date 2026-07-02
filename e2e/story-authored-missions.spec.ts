@@ -454,6 +454,63 @@ test('live scripted capture pressure builds from actor proximity instead of dire
   expect(captureSeconds).toBeGreaterThan(0.75);
 });
 
+test('Wreck Before Dawn stage-shift banner stays compact and lasts 15 seconds', async ({ page }) => {
+  await launchSindicate(page);
+  await restartIntoStoryMission(page, {
+    actId: 'find-the-missing-dispatcher',
+    chapterId: 'dead-drop-district',
+    missionId: 'wreck-before-dawn',
+    objectiveIndex: 1,
+    unlockedChapterIds: ['dead-drop-district'],
+    completedMissionIds: ['night-ferry-run', 'burned-locker'],
+  });
+  await acknowledgeStoryPanel(page);
+
+  const bannerState = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: {
+        registerKill?: (kind: 'pedestrian' | 'police', missionTarget?: boolean) => void;
+        addCorpse?: (pos: { x: number; y: number }) => void;
+      };
+      storyScript?: { stageIndex: number } | null;
+      banner?: { visible: boolean; text: string };
+      announceRemaining?: number;
+      update: (time: number, deltaMs: number) => void;
+    };
+    if (!scene?.world.registerKill || !scene.world.addCorpse) {
+      throw new Error('Missing mission transition hooks');
+    }
+
+    for (let i = 0; i < 4; i++) {
+      scene.world.registerKill('pedestrian', true);
+      scene.world.addCorpse({ x: 2368 + i * 8, y: 1088 });
+    }
+    for (let i = 0; i < 120 && scene.storyScript?.stageIndex !== 2; i++) {
+      scene.update(i * 16.7, 16.7);
+    }
+
+    const text = scene.banner?.text ?? '';
+    const initialSeconds = scene.announceRemaining ?? 0;
+
+    for (let i = 0; i < Math.ceil(14 / 0.1); i++) scene.update(i * 100, 100);
+    const visibleAt14Seconds = !!scene.banner?.visible;
+    for (let i = 0; i < Math.ceil(2 / 0.1); i++) scene.update((i + 200) * 100, 100);
+
+    return {
+      text,
+      initialSeconds,
+      visibleAt14Seconds,
+      visibleAt16Seconds: !!scene.banner?.visible,
+    };
+  });
+
+  expect(bannerState.text).toBe('STAGE SHIFT\nHold the block and clear out');
+  expect(bannerState.initialSeconds).toBeCloseTo(15, 1);
+  expect(bannerState.visibleAt14Seconds).toBe(true);
+  expect(bannerState.visibleAt16Seconds).toBe(false);
+});
+
 test('story actor pools stay bounded as scripted missions advance across a live chapter sequence', async ({
   page,
 }) => {
