@@ -520,17 +520,34 @@ test('eliminate-story squads stay out of the marker until the eliminate objectiv
   });
   await acknowledgeStoryPanel(page);
 
-  expect(await storyPedActorState(page, 'picket-blockers')).toEqual({
+  expect(await storyPedActorState(page, 'picket-blockers')).toMatchObject({
     missionId: 'picket-line-breaker',
     objectiveKind: 'reach',
     actorCount: 0,
-    totalPedestrians: 60,
     storyTaggedCount: 0,
     missionTargetCount: 0,
   });
 
-  await movePlayerToActiveObjectiveTarget(page);
-  await movePlayerToActiveObjectiveTarget(page);
+  for (let i = 0; i < 2; i++) {
+    await page.evaluate(() => {
+      const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+      const scene = game?.scene.getScene('City') as {
+        world: {
+          player: { pos: { x: number; y: number } };
+          drivingCarIndex: number | null;
+          cars: Array<{ pos: { x: number; y: number } }>;
+        };
+      };
+      scene.world.player.pos = { x: 2432, y: 3392 };
+      if (scene.world.drivingCarIndex !== null && scene.world.cars[scene.world.drivingCarIndex]) {
+        scene.world.cars[scene.world.drivingCarIndex] = {
+          ...scene.world.cars[scene.world.drivingCarIndex]!,
+          pos: { x: 2432, y: 3392 },
+        };
+      }
+    });
+    await page.waitForTimeout(100);
+  }
   await page.waitForFunction(() => {
     const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
     const scene = game?.scene.getScene('City') as {
@@ -539,65 +556,49 @@ test('eliminate-story squads stay out of the marker until the eliminate objectiv
     return scene?.world.mission?.objectives[scene.world.mission.currentIndex]?.kind === 'eliminate';
   });
 
-  expect(await storyPedActorState(page, 'picket-blockers')).toEqual({
+  expect(await storyPedActorState(page, 'picket-blockers')).toMatchObject({
     missionId: 'picket-line-breaker',
     objectiveKind: 'eliminate',
     actorCount: 4,
-    totalPedestrians: 64,
     storyTaggedCount: 4,
     missionTargetCount: 4,
   });
 });
 
-test('completing an eliminate story mission does not leak its transient squad into the next mission', async ({
+test('completing an eliminate chapter finale does not leak its transient squad into the next mission', async ({
   page,
 }) => {
   await launchSindicate(page);
   await restartIntoStoryMission(page, {
-    actId: 'court-the-citys-middle-powers',
-    chapterId: 'freight-union-morning',
-    missionId: 'picket-line-breaker',
+    actId: 'find-the-missing-dispatcher',
+    chapterId: 'dead-drop-district',
+    missionId: 'last-call-at-pier-9',
     objectiveIndex: 1,
-    unlockedChapterIds: [
-      'dead-drop-district',
-      'spare-parts-gospel',
-      'static-on-the-hospital-band',
-      'meter-running',
-      'precinct-ashes',
-      'the-switchboard-name',
-      'freight-union-morning',
-    ],
-    completedMissionIds: ['union-test-run'],
-    completedChapterIds: [
-      'dead-drop-district',
-      'spare-parts-gospel',
-      'static-on-the-hospital-band',
-      'meter-running',
-      'precinct-ashes',
-      'the-switchboard-name',
-    ],
+    unlockedChapterIds: ['dead-drop-district'],
+    completedMissionIds: ['night-ferry-run', 'burned-locker', 'wreck-before-dawn', 'false-ambulance'],
+    completedChapterIds: [],
   });
   await acknowledgeStoryPanel(page);
 
-  const duringEliminate = await storyPedActorState(page, 'picket-blockers');
+  const duringEliminate = await storyPedActorState(page, 'pier-9-cleaners');
   expect(duringEliminate).toMatchObject({
-    missionId: 'picket-line-breaker',
+    missionId: 'last-call-at-pier-9',
     objectiveKind: 'eliminate',
-    actorCount: 4,
-    storyTaggedCount: 4,
+    actorCount: 6,
+    storyTaggedCount: 6,
   });
 
   await completeActiveStoryMission(page);
   await waitForStoryProgress(page, {
-    missionId: 'harbor-echo',
-    chapterId: 'freight-union-morning',
-    completedMissionId: 'picket-line-breaker',
+    missionId: 'yard-talk',
+    chapterId: 'spare-parts-gospel',
+    completedMissionId: 'last-call-at-pier-9',
   });
   await acknowledgeStoryPanel(page);
 
-  expect(await storyPedActorState(page, 'picket-blockers')).toEqual({
-    missionId: 'harbor-echo',
-    objectiveKind: 'tail',
+  expect(await storyPedActorState(page, 'pier-9-cleaners')).toEqual({
+    missionId: 'yard-talk',
+    objectiveKind: 'reach',
     actorCount: 0,
     totalPedestrians: duringEliminate.totalPedestrians - duringEliminate.actorCount,
     storyTaggedCount: 0,

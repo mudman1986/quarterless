@@ -135,6 +135,11 @@ export async function completeActiveStoryMission(page: Page): Promise<StoryCompl
       const resume = !!scene.pendingStoryRestartResume;
       scene.pendingStoryRestart = null;
       scene.pendingStoryRestartResume = false;
+      (
+        scene as {
+          skipPersistOnShutdown?: boolean;
+        }
+      ).skipPersistOnShutdown = true;
       scene.scene.restart({
         skipResume: !resume,
         mode: 'story',

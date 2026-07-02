@@ -906,6 +906,15 @@ export class CityScene extends Phaser.Scene {
     delete script.actorRouteIndices[actorId];
   }
 
+  private clearActiveStoryActors(): void {
+    if (!this.storyScript) return;
+    for (const actorId of Object.keys(this.storyScript.actorCarIndices)) this.despawnStoryActor(actorId);
+    for (const actorId of Object.keys(this.storyScript.actorPedIndices)) this.despawnStoryActor(actorId);
+    this.storyScript = null;
+    this.world.setStoryObjectiveProgress(null);
+    this.world.setStoryDistrictStateEffects(null);
+  }
+
   private storyTargetCarDisabled(carIndex: number): boolean {
     const wreckedCars = (this.world as unknown as { wreckedCars: boolean[] }).wreckedCars;
     return !!wreckedCars[carIndex] || this.world.carIsBurning(carIndex);
@@ -2714,7 +2723,7 @@ export class CityScene extends Phaser.Scene {
         const nextChapter = this.storyProgress
           ? currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress)
           : null;
-        this.persistGameState();
+        this.persistGameState(GAME_STATE_KEY, { pruneStoryActors: true });
         if (nextMission?.prototypeRuntime && nextChapter) {
           this.showStoryPanel(
             `CHAPTER COMPLETE\n${previousStoryChapter?.title ?? 'Story Chapter'}\n\n${previousStoryChapter?.combinedGoal ?? ''}\n\nNext: ${nextChapter.title}`,
@@ -2738,6 +2747,7 @@ export class CityScene extends Phaser.Scene {
       if (this.prevMissionId !== null) this.sfx.fanfare();
       if (w.mission) {
         if (this.mode === 'story') {
+          if (this.prevMissionId !== null) this.clearActiveStoryActors();
           if (this.prevMissionId !== null) this.showMissionTransitionPanel(this.prevMissionId);
           else this.showMissionBriefingPanel();
         }
