@@ -479,10 +479,9 @@ test('Wreck Before Dawn uses a 15 second objective banner window after the elimi
       storyScript?: { stageIndex: number } | null;
       banner?: { visible: boolean; text: string };
       announceRemaining?: number;
-      showBanner?: (text?: string, options?: { stageBound?: boolean; seconds?: number }) => void;
       update: (time: number, deltaMs: number) => void;
     };
-    if (!scene?.world.registerKill || !scene.world.addCorpse || !scene.showBanner) {
+    if (!scene?.world.registerKill || !scene.world.addCorpse) {
       throw new Error('Missing mission transition hooks');
     }
 
@@ -493,8 +492,6 @@ test('Wreck Before Dawn uses a 15 second objective banner window after the elimi
     for (let i = 0; i < 120 && scene.storyScript?.stageIndex !== 2; i++) {
       scene.update(i * 16.7, 16.7);
     }
-    const objectiveText = scene.world.missionObjective?.description ?? '';
-    scene.showBanner(objectiveText, { stageBound: true });
 
     const text = scene.banner?.text ?? '';
     const initialSeconds = scene.announceRemaining ?? 0;

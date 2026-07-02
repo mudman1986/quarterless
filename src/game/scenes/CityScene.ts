@@ -1142,6 +1142,12 @@ export class CityScene extends Phaser.Scene {
         }
         script.stageIndex += 1;
         script.failCounters = {};
+        if (!this.shouldSuppressStageShiftBanner(mission.id, nextStage.id)) {
+          this.showBanner(
+            `STAGE SHIFT\n${nextStage.title}\n${nextStage.districtState?.summary ?? 'The city is changing around the mission.'}`,
+            { stageBound: true },
+          );
+        }
       }
     }
   }
@@ -2515,7 +2521,13 @@ export class CityScene extends Phaser.Scene {
     // Count down the announcement banner.
     if (this.announceRemaining > 0) {
       const activeStageKey = this.currentStoryStageKey();
-      if (this.bannerStageKey && activeStageKey !== this.bannerStageKey) this.dismissBanner();
+      if (
+        this.bannerStageKey &&
+        activeStageKey !== this.bannerStageKey &&
+        !this.rebindStageBoundObjectiveBanner(activeStageKey)
+      ) {
+        this.dismissBanner();
+      }
       this.announceRemaining -= dt;
       if (this.announceRemaining <= 0) this.dismissBanner();
     }
@@ -2749,6 +2761,18 @@ export class CityScene extends Phaser.Scene {
     this.announceRemaining = Math.max(0, options.seconds ?? BANNER_DEFAULT_SECONDS);
     this.bannerStageKey = options.stageBound ? this.currentStoryStageKey() : null;
     this.layoutHud();
+  }
+
+  private shouldSuppressStageShiftBanner(missionId: string, nextStageId?: string): boolean {
+    return missionId === 'wreck-before-dawn' && nextStageId === 'wreck-hold';
+  }
+
+  private rebindStageBoundObjectiveBanner(activeStageKey: string | null): boolean {
+    if (!activeStageKey || !this.banner.visible) return false;
+    const objectiveText = this.world.missionObjective?.description?.trim() ?? '';
+    if (objectiveText.length === 0 || this.banner.text.trim() !== objectiveText) return false;
+    this.bannerStageKey = activeStageKey;
+    return true;
   }
 
   private dismissBanner(): void {
