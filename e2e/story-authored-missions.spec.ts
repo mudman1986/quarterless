@@ -321,12 +321,12 @@ test('dead drop district missions expose scripted stage shifts for route and obj
   await page.waitForFunction(() => {
     const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
     const scene = game?.scene.getScene('City') as {
-      storyPanel?: { visible: boolean; text: string };
+      banner?: { visible: boolean; text: string };
     };
     return (
-      !!scene?.storyPanel?.visible &&
-      scene.storyPanel.text.includes('STAGE SHIFT') &&
-      scene.storyPanel.text.includes('Beat the middle sweep')
+      !!scene?.banner?.visible &&
+      scene.banner.text.includes('STAGE SHIFT') &&
+      scene.banner.text.includes('Beat the middle sweep')
     );
   });
 
@@ -341,12 +341,12 @@ test('dead drop district missions expose scripted stage shifts for route and obj
   await page.waitForFunction(() => {
     const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
     const scene = game?.scene.getScene('City') as {
-      storyPanel?: { visible: boolean; text: string };
+      banner?: { visible: boolean; text: string };
     };
     return (
-      !!scene?.storyPanel?.visible &&
-      scene.storyPanel.text.includes('STAGE SHIFT') &&
-      scene.storyPanel.text.includes('Clear the office cleaners')
+      !!scene?.banner?.visible &&
+      scene.banner.text.includes('STAGE SHIFT') &&
+      scene.banner.text.includes('Clear the office cleaners')
     );
   });
 });

@@ -977,7 +977,7 @@ test('scripted district-state missions still announce stage shifts without showi
           radius: number;
         }>;
       };
-      storyPanel?: { visible: boolean; text: string };
+      banner?: { visible: boolean; text: string };
       storyStateText?: { visible: boolean };
       syncStoryScript?: (dt?: number) => void;
     };
@@ -996,8 +996,8 @@ test('scripted district-state missions still announce stage shifts without showi
     scene.syncStoryScript(0);
     scene.syncStoryScript(0);
     return {
-      visible: !!scene.storyPanel?.visible,
-      panel: scene.storyPanel?.text ?? '',
+      visible: !!scene.banner?.visible,
+      panel: scene.banner?.text ?? '',
       stateVisible: !!scene.storyStateText?.visible,
       stageLabel: storyScript.stageLabel,
       decoyDespawned: storyScript.actorCarIndices['empty-shell-decoy'] === undefined,
