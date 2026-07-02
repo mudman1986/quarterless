@@ -184,6 +184,8 @@ const CAMERA_EDGE_GUTTER = 12;
 /** On-screen size of the square minimap. */
 const MINIMAP_SIZE = 168;
 const MINIMAP_BG_TEXTURE_KEY = 'minimap-bg';
+const BANNER_DEFAULT_SECONDS = 15;
+const BANNER_MAX_WIDTH = 420;
 
 function enteredCarLabel(kind: VehicleKind): string {
   if (kind === 'ambulance') return 'AMBULANCE';
@@ -2111,7 +2113,7 @@ export class CityScene extends Phaser.Scene {
         align: 'left',
         backgroundColor: '#000000b0',
         padding: { x: 18, y: 10 },
-        wordWrap: { width: 420, useAdvancedWrap: true },
+        wordWrap: { width: BANNER_MAX_WIDTH, useAdvancedWrap: true },
       })
       .setOrigin(0, 0)
       .setScrollFactor(0)
@@ -2744,7 +2746,7 @@ export class CityScene extends Phaser.Scene {
     }
     this.banner.setText(content).setVisible(true);
     this.bannerCloseButton.setVisible(true);
-    this.announceRemaining = Math.max(0, options.seconds ?? 15);
+    this.announceRemaining = Math.max(0, options.seconds ?? BANNER_DEFAULT_SECONDS);
     this.bannerStageKey = options.stageBound ? this.currentStoryStageKey() : null;
     this.layoutHud();
   }
