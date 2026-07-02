@@ -11,6 +11,7 @@ import {
   SERVICE_SPAWN_SPACING,
   World,
   type VehicleKind,
+  type WorldSnapshot,
   vehicleBodySpecForKind,
 } from '../../core/world';
 import type { WorldOptions } from '../../core/world';
@@ -379,7 +380,7 @@ export class CityScene extends Phaser.Scene {
   private requestedLoadKey: string | null = GAME_STATE_KEY;
   private skipResumeOnCreate = false;
   private readonly beforeUnloadHandler = (): void => {
-    this.persistGameState();
+    this.persistGameState(GAME_STATE_KEY, { pruneStoryActors: true });
   };
 
   /** Procedural sound effects. */
@@ -978,7 +979,7 @@ export class CityScene extends Phaser.Scene {
     saveGameState(
       this.store,
       {
-        world: this.world.snapshot(),
+        world: this.snapshotForPersist({ pruneStoryActors: true }),
         timeOfDay: this.timeOfDay,
       },
       GAME_STATE_KEY,
@@ -1152,12 +1153,12 @@ export class CityScene extends Phaser.Scene {
     }
   }
 
-  private persistGameState(key = GAME_STATE_KEY): void {
+  private persistGameState(key = GAME_STATE_KEY, options: { pruneStoryActors?: boolean } = {}): void {
     if (!this.world) return;
     saveGameState(
       this.store,
       {
-        world: this.world.snapshot(),
+        world: this.snapshotForPersist(options),
         timeOfDay: this.timeOfDay,
       },
       key,
@@ -1177,6 +1178,58 @@ export class CityScene extends Phaser.Scene {
       );
     }
     if (key === GAME_STATE_KEY) this.saveAccumulator = 0;
+  }
+
+  private snapshotForPersist(options: { pruneStoryActors?: boolean } = {}): WorldSnapshot {
+    const snapshot = this.world.snapshot();
+    return options.pruneStoryActors ? this.pruneStoryActorsFromSnapshot(snapshot) : snapshot;
+  }
+
+  private pruneStoryActorsFromSnapshot(snapshot: WorldSnapshot): WorldSnapshot {
+    const storyCarIndices = new Set(
+      Object.values(this.storyScript?.actorCarIndices ?? {}).filter((index) => Number.isInteger(index)),
+    );
+    const carIndexRemap = new Map<number, number>();
+    let nextCarIndex = 0;
+    for (let i = 0; i < snapshot.cars.length; i++) {
+      if (storyCarIndices.has(i)) continue;
+      carIndexRemap.set(i, nextCarIndex);
+      nextCarIndex += 1;
+    }
+    const keepCar = (_: unknown, index: number): boolean => !storyCarIndices.has(index);
+    snapshot.cars = snapshot.cars.filter(keepCar);
+    snapshot.wreckedCars = snapshot.wreckedCars.filter(keepCar);
+    snapshot.towedCars = snapshot.towedCars.filter(keepCar);
+    snapshot.carDrivers = snapshot.carDrivers.filter(keepCar);
+    snapshot.carKinds = snapshot.carKinds.filter(keepCar);
+    snapshot.taxiStates = snapshot.taxiStates.filter(keepCar);
+    snapshot.carRespawnsAtTow = snapshot.carRespawnsAtTow.filter(keepCar);
+    snapshot.carHealth = snapshot.carHealth.filter(keepCar);
+    snapshot.carBurnTimers = snapshot.carBurnTimers.filter(keepCar);
+    snapshot.carBurnByPlayer = snapshot.carBurnByPlayer.filter(keepCar);
+    snapshot.stolenServiceVehicles = snapshot.stolenServiceVehicles.filter(keepCar);
+    snapshot.towDispatchCooldowns = snapshot.towDispatchCooldowns.filter(keepCar);
+    snapshot.drivingCarIndex =
+      snapshot.drivingCarIndex === null ? null : (carIndexRemap.get(snapshot.drivingCarIndex) ?? null);
+    snapshot.tows = snapshot.tows.flatMap((tow) => {
+      const targetCar = carIndexRemap.get(tow.targetCar);
+      return targetCar === undefined ? [] : [{ ...tow, targetCar }];
+    });
+    if (snapshot.playerServiceMission?.kind === 'tow') {
+      const targetCar = carIndexRemap.get(snapshot.playerServiceMission.targetCar);
+      snapshot.playerServiceMission =
+        targetCar === undefined ? null : { ...snapshot.playerServiceMission, targetCar };
+    }
+    snapshot.vehicleImpactCooldowns = [];
+    snapshot.pedestrians = snapshot.pedestrians
+      .filter((ped) => !ped.storyActorId)
+      .map((ped) => ({
+        ...ped,
+        missionTarget: false,
+        storyActorId: undefined,
+        storyActorOrder: undefined,
+      }));
+    return snapshot;
   }
 
   /** A lively mix of cars parked in the marked bays and cars driven by NPC traffic. */

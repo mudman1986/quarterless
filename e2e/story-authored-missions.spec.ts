@@ -585,7 +585,6 @@ test('completing an eliminate story mission does not leak its transient squad in
     objectiveKind: 'eliminate',
     actorCount: 4,
     storyTaggedCount: 4,
-    missionTargetCount: 4,
   });
 
   await completeActiveStoryMission(page);
