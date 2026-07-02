@@ -183,6 +183,38 @@ async function shadowStoryActor(
   );
 }
 
+async function storyPedActorState(
+  page: import('@playwright/test').Page,
+  actorId: string,
+): Promise<{
+  missionId: string | null;
+  objectiveKind: string | null;
+  actorCount: number;
+  missionTargetCount: number;
+}> {
+  return page.evaluate((targetActorId) => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: {
+        mission?: {
+          id: string;
+          currentIndex: number;
+          objectives: Array<{ kind: string }>;
+        } | null;
+        pedestrians: Array<{ storyActorId?: string; missionTarget?: boolean }>;
+      };
+    };
+    const mission = scene?.world.mission ?? null;
+    const actorPeds = scene?.world.pedestrians.filter((ped) => ped.storyActorId === targetActorId) ?? [];
+    return {
+      missionId: mission?.id ?? null,
+      objectiveKind: mission ? mission.objectives[mission.currentIndex]?.kind ?? null : null,
+      actorCount: actorPeds.length,
+      missionTargetCount: actorPeds.filter((ped) => ped.missionTarget).length,
+    };
+  }, actorId);
+}
+
 test.afterEach(async ({ page }) => {
   await page.evaluate(() => {
     localStorage.removeItem('sindicate.gameState');
@@ -452,6 +484,61 @@ test('live scripted capture pressure builds from actor proximity instead of dire
     return scene?.storyScript?.captureSeconds ?? 0;
   });
   expect(captureSeconds).toBeGreaterThan(0.75);
+});
+
+test('eliminate-story squads stay out of the marker until the eliminate objective actually starts', async ({
+  page,
+}) => {
+  await launchSindicate(page);
+  await restartIntoStoryMission(page, {
+    actId: 'court-the-citys-middle-powers',
+    chapterId: 'freight-union-morning',
+    missionId: 'picket-line-breaker',
+    objectiveIndex: -1,
+    unlockedChapterIds: [
+      'dead-drop-district',
+      'spare-parts-gospel',
+      'static-on-the-hospital-band',
+      'meter-running',
+      'precinct-ashes',
+      'the-switchboard-name',
+      'freight-union-morning',
+    ],
+    completedMissionIds: ['union-test-run'],
+    completedChapterIds: [
+      'dead-drop-district',
+      'spare-parts-gospel',
+      'static-on-the-hospital-band',
+      'meter-running',
+      'precinct-ashes',
+      'the-switchboard-name',
+    ],
+  });
+  await acknowledgeStoryPanel(page);
+
+  expect(await storyPedActorState(page, 'picket-blockers')).toEqual({
+    missionId: 'picket-line-breaker',
+    objectiveKind: 'reach',
+    actorCount: 0,
+    missionTargetCount: 0,
+  });
+
+  await movePlayerToActiveObjectiveTarget(page);
+  await movePlayerToActiveObjectiveTarget(page);
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: { mission?: { objectives: Array<{ kind: string }>; currentIndex: number } | null };
+    };
+    return scene?.world.mission?.objectives[scene.world.mission.currentIndex]?.kind === 'eliminate';
+  });
+
+  expect(await storyPedActorState(page, 'picket-blockers')).toEqual({
+    missionId: 'picket-line-breaker',
+    objectiveKind: 'eliminate',
+    actorCount: 4,
+    missionTargetCount: 4,
+  });
 });
 
 test('Wreck Before Dawn uses a 15 second objective banner window after the eliminate stage', async ({
