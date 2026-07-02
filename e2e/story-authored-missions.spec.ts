@@ -190,6 +190,8 @@ async function storyPedActorState(
   missionId: string | null;
   objectiveKind: string | null;
   actorCount: number;
+  totalPedestrians: number;
+  storyTaggedCount: number;
   missionTargetCount: number;
 }> {
   return page.evaluate((targetActorId) => {
@@ -210,6 +212,8 @@ async function storyPedActorState(
       missionId: mission?.id ?? null,
       objectiveKind: mission ? mission.objectives[mission.currentIndex]?.kind ?? null : null,
       actorCount: actorPeds.length,
+      totalPedestrians: scene?.world.pedestrians.length ?? 0,
+      storyTaggedCount: (scene?.world.pedestrians.filter((ped) => !!ped.storyActorId).length ?? 0),
       missionTargetCount: actorPeds.filter((ped) => ped.missionTarget).length,
     };
   }, actorId);
@@ -520,6 +524,8 @@ test('eliminate-story squads stay out of the marker until the eliminate objectiv
     missionId: 'picket-line-breaker',
     objectiveKind: 'reach',
     actorCount: 0,
+    totalPedestrians: 60,
+    storyTaggedCount: 0,
     missionTargetCount: 0,
   });
 
@@ -537,7 +543,66 @@ test('eliminate-story squads stay out of the marker until the eliminate objectiv
     missionId: 'picket-line-breaker',
     objectiveKind: 'eliminate',
     actorCount: 4,
+    totalPedestrians: 64,
+    storyTaggedCount: 4,
     missionTargetCount: 4,
+  });
+});
+
+test('completing an eliminate story mission does not leak its transient squad into the next mission', async ({
+  page,
+}) => {
+  await launchSindicate(page);
+  await restartIntoStoryMission(page, {
+    actId: 'court-the-citys-middle-powers',
+    chapterId: 'freight-union-morning',
+    missionId: 'picket-line-breaker',
+    objectiveIndex: 1,
+    unlockedChapterIds: [
+      'dead-drop-district',
+      'spare-parts-gospel',
+      'static-on-the-hospital-band',
+      'meter-running',
+      'precinct-ashes',
+      'the-switchboard-name',
+      'freight-union-morning',
+    ],
+    completedMissionIds: ['union-test-run'],
+    completedChapterIds: [
+      'dead-drop-district',
+      'spare-parts-gospel',
+      'static-on-the-hospital-band',
+      'meter-running',
+      'precinct-ashes',
+      'the-switchboard-name',
+    ],
+  });
+  await acknowledgeStoryPanel(page);
+
+  const duringEliminate = await storyPedActorState(page, 'picket-blockers');
+  expect(duringEliminate).toMatchObject({
+    missionId: 'picket-line-breaker',
+    objectiveKind: 'eliminate',
+    actorCount: 4,
+    storyTaggedCount: 4,
+    missionTargetCount: 4,
+  });
+
+  await completeActiveStoryMission(page);
+  await waitForStoryProgress(page, {
+    missionId: 'harbor-echo',
+    chapterId: 'freight-union-morning',
+    completedMissionId: 'picket-line-breaker',
+  });
+  await acknowledgeStoryPanel(page);
+
+  expect(await storyPedActorState(page, 'picket-blockers')).toEqual({
+    missionId: 'harbor-echo',
+    objectiveKind: 'tail',
+    actorCount: 0,
+    totalPedestrians: duringEliminate.totalPedestrians - duringEliminate.actorCount,
+    storyTaggedCount: 0,
+    missionTargetCount: 0,
   });
 });
 
