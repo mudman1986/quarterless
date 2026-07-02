@@ -192,6 +192,7 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
       id: 'wreck-before-dawn',
       title: 'Wreck Before Dawn',
       hook: 'A cleanup van is carrying the next piece of the trail out of the district.',
+      entryMarker: { x: 2240, y: 1152 },
       primaryGoal:
         'Stage a crash that blocks the van, seize the cargo manifest, and get clear before the district locks down.',
       secondaryPressure:

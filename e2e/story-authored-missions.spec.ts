@@ -219,6 +219,34 @@ async function storyPedActorState(
   }, actorId);
 }
 
+async function activeReachObjectiveDistance(page: import('@playwright/test').Page): Promise<{
+  kind: string | null;
+  distance: number | null;
+}> {
+  return page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: {
+        focus: { x: number; y: number };
+        mission?: {
+          currentIndex: number;
+          objectives: Array<{ kind: string; target?: { x: number; y: number } }>;
+        } | null;
+      };
+    };
+    const mission = scene?.world.mission;
+    const objective = mission?.objectives[mission.currentIndex];
+    if (!mission || !objective) return { kind: null, distance: null };
+    const target = 'target' in objective ? objective.target : undefined;
+    return {
+      kind: objective.kind,
+      distance: target
+        ? Math.hypot(target.x - scene.world.focus.x, target.y - scene.world.focus.y)
+        : null,
+    };
+  });
+}
+
 test.afterEach(async ({ page }) => {
   await page.evaluate(() => {
     localStorage.removeItem('sindicate.gameState');
@@ -528,26 +556,27 @@ test('eliminate-story squads stay out of the marker until the eliminate objectiv
     missionTargetCount: 0,
   });
 
-  for (let i = 0; i < 2; i++) {
-    await page.evaluate(() => {
-      const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
-      const scene = game?.scene.getScene('City') as {
-        world: {
-          player: { pos: { x: number; y: number } };
-          drivingCarIndex: number | null;
-          cars: Array<{ pos: { x: number; y: number } }>;
-        };
-      };
-      scene.world.player.pos = { x: 2432, y: 3392 };
-      if (scene.world.drivingCarIndex !== null && scene.world.cars[scene.world.drivingCarIndex]) {
-        scene.world.cars[scene.world.drivingCarIndex] = {
-          ...scene.world.cars[scene.world.drivingCarIndex]!,
-          pos: { x: 2432, y: 3392 },
-        };
-      }
-    });
-    await page.waitForTimeout(100);
-  }
+  await movePlayerToActiveObjectiveTarget(page);
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: { mission?: { objectives: Array<{ kind: string }>; currentIndex: number } | null };
+    };
+    return scene?.world.mission?.objectives[scene.world.mission.currentIndex]?.kind === 'reach';
+  });
+  const stagedReach = await activeReachObjectiveDistance(page);
+  expect(stagedReach.kind).toBe('reach');
+  expect(stagedReach.distance).not.toBeNull();
+  expect(stagedReach.distance).toBeGreaterThan(64);
+  expect(await storyPedActorState(page, 'picket-blockers')).toMatchObject({
+    missionId: 'picket-line-breaker',
+    objectiveKind: 'reach',
+    actorCount: 0,
+    storyTaggedCount: 0,
+    missionTargetCount: 0,
+  });
+
+  await movePlayerToActiveObjectiveTarget(page);
   await page.waitForFunction(() => {
     const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
     const scene = game?.scene.getScene('City') as {
@@ -563,6 +592,79 @@ test('eliminate-story squads stay out of the marker until the eliminate objectiv
     storyTaggedCount: 4,
     missionTargetCount: 4,
   });
+});
+
+test('eliminate-stage despawns are pruned before the next story mission reloads', async ({ page }) => {
+  await launchSindicate(page);
+  await restartIntoStoryMission(page, {
+    actId: 'find-the-missing-dispatcher',
+    chapterId: 'dead-drop-district',
+    missionId: 'wreck-before-dawn',
+    objectiveIndex: 0,
+    unlockedChapterIds: ['dead-drop-district'],
+    completedMissionIds: ['night-ferry-run', 'burned-locker'],
+    completedChapterIds: [],
+  });
+  await acknowledgeStoryPanel(page);
+
+  await movePlayerToActiveObjectiveTarget(page);
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      storyScript?: { stageIndex: number } | null;
+    };
+    return scene?.storyScript?.stageIndex === 1;
+  });
+  await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: {
+        registerKill?: (kind: 'pedestrian' | 'police', missionTarget?: boolean) => void;
+        addCorpse?: (pos: { x: number; y: number }) => void;
+      };
+    };
+    if (!scene?.world.registerKill || !scene.world.addCorpse) {
+      throw new Error('Missing mission transition hooks');
+    }
+    for (let i = 0; i < 4; i++) {
+      scene.world.registerKill('pedestrian', true);
+      scene.world.addCorpse({ x: 2368 + i * 8, y: 1088 });
+    }
+  });
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      storyScript?: { stageIndex: number } | null;
+    };
+    return scene?.storyScript?.stageIndex === 2;
+  });
+
+  await completeActiveStoryMission(page);
+  await waitForStoryProgress(page, {
+    missionId: 'false-ambulance',
+    chapterId: 'dead-drop-district',
+    completedMissionId: 'wreck-before-dawn',
+  });
+  await acknowledgeStoryPanel(page);
+
+  const residue = await page.evaluate(() => {
+    const raw = localStorage.getItem('sindicate.gameState');
+    if (!raw) throw new Error('Missing saved game state');
+    const saved = JSON.parse(raw) as {
+      world?: {
+        cars?: Array<{ pos: { x: number; y: number } }>;
+        pedestrians?: Array<{ pos: { x: number; y: number } }>;
+      };
+    };
+    return {
+      offmapCars:
+        saved.world?.cars?.filter((car) => car.pos.x < -9000 || car.pos.y < -9000).length ?? 0,
+      offmapPeds:
+        saved.world?.pedestrians?.filter((ped) => ped.pos.x < -9000 || ped.pos.y < -9000).length ?? 0,
+    };
+  });
+
+  expect(residue).toEqual({ offmapCars: 0, offmapPeds: 0 });
 });
 
 test('completing an eliminate chapter finale does not leak its transient squad into the next mission', async ({

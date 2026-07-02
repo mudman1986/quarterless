@@ -3889,6 +3889,8 @@ export class World {
 
     const progress = Math.max(0, this.targetKills - this.objectiveBaseline.targetKills);
     const remaining = Math.max(0, obj.count - progress);
+    const scriptedTargeted: number[] = [];
+    const scriptedCandidates: number[] = [];
     const targeted: number[] = [];
     const candidates: number[] = [];
 
@@ -3899,21 +3901,29 @@ export class World {
         continue;
       }
       if (ped.missionTarget) {
-        targeted.push(i);
+        if (ped.storyActorId) scriptedTargeted.push(i);
+        else targeted.push(i);
+      } else if (ped.storyActorId) {
+        scriptedCandidates.push(i);
       } else {
         candidates.push(i);
       }
     }
 
-    for (let i = remaining; i < targeted.length; i++) {
-      const idx = targeted[i];
+    const priority = [...scriptedTargeted, ...scriptedCandidates, ...targeted];
+    const keep = new Set(priority.slice(0, remaining));
+
+    for (const idx of [...scriptedTargeted, ...targeted]) {
+      if (keep.has(idx)) continue;
       this.pedestrians[idx] = { ...this.pedestrians[idx], missionTarget: false };
     }
 
-    const need = Math.max(0, remaining - Math.min(targeted.length, remaining));
-    const pool = candidates.slice();
+    const need = remaining - keep.size;
+    if (need <= 0) return;
+    const pool = [...scriptedCandidates.filter((idx) => !keep.has(idx)), ...candidates];
     for (let i = 0; i < need && pool.length > 0; i++) {
-      const pick = Math.floor(this.rng() * pool.length);
+      const scriptedPool = scriptedCandidates.filter((idx) => pool.includes(idx));
+      const pick = scriptedPool.length > 0 ? pool.indexOf(scriptedPool[0]!) : Math.floor(this.rng() * pool.length);
       const idx = pool.splice(pick, 1)[0];
       this.pedestrians[idx] = { ...this.pedestrians[idx], missionTarget: true };
     }

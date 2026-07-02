@@ -435,6 +435,8 @@ export class CityScene extends Phaser.Scene {
   private storyMissionSummaryBaseline: StoryMissionSummaryBaseline | null = null;
   private storyReusableCarIndices: number[] = [];
   private storyReusablePedIndices: number[] = [];
+  private despawnedStoryCarIndices = new Set<number>();
+  private despawnedStoryPedIndices = new Set<number>();
 
   constructor() {
     super('City');
@@ -514,6 +516,8 @@ export class CityScene extends Phaser.Scene {
     this.storyMissionSummaryBaseline = null;
     this.storyReusableCarIndices = [];
     this.storyReusablePedIndices = [];
+    this.despawnedStoryCarIndices.clear();
+    this.despawnedStoryPedIndices.clear();
 
     this.city = buildCity(CITY_SPEC);
     createGameTextures(this);
@@ -773,6 +777,7 @@ export class CityScene extends Phaser.Scene {
     const wreckedCars = (this.world as unknown as { wreckedCars: boolean[] }).wreckedCars;
     const towedCars = (this.world as unknown as { towedCars: boolean[] }).towedCars;
     const index = this.storyReusableCarIndices.pop() ?? this.world.cars.length;
+    this.despawnedStoryCarIndices.delete(index);
     const car = {
       pos,
       heading: 0,
@@ -822,11 +827,30 @@ export class CityScene extends Phaser.Scene {
     } = {},
   ): number[] {
     const script = this.storyScript!;
-    const existing = this.storyPedIndices(actorId);
-    if (existing && existing.length > 0) return existing;
-
     const count = Math.max(1, opts.count ?? 1);
     const spread = opts.spread ?? 20;
+    const existing = this.storyPedIndices(actorId);
+    if (existing && existing.length > 0) {
+      existing.forEach((index, i) => {
+        const offsetX = count === 1 ? 0 : (i - (count - 1) / 2) * spread;
+        const ped = this.world.pedestrians[index];
+        if (!ped) return;
+        this.world.pedestrians[index] = {
+          ...ped,
+          pos: vec2(pos.x + offsetX, pos.y),
+          heading: 0,
+          state: 'wait',
+          target: vec2(pos.x + offsetX, pos.y),
+          missionTarget: opts.missionTarget ?? false,
+          uniform: opts.uniform,
+          storyActorId: actorId,
+          storyActorOrder: i,
+        };
+        this.despawnedStoryPedIndices.delete(index);
+      });
+      return existing;
+    }
+
     const created: number[] = [];
     for (let i = 0; i < count; i++) {
       const offsetX = count === 1 ? 0 : (i - (count - 1) / 2) * spread;
@@ -842,6 +866,7 @@ export class CityScene extends Phaser.Scene {
         storyActorOrder: i,
       };
       const index = this.storyReusablePedIndices.pop() ?? this.world.pedestrians.length;
+      this.despawnedStoryPedIndices.delete(index);
       if (index < this.world.pedestrians.length) {
         this.world.pedestrians[index] = ped;
       } else {
@@ -877,11 +902,14 @@ export class CityScene extends Phaser.Scene {
     if (!script) return;
     const carIndex = script.actorCarIndices[actorId];
     if (carIndex !== undefined && this.world.cars[carIndex]) {
+      const carDrivers = (this.world as unknown as { carDrivers: (TrafficAI | null)[] }).carDrivers;
       this.world.cars[carIndex] = {
         ...this.world.cars[carIndex]!,
         pos: STORY_ACTOR_DESPAWN_POS,
         speed: 0,
       };
+      carDrivers[carIndex] = null;
+      this.despawnedStoryCarIndices.add(carIndex);
       if (!this.storyReusableCarIndices.includes(carIndex)) this.storyReusableCarIndices.push(carIndex);
     }
     delete script.actorCarIndices[actorId];
@@ -899,6 +927,7 @@ export class CityScene extends Phaser.Scene {
           storyActorId: undefined,
           storyActorOrder: undefined,
         };
+        this.despawnedStoryPedIndices.add(idx);
         if (!this.storyReusablePedIndices.includes(idx)) this.storyReusablePedIndices.push(idx);
       }
     }
@@ -971,12 +1000,20 @@ export class CityScene extends Phaser.Scene {
   }
 
   private runPedestrianSquadActor(actor: PedestrianSquadActorScript): number[] {
-    return this.ensureStoryTargetPed(actor.actorId, actor.center, {
+    const indices = this.ensureStoryTargetPed(actor.actorId, actor.center, {
       count: actor.count,
       spread: actor.spread,
       uniform: actor.uniform,
       missionTarget: actor.missionTargets,
     });
+    if (actor.missionTargets) {
+      for (const index of indices) {
+        const ped = this.world.pedestrians[index];
+        if (!ped || ped.missionTarget) continue;
+        this.world.pedestrians[index] = { ...ped, missionTarget: true };
+      }
+    }
+    return indices;
   }
 
   private restartCurrentStoryMission(failureText: string): void {
@@ -1030,6 +1067,7 @@ export class CityScene extends Phaser.Scene {
     this.world.setStoryDistrictStateEffects(stage.districtState ?? null);
 
     const stagePrimaryActorId = stage.primaryActorId ?? runtime.primaryActorId;
+    const liveObjective = this.world.missionObjective;
     const actorPositions: Record<string, Vec2 | null> = {};
     const actorVehicleHealth: Record<string, number | null> = {};
     const actorVehicleDisabled: Record<string, boolean> = {};
@@ -1070,6 +1108,14 @@ export class CityScene extends Phaser.Scene {
           state.routeIndex,
           actor.route.length,
         );
+        continue;
+      }
+      if (actor.missionTargets && liveObjective?.kind !== 'eliminate') {
+        this.despawnStoryActor(actor.actorId);
+        actorPositions[actor.actorId] = null;
+        actorVehicleHealth[actor.actorId] = null;
+        actorVehicleDisabled[actor.actorId] = false;
+        routeIndices[actor.actorId] = 0;
         continue;
       }
       const indices = this.runPedestrianSquadActor(actor);
@@ -1198,14 +1244,23 @@ export class CityScene extends Phaser.Scene {
     const storyCarIndices = new Set(
       Object.values(this.storyScript?.actorCarIndices ?? {}).filter((index) => Number.isInteger(index)),
     );
+    for (const index of this.despawnedStoryCarIndices) storyCarIndices.add(index);
+    const keepCarIndex = (index: number): boolean => {
+      const car = snapshot.cars[index];
+      return (
+        !storyCarIndices.has(index) &&
+        car?.pos.x !== STORY_ACTOR_DESPAWN_POS.x &&
+        car?.pos.y !== STORY_ACTOR_DESPAWN_POS.y
+      );
+    };
     const carIndexRemap = new Map<number, number>();
     let nextCarIndex = 0;
     for (let i = 0; i < snapshot.cars.length; i++) {
-      if (storyCarIndices.has(i)) continue;
+      if (!keepCarIndex(i)) continue;
       carIndexRemap.set(i, nextCarIndex);
       nextCarIndex += 1;
     }
-    const keepCar = (_: unknown, index: number): boolean => !storyCarIndices.has(index);
+    const keepCar = (_: unknown, index: number): boolean => keepCarIndex(index);
     snapshot.cars = snapshot.cars.filter(keepCar);
     snapshot.wreckedCars = snapshot.wreckedCars.filter(keepCar);
     snapshot.towedCars = snapshot.towedCars.filter(keepCar);
@@ -1230,8 +1285,20 @@ export class CityScene extends Phaser.Scene {
         targetCar === undefined ? null : { ...snapshot.playerServiceMission, targetCar };
     }
     snapshot.vehicleImpactCooldowns = [];
+    const storyPedIndices = new Set(
+      Object.values(this.storyScript?.actorPedIndices ?? {})
+        .flat()
+        .filter((index) => Number.isInteger(index)),
+    );
+    for (const index of this.despawnedStoryPedIndices) storyPedIndices.add(index);
     snapshot.pedestrians = snapshot.pedestrians
-      .filter((ped) => !ped.storyActorId)
+      .filter(
+        (ped, index) =>
+          !ped.storyActorId &&
+          !storyPedIndices.has(index) &&
+          ped.pos.x !== STORY_ACTOR_DESPAWN_POS.x &&
+          ped.pos.y !== STORY_ACTOR_DESPAWN_POS.y,
+      )
       .map((ped) => ({
         ...ped,
         missionTarget: false,
@@ -2723,6 +2790,7 @@ export class CityScene extends Phaser.Scene {
         const nextChapter = this.storyProgress
           ? currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress)
           : null;
+        this.clearActiveStoryActors();
         this.persistGameState(GAME_STATE_KEY, { pruneStoryActors: true });
         if (nextMission?.prototypeRuntime && nextChapter) {
           this.showStoryPanel(

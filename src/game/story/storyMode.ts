@@ -37,6 +37,7 @@ export interface StoryMissionVariantOverride {
   secondaryPressure?: string;
   failureState?: string;
   payoff?: string;
+  entryMarker?: Vec2;
   requiredSystems?: readonly StorySystem[];
   prototypeRuntime?: MissionSpec;
   prototypeScript?: StoryRuntimeScript;
@@ -60,6 +61,7 @@ export interface StoryMissionPlan {
   secondaryPressure: string;
   failureState: string;
   payoff: string;
+  entryMarker?: Vec2;
   branchOutcome?: StoryMissionBranchOutcome;
   requiredSystems?: readonly StorySystem[];
   prototypeRuntime?: MissionSpec;
@@ -514,6 +516,7 @@ export function resolveStoryMissionPlan(
     secondaryPressure: variant.secondaryPressure,
     failureState: variant.failureState,
     payoff: variant.payoff,
+    entryMarker: variant.entryMarker,
     requiredSystems: variant.requiredSystems,
     prototypeRuntime: variant.prototypeRuntime,
     prototypeScript: variant.prototypeScript,
@@ -552,8 +555,9 @@ function storyMissionEntryObjective(plan: StoryMissionPlan): Objective | null {
 }
 
 export function storyMissionStartPosition(
-  plan: Pick<StoryMissionPlan, 'prototypeRuntime' | 'prototypeScript'>,
+  plan: Pick<StoryMissionPlan, 'entryMarker' | 'prototypeRuntime' | 'prototypeScript'>,
 ): Vec2 | null {
+  if (plan.entryMarker) return plan.entryMarker;
   const firstObjective = plan.prototypeRuntime?.objectives[0];
   if (firstObjective?.kind === 'reach') return firstObjective.target;
   if (firstObjective?.kind === 'defend') return firstObjective.target;
