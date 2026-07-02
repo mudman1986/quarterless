@@ -580,17 +580,15 @@ test('pedestrian-route story actors stay out of the marker until the mission ent
   await launchSindicate(page);
   await restartIntoStoryMission(page, {
     actId: 'find-the-missing-dispatcher',
-    chapterId: 'dead-drop-district',
-    missionId: 'night-ferry-run',
+    chapterId: 'static-on-the-hospital-band',
+    missionId: 'ward-6-exit',
     objectiveIndex: -1,
-    unlockedChapterIds: ['dead-drop-district'],
-    completedMissionIds: [],
-    completedChapterIds: [],
+    unlockedChapterIds: ['static-on-the-hospital-band'],
   });
   await acknowledgeStoryPanel(page);
 
-  expect(await storyPedActorState(page, 'dock-motel-runner')).toMatchObject({
-    missionId: 'night-ferry-run',
+  expect(await storyPedActorState(page, 'ward6-nurse')).toMatchObject({
+    missionId: 'ward-6-exit',
     objectiveKind: 'reach',
     actorCount: 0,
     storyTaggedCount: 0,
@@ -603,11 +601,11 @@ test('pedestrian-route story actors stay out of the marker until the mission ent
     const scene = game?.scene.getScene('City') as {
       world: { pedestrians: Array<{ storyActorId?: string }> };
     };
-    return scene?.world.pedestrians.some((ped) => ped.storyActorId === 'dock-motel-runner');
+    return scene?.world.pedestrians.some((ped) => ped.storyActorId === 'ward6-nurse');
   });
 
-  expect(await storyPedActorState(page, 'dock-motel-runner')).toMatchObject({
-    missionId: 'night-ferry-run',
+  expect(await storyPedActorState(page, 'ward6-nurse')).toMatchObject({
+    missionId: 'ward-6-exit',
     actorCount: 1,
     storyTaggedCount: 1,
     missionTargetCount: 0,
