@@ -1111,7 +1111,12 @@ export class CityScene extends Phaser.Scene {
         continue;
       }
       if (actor.missionTargets && liveObjective?.kind !== 'eliminate') {
-        this.despawnStoryActor(actor.actorId);
+        this.ensureStoryTargetPed(actor.actorId, STORY_ACTOR_DESPAWN_POS, {
+          count: actor.count,
+          spread: actor.spread,
+          uniform: actor.uniform,
+          missionTarget: false,
+        });
         actorPositions[actor.actorId] = null;
         actorVehicleHealth[actor.actorId] = null;
         actorVehicleDisabled[actor.actorId] = false;

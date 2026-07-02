@@ -52,7 +52,6 @@ export const FREIGHT_UNION_MORNING: StoryChapter = {
       id: 'picket-line-breaker',
       title: 'Picket Line Breaker',
       hook: 'The strike route is being peeled apart by hired blockers before the morning convoy can leave the harbor.',
-      entryMarker: { x: 2304, y: 3392 },
       primaryGoal:
         "Reach the strike corridor and clear the blocker line without losing the workers' route.",
       secondaryPressure: 'The route should feel like selective pressure, not just a body count.',

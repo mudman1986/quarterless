@@ -219,34 +219,6 @@ async function storyPedActorState(
   }, actorId);
 }
 
-async function activeReachObjectiveDistance(page: import('@playwright/test').Page): Promise<{
-  kind: string | null;
-  distance: number | null;
-}> {
-  return page.evaluate(() => {
-    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
-    const scene = game?.scene.getScene('City') as {
-      world: {
-        focus: { x: number; y: number };
-        mission?: {
-          currentIndex: number;
-          objectives: Array<{ kind: string; target?: { x: number; y: number } }>;
-        } | null;
-      };
-    };
-    const mission = scene?.world.mission;
-    const objective = mission?.objectives[mission.currentIndex];
-    if (!mission || !objective) return { kind: null, distance: null };
-    const target = 'target' in objective ? objective.target : undefined;
-    return {
-      kind: objective.kind,
-      distance: target
-        ? Math.hypot(target.x - scene.world.focus.x, target.y - scene.world.focus.y)
-        : null,
-    };
-  });
-}
-
 test.afterEach(async ({ page }) => {
   await page.evaluate(() => {
     localStorage.removeItem('sindicate.gameState');
@@ -548,26 +520,6 @@ test('eliminate-story squads stay out of the marker until the eliminate objectiv
   });
   await acknowledgeStoryPanel(page);
 
-  expect(await storyPedActorState(page, 'picket-blockers')).toMatchObject({
-    missionId: 'picket-line-breaker',
-    objectiveKind: 'reach',
-    actorCount: 0,
-    storyTaggedCount: 0,
-    missionTargetCount: 0,
-  });
-
-  await movePlayerToActiveObjectiveTarget(page);
-  await page.waitForFunction(() => {
-    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
-    const scene = game?.scene.getScene('City') as {
-      world: { mission?: { objectives: Array<{ kind: string }>; currentIndex: number } | null };
-    };
-    return scene?.world.mission?.objectives[scene.world.mission.currentIndex]?.kind === 'reach';
-  });
-  const stagedReach = await activeReachObjectiveDistance(page);
-  expect(stagedReach.kind).toBe('reach');
-  expect(stagedReach.distance).not.toBeNull();
-  expect(stagedReach.distance).toBeGreaterThan(64);
   expect(await storyPedActorState(page, 'picket-blockers')).toMatchObject({
     missionId: 'picket-line-breaker',
     objectiveKind: 'reach',
