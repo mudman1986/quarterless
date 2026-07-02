@@ -127,20 +127,28 @@ interface FacilityProbe {
 interface ParkedServiceCase {
   kind: ParkedServiceKind;
   facilityKind: FacilityProbe['kind'];
+  campaignTitle: string;
+  genericDescription: string;
 }
 
 const parkedServiceCases: readonly ParkedServiceCase[] = [
   {
     kind: 'police',
     facilityKind: 'policeStation',
+    campaignTitle: 'Parked Patrol',
+    genericDescription: 'Bust the suspect',
   },
   {
     kind: 'ambulance',
     facilityKind: 'hospital',
+    campaignTitle: 'Parked Ambulance',
+    genericDescription: 'Recover the body',
   },
   {
     kind: 'tow',
     facilityKind: 'towYard',
+    campaignTitle: 'Parked Tow',
+    genericDescription: 'Recover the wreck',
   },
 ];
 

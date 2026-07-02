@@ -350,6 +350,7 @@ export class CityScene extends Phaser.Scene {
   private hud!: Phaser.GameObjects.Text;
   private bustedText!: Phaser.GameObjects.Text;
   private banner!: Phaser.GameObjects.Text;
+  private bannerCloseButton!: Phaser.GameObjects.Text;
   private storyPanel!: Phaser.GameObjects.Text;
   private storyStateText!: Phaser.GameObjects.Text;
   private touchControlsGfx!: Phaser.GameObjects.Graphics;
@@ -405,6 +406,7 @@ export class CityScene extends Phaser.Scene {
   private sirenTimer = 0;
   /** Seconds left to show the announcement banner. */
   private announceRemaining = 0;
+  private bannerStageKey: string | null = null;
   private storyPanelRemaining = 0;
   private storyPanelRequiresAcknowledge = false;
   private storyPanelPauseGame = false;
@@ -817,9 +819,7 @@ export class CityScene extends Phaser.Scene {
     } = {},
   ): number[] {
     const script = this.storyScript!;
-    const existing = script.actorPedIndices[actorId]?.filter(
-      (index) => !!this.world.pedestrians[index],
-    );
+    const existing = this.storyPedIndices(actorId);
     if (existing && existing.length > 0) return existing;
 
     const count = Math.max(1, opts.count ?? 1);
@@ -835,6 +835,8 @@ export class CityScene extends Phaser.Scene {
         target: vec2(pos.x + offsetX, pos.y),
         missionTarget: opts.missionTarget ?? false,
         uniform: opts.uniform,
+        storyActorId: actorId,
+        storyActorOrder: i,
       };
       const index = this.storyReusablePedIndices.pop() ?? this.world.pedestrians.length;
       if (index < this.world.pedestrians.length) {
@@ -847,6 +849,17 @@ export class CityScene extends Phaser.Scene {
     script.actorPedIndices[actorId] = created;
     script.actorRouteIndices[actorId] = 0;
     return created;
+  }
+
+  private storyPedIndices(actorId: string): number[] {
+    const matches: Array<{ index: number; order: number }> = [];
+    for (let i = 0; i < this.world.pedestrians.length; i++) {
+      const ped = this.world.pedestrians[i];
+      if (ped.storyActorId !== actorId) continue;
+      matches.push({ index: i, order: ped.storyActorOrder ?? i });
+    }
+    matches.sort((a, b) => a.order - b.order);
+    return matches.map((match) => match.index);
   }
 
   /**
@@ -870,7 +883,7 @@ export class CityScene extends Phaser.Scene {
     }
     delete script.actorCarIndices[actorId];
 
-    const pedIndices = script.actorPedIndices[actorId];
+    const pedIndices = this.storyPedIndices(actorId);
     if (pedIndices) {
       for (const idx of pedIndices) {
         if (!this.world.pedestrians[idx]) continue;
@@ -879,6 +892,8 @@ export class CityScene extends Phaser.Scene {
           pos: STORY_ACTOR_DESPAWN_POS,
           target: STORY_ACTOR_DESPAWN_POS,
           state: 'wait',
+          storyActorId: undefined,
+          storyActorOrder: undefined,
         };
         if (!this.storyReusablePedIndices.includes(idx)) this.storyReusablePedIndices.push(idx);
       }
@@ -1124,9 +1139,9 @@ export class CityScene extends Phaser.Scene {
         }
         script.stageIndex += 1;
         script.failCounters = {};
-        this.showStoryPanel(
-          `STAGE SHIFT\n${nextStage.title}\n\n${nextStage.districtState?.summary ?? 'The city is changing around the mission.'}`,
-          3.2,
+        this.showBanner(
+          `STAGE SHIFT\n${nextStage.title}\n${nextStage.districtState?.summary ?? 'The city is changing around the mission.'}`,
+          { stageBound: true },
         );
       }
     }
@@ -2038,8 +2053,10 @@ export class CityScene extends Phaser.Scene {
     };
 
     place(this.hud, 10, 10); // top-left status readout
-    place(this.banner, width / 2, 84); // mission announcement
-    place(this.storyStateText, width / 2, 140);
+    const bannerTop = 18 + this.hud.height;
+    place(this.banner, 10, bannerTop);
+    place(this.bannerCloseButton, 24 + this.banner.width, bannerTop + 6);
+    place(this.storyStateText, 10, bannerTop + this.banner.height + 8);
     place(this.storyPanel, width / 2, height / 2 - 12);
     place(this.bustedText, width / 2, height / 2);
     place(this.pauseTouchButton, width / 2, height / 2 + 306);
@@ -2090,18 +2107,34 @@ export class CityScene extends Phaser.Scene {
 
     // A transient banner that announces each new mission / objective.
     this.banner = this.add
-      .text(this.scale.width / 2, 84, '', {
+      .text(10, 84, '', {
         fontFamily: 'monospace',
-        fontSize: '20px',
+        fontSize: '16px',
         color: '#67e8f9',
-        align: 'center',
+        align: 'left',
         backgroundColor: '#000000b0',
         padding: { x: 18, y: 10 },
+        wordWrap: { width: 420, useAdvancedWrap: true },
       })
-      .setOrigin(0.5)
+      .setOrigin(0, 0)
       .setScrollFactor(0)
       .setDepth(1500)
       .setVisible(false);
+
+    this.bannerCloseButton = this.add
+      .text(0, 0, '✕', {
+        fontFamily: 'monospace',
+        fontSize: '18px',
+        color: '#f8fafc',
+        backgroundColor: '#000000d0',
+        padding: { x: 6, y: 4 },
+      })
+      .setOrigin(0, 0)
+      .setScrollFactor(0)
+      .setDepth(1501)
+      .setVisible(false)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => this.dismissBanner());
 
     this.storyPanel = this.add
       .text(this.scale.width / 2, this.scale.height / 2 - 12, '', {
@@ -2261,7 +2294,7 @@ export class CityScene extends Phaser.Scene {
       const carIndex = this.storyScript.actorCarIndices[actor.actorId];
       return carIndex !== undefined ? (this.world.cars[carIndex]?.pos ?? null) : null;
     }
-    const pedIndex = this.storyScript.actorPedIndices[actor.actorId]?.[0];
+    const pedIndex = this.storyPedIndices(actor.actorId)[0];
     return pedIndex !== undefined ? (this.world.pedestrians[pedIndex]?.pos ?? null) : null;
   }
 
@@ -2482,8 +2515,10 @@ export class CityScene extends Phaser.Scene {
 
     // Count down the announcement banner.
     if (this.announceRemaining > 0) {
+      const activeStageKey = this.currentStoryStageKey();
+      if (this.bannerStageKey && activeStageKey !== this.bannerStageKey) this.dismissBanner();
       this.announceRemaining -= dt;
-      if (this.announceRemaining <= 0) this.banner.setVisible(false);
+      if (this.announceRemaining <= 0) this.dismissBanner();
     }
     if (!this.storyPanelRequiresAcknowledge && this.storyPanelRemaining > 0) {
       this.storyPanelRemaining -= dt;
@@ -2642,10 +2677,10 @@ export class CityScene extends Phaser.Scene {
           if (this.prevMissionId !== null) this.showMissionTransitionPanel(this.prevMissionId);
           else this.showMissionBriefingPanel();
         }
-        this.showBanner(`NEW MISSION\n${w.mission.title}\n${objective}`);
+        this.showBanner(`NEW MISSION\n${w.mission.title}\n${objective}`, { stageBound: true });
       }
     } else if (objective !== '' && objective !== this.prevObjective) {
-      this.showBanner(objective); // next objective within the same mission
+      this.showBanner(objective, { stageBound: true }); // next objective within the same mission
     }
 
     const taxiMission = w.taxiMission;
@@ -2697,10 +2732,32 @@ export class CityScene extends Phaser.Scene {
     return minimap ? COLORS.mmTowTarget : COLORS.towMarker;
   }
 
-  /** Flash a banner message for a few seconds. */
-  private showBanner(text?: string): void {
-    this.banner.setText(typeof text === 'string' ? '' : '').setVisible(false);
+  /** Flash a banner message in the HUD corner for a few seconds. */
+  private showBanner(
+    text?: string,
+    options: {
+      seconds?: number;
+      stageBound?: boolean;
+    } = {},
+  ): void {
+    const content = typeof text === 'string' ? text.trim() : '';
+    if (content.length === 0) {
+      this.dismissBanner();
+      return;
+    }
+    this.banner.setText(content).setVisible(true);
+    this.bannerCloseButton.setVisible(true);
+    this.announceRemaining = Math.max(0, options.seconds ?? 5);
+    this.bannerStageKey = options.stageBound ? this.currentStoryStageKey() : null;
+    this.layoutHud();
+  }
+
+  private dismissBanner(): void {
+    this.banner.setVisible(false).setText('');
+    this.bannerCloseButton.setVisible(false);
     this.announceRemaining = 0;
+    this.bannerStageKey = null;
+    this.layoutHud();
   }
 
   private showStoryPanel(text: string, seconds: number): void {
@@ -2739,6 +2796,15 @@ export class CityScene extends Phaser.Scene {
 
   private syncStoryStateText(): void {
     this.storyStateText.setVisible(false);
+  }
+
+  private currentStoryStageKey(): string | null {
+    if (this.mode !== 'story' || !this.storyProgress?.current || !this.storyScript) return null;
+    return [
+      this.storyProgress.current.chapterId,
+      this.storyProgress.current.missionId,
+      this.storyScript.stageIndex,
+    ].join(':');
   }
 
   private showMissionBriefingPanel(): void {
@@ -3234,8 +3300,15 @@ export class CityScene extends Phaser.Scene {
       : w.isDriving
         ? `DRIVING ${speed}  ·  WASD steer · Space exit · F shoot · P pause`
         : 'ON FOOT  ·  WASD move · Space car · F shoot · P pause';
+    const objective = w.missionObjective?.description;
+    const progress = w.missionProgress;
+    const objectiveLine = objective
+      ? `OBJECTIVE ${objective}${progress ? ` (${progress.current}/${progress.goal})` : ''}`
+      : null;
 
-    return [`WANTED ${stars}    HP ${hp}`, `${money}    ${ammo}`, status].join('\n');
+    return [`WANTED ${stars}    HP ${hp}`, `${money}    ${ammo}`, status, objectiveLine]
+      .filter((line): line is string => !!line)
+      .join('\n');
   }
 
   private syncHudText(): void {
@@ -3243,6 +3316,7 @@ export class CityScene extends Phaser.Scene {
     if (text === this.prevHudText) return;
     this.prevHudText = text;
     this.hud.setText(text);
+    this.layoutHud();
   }
 
   private syncBustedText(): void {

@@ -25,6 +25,10 @@ export interface Pedestrian {
   navNode?: number;
   /** Index of the waypoint-graph node it came from, to avoid immediate U-turns. */
   navFrom?: number;
+  /** Stable story-runtime actor id, used so scripted pedestrians survive array compaction. */
+  storyActorId?: string;
+  /** Stable position within a multi-pedestrian scripted actor squad. */
+  storyActorOrder?: number;
 }
 
 export interface PedestrianContext {

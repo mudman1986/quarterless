@@ -467,6 +467,7 @@ test('story HUD stays compact while transient mission overlays stay hidden', asy
 
   expect(ui.hud).toContain('WANTED');
   expect(ui.hud).toContain('Pistol');
+  expect(ui.hud).toContain('OBJECTIVE Reach the old dock motel before the watchers close in');
   expect(ui.hud).not.toContain('Night Ferry Run');
   expect(ui.hud).not.toContain('Go to the mission marker');
   expect(ui.bannerVisible).toBe(false);
@@ -1267,6 +1268,68 @@ test('story restart times stay stable across repeated story loads', async ({ pag
     expect(metric.pointerdownListeners).toBe(listenerBaseline);
     expect(metric.durationMs).toBeLessThan(ceiling);
   }
+});
+
+test('story stage cleanup removes squad actors even after pedestrian array compaction', async ({
+  page,
+}) => {
+  await launchStoryMode(page);
+
+  await restartIntoStoryProgress(page, {
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'dead-drop-district',
+      missionId: 'wreck-before-dawn',
+      objectiveIndex: 1,
+    },
+    unlockedChapterIds: ['dead-drop-district'],
+    completedChapterIds: [],
+    completedMissionIds: ['night-ferry-run', 'burned-locker'],
+    branchOutcomes: {},
+  });
+  await acknowledgeStoryPanel(page);
+
+  const result = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      world: {
+        pedestrians: Array<{ missionTarget?: boolean; storyActorId?: string }>;
+      };
+      syncStoryScript?: (dt?: number) => void;
+      despawnStoryActor?: (actorId: string) => void;
+    };
+    if (
+      !scene ||
+      typeof scene.syncStoryScript !== 'function' ||
+      typeof scene.despawnStoryActor !== 'function'
+    ) {
+      throw new Error('Missing story actor cleanup hooks');
+    }
+
+    const actorId = 'pier-9-manifest-crew';
+    scene.syncStoryScript(0);
+    const storyActorCount = () =>
+      scene.world.pedestrians.filter((ped) => ped.storyActorId === actorId).length;
+    const before = storyActorCount();
+    const removedIndex = scene.world.pedestrians.findIndex((ped) => ped.storyActorId === actorId);
+    if (removedIndex === -1) throw new Error('Missing manifest crew');
+
+    scene.world.pedestrians.splice(removedIndex, 1);
+    scene.despawnStoryActor(actorId);
+
+    return {
+      before,
+      after: storyActorCount(),
+      lingeringMissionTargets: scene.world.pedestrians.filter((ped) => ped.missionTarget).length,
+    };
+  });
+
+  expect(result.before).toBe(4);
+  expect(result.after).toBe(0);
+  expect(result.lingeringMissionTargets).toBe(0);
 });
 
 test('story mode carries grouped-lead outcomes into later-act mission variants', async ({
