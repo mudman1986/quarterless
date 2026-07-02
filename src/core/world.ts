@@ -3500,7 +3500,12 @@ export class World {
       // steering behavior (wander, flee, panic-exit) chose the raw target.
       if (this.isWaterAt(pos)) {
         pos = ped.pos; // never let a pedestrian step into the water
-      } else if (!returningTo && stepped.state === 'wander' && this.onForbiddenRoad(pos)) {
+      } else if (
+        !returningTo &&
+        stepped.state === 'wander' &&
+        this.onForbiddenRoad(pos) &&
+        !ped.missionTarget
+      ) {
         // When calm, a pedestrian keeps to the pavement and only steps onto the
         // road at a crosswalk; a fleeing pedestrian will bolt across anywhere.
         pos = ped.pos; // hold at the kerb instead of jaywalking

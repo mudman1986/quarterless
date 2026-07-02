@@ -219,6 +219,25 @@ async function storyPedActorState(
   }, actorId);
 }
 
+async function storyPedActorPositions(
+  page: import('@playwright/test').Page,
+  actorId: string,
+): Promise<Array<{ x: number; y: number }>> {
+  return page.evaluate((targetActorId) => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: {
+        pedestrians: Array<{ storyActorId?: string; pos: { x: number; y: number } }>;
+      };
+    };
+    return (
+      scene?.world.pedestrians
+        .filter((ped) => ped.storyActorId === targetActorId)
+        .map((ped) => ({ x: ped.pos.x, y: ped.pos.y })) ?? []
+    );
+  }, actorId);
+}
+
 test.afterEach(async ({ page }) => {
   await page.evaluate(() => {
     localStorage.removeItem('sindicate.gameState');
@@ -544,6 +563,15 @@ test('eliminate-story squads stay out of the marker until the eliminate objectiv
     storyTaggedCount: 4,
     missionTargetCount: 4,
   });
+
+  const beforeMove = await storyPedActorPositions(page, 'picket-blockers');
+  await page.waitForTimeout(600);
+  const afterMove = await storyPedActorPositions(page, 'picket-blockers');
+  const moved = afterMove.some((ped, index) => {
+    const before = beforeMove[index];
+    return before ? Math.hypot(ped.x - before.x, ped.y - before.y) > 0.5 : false;
+  });
+  expect(moved).toBe(true);
 });
 
 test('eliminate-stage despawns are pruned before the next story mission reloads', async ({ page }) => {

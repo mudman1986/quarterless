@@ -824,6 +824,7 @@ export class CityScene extends Phaser.Scene {
       missionTarget?: boolean;
       count?: number;
       spread?: number;
+      resetPosition?: boolean;
     } = {},
   ): number[] {
     const script = this.storyScript!;
@@ -835,12 +836,15 @@ export class CityScene extends Phaser.Scene {
         const offsetX = count === 1 ? 0 : (i - (count - 1) / 2) * spread;
         const ped = this.world.pedestrians[index];
         if (!ped) return;
+        const shouldResetPosition =
+          opts.resetPosition ||
+          (ped.pos.x === STORY_ACTOR_DESPAWN_POS.x && ped.pos.y === STORY_ACTOR_DESPAWN_POS.y);
         this.world.pedestrians[index] = {
           ...ped,
-          pos: vec2(pos.x + offsetX, pos.y),
-          heading: 0,
-          state: 'wait',
-          target: vec2(pos.x + offsetX, pos.y),
+          pos: shouldResetPosition ? vec2(pos.x + offsetX, pos.y) : ped.pos,
+          heading: shouldResetPosition ? 0 : ped.heading,
+          state: shouldResetPosition ? 'wait' : ped.state,
+          target: shouldResetPosition ? vec2(pos.x + offsetX, pos.y) : ped.target,
           missionTarget: opts.missionTarget ?? false,
           uniform: opts.uniform,
           storyActorId: actorId,
@@ -1116,6 +1120,7 @@ export class CityScene extends Phaser.Scene {
           spread: actor.spread,
           uniform: actor.uniform,
           missionTarget: false,
+          resetPosition: true,
         });
         actorPositions[actor.actorId] = null;
         actorVehicleHealth[actor.actorId] = null;
