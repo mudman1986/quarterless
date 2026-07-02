@@ -97,6 +97,7 @@ async function forceStoryMissionRuntimeState(
       scene.world.mission.objectiveState = { kind: 'route', completed: routeCompleted };
     }
     scene.syncStoryScript?.(0);
+    scene.syncStoryScript?.(0);
   }, update);
 }
 
@@ -337,7 +338,7 @@ test('dead drop district missions expose scripted stage shifts for route and obj
     objectiveIndex: 0,
   });
   await acknowledgeStoryPanel(page);
-  await forceStoryMissionRuntimeState(page, { missionId: 'last-call-at-pier-9', currentIndex: 3 });
+  await forceStoryMissionRuntimeState(page, { missionId: 'last-call-at-pier-9', currentIndex: 2 });
   await page.waitForFunction(() => {
     const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
     const scene = game?.scene.getScene('City') as {
