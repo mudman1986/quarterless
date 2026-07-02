@@ -892,6 +892,7 @@ export class CityScene extends Phaser.Scene {
           pos: STORY_ACTOR_DESPAWN_POS,
           target: STORY_ACTOR_DESPAWN_POS,
           state: 'wait',
+          missionTarget: false,
           storyActorId: undefined,
           storyActorOrder: undefined,
         };
@@ -3301,9 +3302,13 @@ export class CityScene extends Phaser.Scene {
         ? `DRIVING ${speed}  ·  WASD steer · Space exit · F shoot · P pause`
         : 'ON FOOT  ·  WASD move · Space car · F shoot · P pause';
     const objective = w.missionObjective?.description;
+    const compactObjective =
+      objective && objective.startsWith('Go to the mission marker to start ')
+        ? 'Go to the mission marker'
+        : objective;
     const progress = w.missionProgress;
-    const objectiveLine = objective
-      ? `OBJECTIVE ${objective}${progress ? ` (${progress.current}/${progress.goal})` : ''}`
+    const objectiveLine = compactObjective
+      ? `OBJECTIVE ${compactObjective}${progress ? ` (${progress.current}/${progress.goal})` : ''}`
       : null;
 
     return [`WANTED ${stars}    HP ${hp}`, `${money}    ${ammo}`, status, objectiveLine]

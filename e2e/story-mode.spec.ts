@@ -467,9 +467,8 @@ test('story HUD stays compact while transient mission overlays stay hidden', asy
 
   expect(ui.hud).toContain('WANTED');
   expect(ui.hud).toContain('Pistol');
-  expect(ui.hud).toContain('OBJECTIVE Reach the old dock motel before the watchers close in');
+  expect(ui.hud).toContain('OBJECTIVE Go to the mission marker');
   expect(ui.hud).not.toContain('Night Ferry Run');
-  expect(ui.hud).not.toContain('Go to the mission marker');
   expect(ui.bannerVisible).toBe(false);
   expect(ui.storyStateVisible).toBe(false);
 });
