@@ -673,17 +673,25 @@ export class CityScene extends Phaser.Scene {
       .filter((choice): choice is { mission: StoryMissionPlan; target: Vec2 } => !!choice.target);
   }
 
+  private storyMissionRuntimeActive(): boolean {
+    return this.mode === 'story' && !!this.storyProgress?.current && this.storyProgress.current.objectiveIndex >= 0;
+  }
+
+  private suspendStoryScript(): void {
+    if (this.storyScript) this.clearActiveStoryActors();
+    else {
+      this.world.setStoryObjectiveProgress(null);
+      this.world.setStoryDistrictStateEffects(null);
+    }
+  }
+
   private syncStoryScript(dt = 0): void {
     if (this.mode !== 'story' || !this.storyProgress?.current) {
-      this.storyScript = null;
-      this.world.setStoryObjectiveProgress(null);
-      this.world.setStoryDistrictStateEffects(null);
+      this.suspendStoryScript();
       return;
     }
-    if (this.storyProgress.current.objectiveIndex < 0) {
-      this.storyScript = null;
-      this.world.setStoryObjectiveProgress(null);
-      this.world.setStoryDistrictStateEffects(null);
+    if (!this.storyMissionRuntimeActive()) {
+      this.suspendStoryScript();
       this.syncStoryStateText();
       return;
     }

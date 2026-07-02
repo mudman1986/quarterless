@@ -574,6 +574,46 @@ test('eliminate-story squads stay out of the marker until the eliminate objectiv
   expect(moved).toBe(true);
 });
 
+test('pedestrian-route story actors stay out of the marker until the mission entry is triggered', async ({
+  page,
+}) => {
+  await launchSindicate(page);
+  await restartIntoStoryMission(page, {
+    actId: 'find-the-missing-dispatcher',
+    chapterId: 'dead-drop-district',
+    missionId: 'night-ferry-run',
+    objectiveIndex: -1,
+    unlockedChapterIds: ['dead-drop-district'],
+    completedMissionIds: [],
+    completedChapterIds: [],
+  });
+  await acknowledgeStoryPanel(page);
+
+  expect(await storyPedActorState(page, 'dock-motel-runner')).toMatchObject({
+    missionId: 'night-ferry-run',
+    objectiveKind: 'reach',
+    actorCount: 0,
+    storyTaggedCount: 0,
+    missionTargetCount: 0,
+  });
+
+  await movePlayerToActiveObjectiveTarget(page);
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: { pedestrians: Array<{ storyActorId?: string }> };
+    };
+    return scene?.world.pedestrians.some((ped) => ped.storyActorId === 'dock-motel-runner');
+  });
+
+  expect(await storyPedActorState(page, 'dock-motel-runner')).toMatchObject({
+    missionId: 'night-ferry-run',
+    actorCount: 1,
+    storyTaggedCount: 1,
+    missionTargetCount: 0,
+  });
+});
+
 test('eliminate-stage despawns are pruned before the next story mission reloads', async ({ page }) => {
   await launchSindicate(page);
   await restartIntoStoryMission(page, {
