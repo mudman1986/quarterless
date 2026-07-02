@@ -70,7 +70,6 @@ test('stealing a taxi lets the player pick up and drop off a live fare', async (
         driving !== null &&
         world.carKind(driving) === 'taxi' &&
         !!world.taxiMission &&
-        scene.hud.text.includes('TAXI:') &&
         scene.taxiMarker.visible
       );
     },
@@ -91,8 +90,8 @@ test('stealing a taxi lets the player pick up and drop off a live fare', async (
 
   expect(start.markerVisible).toBe(true);
   expect(start.mission?.stage).toBe('pickup');
-  expect(start.hud).toContain('TAXI:');
-  expect(start.hud).toContain(`Pick up ${start.mission?.passengerName}`);
+  expect(start.hud).not.toContain('TAXI:');
+  expect(start.hud).not.toContain(`Pick up ${start.mission?.passengerName}`);
 
   // Drive the live taxi onto the live fare target. We shortcut the travel so
   // the regression stays deterministic, but the actual pickup/dropoff logic is
@@ -116,8 +115,7 @@ test('stealing a taxi lets the player pick up and drop off a live fare', async (
         world.taxiMission?.id === fareId &&
         world.taxiMission.stage === 'dropoff' &&
         !world.pedestrians.some((ped) => ped.taxiPassengerRole === 'playerFare') &&
-        scene.taxiMarker.visible &&
-        scene.hud.text.includes(`Drop off ${world.taxiMission.passengerName}`)
+        scene.taxiMarker.visible
       );
     },
     start.mission!.id,
@@ -138,7 +136,7 @@ test('stealing a taxi lets the player pick up and drop off a live fare', async (
   expect(boarded.mission?.id).toBe(start.mission?.id);
   expect(boarded.mission?.stage).toBe('dropoff');
   expect(boarded.score).toBe(start.score);
-  expect(boarded.hud).toContain(`Drop off ${start.mission?.passengerName}`);
+  expect(boarded.hud).not.toContain(`Drop off ${start.mission?.passengerName}`);
 
   await page.evaluate(() => {
     const game = (window as unknown as { __game: GameProbe }).__game;
@@ -160,8 +158,7 @@ test('stealing a taxi lets the player pick up and drop off a live fare', async (
         world.taxiMission.id !== fareId &&
         world.taxiMission.stage === 'pickup' &&
         world.score.current === scoreAfterReward &&
-        scene.taxiMarker.visible &&
-        scene.hud.text.includes(`Pick up ${world.taxiMission.passengerName}`)
+        scene.taxiMarker.visible
       );
     },
     { fareId: start.mission!.id, scoreAfterReward: start.score + start.mission!.reward },
@@ -183,6 +180,6 @@ test('stealing a taxi lets the player pick up and drop off a live fare', async (
   expect(completed.score).toBe(start.score + start.mission!.reward);
   expect(completed.mission?.id).not.toBe(start.mission?.id);
   expect(completed.mission?.stage).toBe('pickup');
-  expect(completed.hud).toContain('TAXI:');
-  expect(completed.hud).toContain(`Pick up ${completed.mission?.passengerName}`);
+  expect(completed.hud).not.toContain('TAXI:');
+  expect(completed.hud).not.toContain(`Pick up ${completed.mission?.passengerName}`);
 });

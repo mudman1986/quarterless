@@ -198,15 +198,12 @@ test('every authored runtime mission boots into the expected mission shell', asy
       const scene = game?.scene.getScene('City') as {
         world: { mission?: { id: string; title: string } | null };
         hud?: { text: string };
-        storyStateText?: { visible: boolean; text: string };
       };
       if (scene?.world?.mission?.id !== missionId) return null;
       return {
         missionId: scene.world.mission?.id ?? null,
         missionTitle: scene.world.mission?.title ?? null,
         hudText: scene.hud?.text ?? '',
-        storyStateVisible: !!scene.storyStateText?.visible,
-        storyStateText: scene.storyStateText?.text ?? '',
       };
     }, entry.mission.id);
 
@@ -214,17 +211,11 @@ test('every authored runtime mission boots into the expected mission shell', asy
       missionId: string;
       missionTitle: string;
       hudText: string;
-      storyStateVisible: boolean;
-      storyStateText: string;
     };
 
     expect(value.missionId).toBe(entry.mission.id);
     expect(value.missionTitle).toBe(entry.mission.title);
-    expect(value.hudText).toContain(entry.mission.title);
-    if (entry.mission.prototypeScript) {
-      expect(value.storyStateVisible).toBe(true);
-      expect(value.storyStateText.length).toBeGreaterThan(0);
-    }
+    expect(value.hudText).not.toContain(entry.mission.title);
   }
 });
 
@@ -331,13 +322,11 @@ test('dead drop district missions expose scripted stage shifts for route and obj
     const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
     const scene = game?.scene.getScene('City') as {
       storyPanel?: { visible: boolean; text: string };
-      storyStateText?: { text: string };
     };
     return (
       !!scene?.storyPanel?.visible &&
       scene.storyPanel.text.includes('STAGE SHIFT') &&
-      scene.storyPanel.text.includes('Beat the middle sweep') &&
-      scene.storyStateText?.text.includes('The middle lockers are pulling the response inward')
+      scene.storyPanel.text.includes('Beat the middle sweep')
     );
   });
 
@@ -353,13 +342,11 @@ test('dead drop district missions expose scripted stage shifts for route and obj
     const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
     const scene = game?.scene.getScene('City') as {
       storyPanel?: { visible: boolean; text: string };
-      storyStateText?: { text: string };
     };
     return (
       !!scene?.storyPanel?.visible &&
       scene.storyPanel.text.includes('STAGE SHIFT') &&
-      scene.storyPanel.text.includes('Clear the office cleaners') &&
-      scene.storyStateText?.text.includes('The evidence room is live and the cleaners are holding the badge')
+      scene.storyPanel.text.includes('Clear the office cleaners')
     );
   });
 });

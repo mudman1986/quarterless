@@ -127,45 +127,25 @@ interface FacilityProbe {
 interface ParkedServiceCase {
   kind: ParkedServiceKind;
   facilityKind: FacilityProbe['kind'];
-  campaignTitle: string;
-  genericDescription: string;
-  detail: string;
-  serviceHud: string;
 }
 
 const parkedServiceCases: readonly ParkedServiceCase[] = [
   {
     kind: 'police',
     facilityKind: 'policeStation',
-    campaignTitle: 'Patrol Duty',
-    genericDescription: 'Steal a patrol car and bust 1 suspect',
-    detail: 'Bust the suspect',
-    serviceHud: 'POLICE: Bust the suspect',
   },
   {
     kind: 'ambulance',
     facilityKind: 'hospital',
-    campaignTitle: 'Hospital Run',
-    genericDescription: 'Steal an ambulance and complete 1 recovery',
-    detail: 'Recover the body',
-    serviceHud: 'AMBULANCE: Recover the body',
   },
   {
     kind: 'tow',
     facilityKind: 'towYard',
-    campaignTitle: 'Tow Shift',
-    genericDescription: 'Steal a tow truck and complete 1 recovery',
-    detail: 'Recover the wreck',
-    serviceHud: 'TOW: Recover the wreck',
   },
 ];
 
 const GAME = '() => window.__game';
 const LIVE_CITY = buildCity(CITY_SPEC);
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 function nearestLiveRoadPoint(target: Vec2): Vec2 {
   let best = tileCenter(LIVE_CITY.spec, 0, 0);
@@ -826,7 +806,7 @@ test('stealing a patrol car starts and completes a live suspect bust side missio
   expect(start.target).toEqual(suspectB);
   expect(start.suspectCount).toBe(1);
   expect(start.markerVisible).toBe(true);
-  expect(start.hud).toContain('POLICE: Bust the suspect');
+  expect(start.hud).not.toContain('POLICE: Bust the suspect');
 
   await page.evaluate(() => {
     const g = (window as unknown as { __game: GameProbe }).__game;
@@ -892,8 +872,7 @@ test('stealing an ambulance starts and completes a live corpse recovery side mis
         w.carKind(w.drivingCarIndex) === 'ambulance' &&
         w.serviceMission?.kind === 'ambulance' &&
         w.serviceTarget !== null &&
-        scene.serviceMarker.visible &&
-        scene.hud.text.includes('AMBULANCE: Recover the body')
+        scene.serviceMarker.visible
       );
     },
     undefined,
@@ -918,7 +897,7 @@ test('stealing an ambulance starts and completes a live corpse recovery side mis
   expect(start.mission?.kind).toBe('ambulance');
   expect(start.target).not.toBeNull();
   expect(start.markerVisible).toBe(true);
-  expect(start.hud).toContain('AMBULANCE: Recover the body');
+  expect(start.hud).not.toContain('AMBULANCE: Recover the body');
   expect(start.mission?.stage).toBe('pickup');
 
   await page.waitForTimeout(600);
@@ -945,8 +924,7 @@ test('stealing an ambulance starts and completes a live corpse recovery side mis
         w.serviceMission?.kind === 'ambulance' &&
         w.serviceMission.stage === 'return' &&
         w.serviceTarget !== null &&
-        scene.serviceMarker.visible &&
-        scene.hud.text.includes('AMBULANCE: Return to the hospital')
+        scene.serviceMarker.visible
       );
     },
     undefined,
@@ -972,7 +950,7 @@ test('stealing an ambulance starts and completes a live corpse recovery side mis
   expect(returning.target).not.toBeNull();
   expect(returning.score).toBe(0);
   expect(returning.corpses).toBe(0);
-  expect(returning.hud).toContain('AMBULANCE: Return to the hospital');
+  expect(returning.hud).not.toContain('AMBULANCE: Return to the hospital');
   expect(returning.markerVisible).toBe(true);
 
   await page.evaluate(
@@ -1037,8 +1015,7 @@ test('stealing a tow truck starts and completes a live wreck recovery side missi
         w.carKind(w.drivingCarIndex) === 'tow' &&
         w.serviceMission?.kind === 'tow' &&
         w.serviceTarget !== null &&
-        scene.serviceMarker.visible &&
-        scene.hud.text.includes('TOW: Recover the wreck')
+        scene.serviceMarker.visible
       );
     },
     undefined,
@@ -1063,7 +1040,7 @@ test('stealing a tow truck starts and completes a live wreck recovery side missi
   expect(start.mission?.kind).toBe('tow');
   expect(start.target).not.toBeNull();
   expect(start.markerVisible).toBe(true);
-  expect(start.hud).toContain('TOW: Recover the wreck');
+  expect(start.hud).not.toContain('TOW: Recover the wreck');
   expect(start.mission?.stage).toBe('pickup');
 
   await page.waitForTimeout(600);
@@ -1091,8 +1068,7 @@ test('stealing a tow truck starts and completes a live wreck recovery side missi
         w.serviceMission?.kind === 'tow' &&
         w.serviceMission.stage === 'return' &&
         w.serviceTarget !== null &&
-        scene.serviceMarker.visible &&
-        scene.hud.text.includes('TOW: Return to the tow yard')
+        scene.serviceMarker.visible
       );
     },
     undefined,
@@ -1120,7 +1096,7 @@ test('stealing a tow truck starts and completes a live wreck recovery side missi
   expect(returning.score).toBe(0);
   expect(returning.towed).toBe(true);
   expect(returning.wrecked).toBe(true);
-  expect(returning.hud).toContain('TOW: Return to the tow yard');
+  expect(returning.hud).not.toContain('TOW: Return to the tow yard');
   expect(returning.markerVisible).toBe(true);
 
   await page.evaluate(
@@ -1205,7 +1181,7 @@ test('an ambulance reaches a corpse on a wide sidewalk in the live game instead 
 });
 
 for (const serviceCase of parkedServiceCases) {
-  test(`stealing the parked ${serviceCase.kind} at its facility raises wanted and shows live service HUD text`, async ({
+  test(`stealing the parked ${serviceCase.kind} at its facility raises wanted and keeps the hud clean`, async ({
     page,
   }) => {
     await boot(page);
@@ -1252,12 +1228,8 @@ for (const serviceCase of parkedServiceCases) {
     expect(state.mission?.kind).toBe(serviceCase.kind);
     expect(state.target).not.toBeNull();
     expect(state.markerVisible).toBe(true);
-    expect(state.hud).toContain(serviceCase.serviceHud);
-    expect(state.hud).toMatch(
-      new RegExp(
-        `▶ ${escapeRegExp(serviceCase.campaignTitle)}: ${escapeRegExp(serviceCase.detail)}\\s+\\(0/1\\)`,
-      ),
-    );
-    expect(state.hud).not.toContain(serviceCase.genericDescription);
+    expect(state.hud).not.toContain('POLICE: Bust the suspect');
+    expect(state.hud).not.toContain('AMBULANCE: Recover the body');
+    expect(state.hud).not.toContain('TOW: Recover the wreck');
   });
 }
