@@ -1140,7 +1140,6 @@ export class CityScene extends Phaser.Scene {
         }
         script.stageIndex += 1;
         script.failCounters = {};
-        this.showBanner(`STAGE SHIFT\n${nextStage.title}`, { stageBound: true });
       }
     }
   }

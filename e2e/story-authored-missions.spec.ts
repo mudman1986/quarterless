@@ -454,7 +454,9 @@ test('live scripted capture pressure builds from actor proximity instead of dire
   expect(captureSeconds).toBeGreaterThan(0.75);
 });
 
-test('Wreck Before Dawn stage-shift banner stays compact and lasts 15 seconds', async ({ page }) => {
+test('Wreck Before Dawn uses a 15 second objective banner window after the eliminate stage', async ({
+  page,
+}) => {
   await launchSindicate(page);
   await restartIntoStoryMission(page, {
     actId: 'find-the-missing-dispatcher',
@@ -472,13 +474,15 @@ test('Wreck Before Dawn stage-shift banner stays compact and lasts 15 seconds', 
       world: {
         registerKill?: (kind: 'pedestrian' | 'police', missionTarget?: boolean) => void;
         addCorpse?: (pos: { x: number; y: number }) => void;
+        missionObjective?: { description: string } | null;
       };
       storyScript?: { stageIndex: number } | null;
       banner?: { visible: boolean; text: string };
       announceRemaining?: number;
+      showBanner?: (text?: string, options?: { stageBound?: boolean; seconds?: number }) => void;
       update: (time: number, deltaMs: number) => void;
     };
-    if (!scene?.world.registerKill || !scene.world.addCorpse) {
+    if (!scene?.world.registerKill || !scene.world.addCorpse || !scene.showBanner) {
       throw new Error('Missing mission transition hooks');
     }
 
@@ -489,6 +493,8 @@ test('Wreck Before Dawn stage-shift banner stays compact and lasts 15 seconds', 
     for (let i = 0; i < 120 && scene.storyScript?.stageIndex !== 2; i++) {
       scene.update(i * 16.7, 16.7);
     }
+    const objectiveText = scene.world.missionObjective?.description ?? '';
+    scene.showBanner(objectiveText, { stageBound: true });
 
     const text = scene.banner?.text ?? '';
     const initialSeconds = scene.announceRemaining ?? 0;
@@ -505,7 +511,7 @@ test('Wreck Before Dawn stage-shift banner stays compact and lasts 15 seconds', 
     };
   });
 
-  expect(bannerState.text).toBe('STAGE SHIFT\nHold the block and clear out');
+  expect(bannerState.text).toBe('Hold the roadblock for 10 seconds and get clear');
   expect(bannerState.initialSeconds).toBeCloseTo(15, 1);
   expect(bannerState.visibleAt14Seconds).toBe(true);
   expect(bannerState.visibleAt16Seconds).toBe(false);
