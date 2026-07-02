@@ -436,7 +436,6 @@ function renderStoryMenu(game: ArcadeGame): void {
   stopActiveGame();
   setBodyMode('landing');
   const progress = currentStoryProgress();
-  const currentChapter = currentStoryChapter(STORY_MODE_PROTOTYPE, progress);
   const run = currentStoryRunOverview();
   const slots = Array.from({ length: MANUAL_SAVE_SLOT_COUNT }, (_, index) =>
     slotOverview(index + 1),
@@ -473,7 +472,6 @@ function renderStoryMenu(game: ArcadeGame): void {
                 Back to Arcade
               </button>
             </div>
-            <p class="story-menu-status">Current chapter: ${currentChapter?.title ?? 'Dead Drop District'}</p>
             <p class="story-menu-status">Unlocked chapters: ${progress.unlockedChapterIds.length}/${STORY_MODE_PROTOTYPE.acts.flatMap((act) => act.chapters).length}</p>
           </article>
           <section class="story-menu-panel" aria-label="Current run">

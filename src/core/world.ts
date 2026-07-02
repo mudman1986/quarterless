@@ -790,6 +790,18 @@ export class World {
   /** Story-driven reserved route lanes: NPC cars near these points nearly
    * stop, keeping the lane clear for a scripted escort or getaway. */
   private storyReservedRoutes: { points: Vec2[]; radius: number }[] = [];
+  /** The currently applied scripted district-state object, used to skip
+   * reapplying identical per-stage effects every frame. */
+  private activeStoryDistrictEffects:
+    | {
+        serviceLaneBlocks?: readonly ServiceObjectiveKind[];
+        trafficSpeedMultiplier?: number;
+        suppressNpcDriving?: boolean;
+        wantedPressureBonus?: number;
+        blackoutIntersections?: boolean;
+        reservedRoutes?: readonly { points: readonly Vec2[]; radius: number }[];
+      }
+    | null = null;
   /** Seconds elapsed in the current run (drives survive objectives). */
   private elapsed = 0;
   /** The currently active player taxi fare, if the player is driving a cab. */
@@ -1146,6 +1158,8 @@ export class World {
       reservedRoutes?: readonly { points: readonly Vec2[]; radius: number }[];
     } | null,
   ): void {
+    if (this.activeStoryDistrictEffects === effects) return;
+    this.activeStoryDistrictEffects = effects;
     this.storyServiceLaneBlocks = new Set(effects?.serviceLaneBlocks ?? []);
     this.storyTrafficSpeedMultiplier = Math.max(0.25, effects?.trafficSpeedMultiplier ?? 1);
     this.storyNpcDrivingSuppressed = !!effects?.suppressNpcDriving;
