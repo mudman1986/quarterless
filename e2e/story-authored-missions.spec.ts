@@ -73,8 +73,13 @@ const missionCompletionCases = authoredMissions.map((entry) => {
 async function forceStoryMissionRuntimeState(
   page: import('@playwright/test').Page,
   update: { missionId: string; currentIndex?: number; routeCompleted?: number },
-): Promise<void> {
-  await page.evaluate(({ missionId, currentIndex, routeCompleted }) => {
+): Promise<{
+  bannerVisible: boolean;
+  bannerText: string;
+  panelVisible: boolean;
+  panelText: string;
+}> {
+  return page.evaluate(({ missionId, currentIndex, routeCompleted }) => {
     const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
     const scene = game?.scene.getScene('City') as {
       world: {
@@ -85,6 +90,8 @@ async function forceStoryMissionRuntimeState(
           status: string;
         } | null;
       };
+      banner?: { visible: boolean; text: string };
+      storyPanel?: { visible: boolean; text: string };
       syncStoryScript?: (dt?: number) => void;
     };
     if (!scene?.world?.mission || scene.world.mission.id !== missionId) {
@@ -98,6 +105,12 @@ async function forceStoryMissionRuntimeState(
     }
     scene.syncStoryScript?.(0);
     scene.syncStoryScript?.(0);
+    return {
+      bannerVisible: !!scene.banner?.visible,
+      bannerText: scene.banner?.text ?? '',
+      panelVisible: !!scene.storyPanel?.visible,
+      panelText: scene.storyPanel?.text ?? '',
+    };
   }, update);
 }
 
@@ -318,18 +331,13 @@ test('dead drop district missions expose scripted stage shifts for route and obj
     objectiveIndex: 0,
   });
   await acknowledgeStoryPanel(page);
-  await forceStoryMissionRuntimeState(page, { missionId: 'burned-locker', routeCompleted: 1 });
-  await page.waitForFunction(() => {
-    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
-    const scene = game?.scene.getScene('City') as {
-      banner?: { visible: boolean; text: string };
-    };
-    return (
-      !!scene?.banner?.visible &&
-      scene.banner.text.includes('STAGE SHIFT') &&
-      scene.banner.text.includes('Beat the middle sweep')
-    );
+  const burnedLockerShift = await forceStoryMissionRuntimeState(page, {
+    missionId: 'burned-locker',
+    routeCompleted: 1,
   });
+  expect(burnedLockerShift.bannerVisible).toBe(true);
+  expect(burnedLockerShift.bannerText).toContain('STAGE SHIFT');
+  expect(burnedLockerShift.bannerText).toContain('Beat the middle sweep');
 
   await restartIntoStoryMission(page, {
     actId: 'find-the-missing-dispatcher',
@@ -338,18 +346,13 @@ test('dead drop district missions expose scripted stage shifts for route and obj
     objectiveIndex: 0,
   });
   await acknowledgeStoryPanel(page);
-  await forceStoryMissionRuntimeState(page, { missionId: 'last-call-at-pier-9', currentIndex: 2 });
-  await page.waitForFunction(() => {
-    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
-    const scene = game?.scene.getScene('City') as {
-      banner?: { visible: boolean; text: string };
-    };
-    return (
-      !!scene?.banner?.visible &&
-      scene.banner.text.includes('STAGE SHIFT') &&
-      scene.banner.text.includes('Clear the office cleaners')
-    );
+  const pierShift = await forceStoryMissionRuntimeState(page, {
+    missionId: 'last-call-at-pier-9',
+    currentIndex: 2,
   });
+  expect(pierShift.bannerVisible).toBe(true);
+  expect(pierShift.bannerText).toContain('STAGE SHIFT');
+  expect(pierShift.bannerText).toContain('Clear the office cleaners');
 });
 
 test('live route objectives advance through authored checkpoints without forced completion hooks', async ({
