@@ -3920,10 +3920,10 @@ export class World {
 
     const need = remaining - keep.size;
     if (need <= 0) return;
-    const pool = [...scriptedCandidates.filter((idx) => !keep.has(idx)), ...candidates];
+    const scriptedPool = scriptedCandidates.filter((idx) => !keep.has(idx));
+    const pool = [...scriptedPool, ...candidates];
     for (let i = 0; i < need && pool.length > 0; i++) {
-      const scriptedPool = scriptedCandidates.filter((idx) => pool.includes(idx));
-      const pick = scriptedPool.length > 0 ? pool.indexOf(scriptedPool[0]!) : Math.floor(this.rng() * pool.length);
+      const pick = scriptedPool.length > i ? 0 : Math.floor(this.rng() * pool.length);
       const idx = pool.splice(pick, 1)[0];
       this.pedestrians[idx] = { ...this.pedestrians[idx], missionTarget: true };
     }
