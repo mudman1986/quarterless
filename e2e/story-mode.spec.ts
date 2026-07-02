@@ -447,7 +447,9 @@ test('story mission briefing stays visible until Enter acknowledges it', async (
   });
 });
 
-test('story HUD stays compact while transient mission overlays stay hidden', async ({ page }) => {
+test('story HUD keeps objectives compact while the mission banner stays in the HUD corner', async ({
+  page,
+}) => {
   await launchStoryMode(page);
 
   const ui = await page.evaluate(() => {
@@ -469,7 +471,7 @@ test('story HUD stays compact while transient mission overlays stay hidden', asy
   expect(ui.hud).toContain('Pistol');
   expect(ui.hud).toContain('OBJECTIVE Go to the mission marker');
   expect(ui.hud).not.toContain('Night Ferry Run');
-  expect(ui.bannerVisible).toBe(false);
+  expect(ui.bannerVisible).toBe(true);
   expect(ui.storyStateVisible).toBe(false);
 });
 
@@ -1322,13 +1324,15 @@ test('story stage cleanup removes squad actors even after pedestrian array compa
     return {
       before,
       after: storyActorCount(),
-      lingeringMissionTargets: scene.world.pedestrians.filter((ped) => ped.missionTarget).length,
+      lingeringActorMissionTargets: scene.world.pedestrians.filter(
+        (ped) => ped.storyActorId === actorId && ped.missionTarget,
+      ).length,
     };
   });
 
   expect(result.before).toBe(4);
   expect(result.after).toBe(0);
-  expect(result.lingeringMissionTargets).toBe(0);
+  expect(result.lingeringActorMissionTargets).toBe(0);
 });
 
 test('story mode carries grouped-lead outcomes into later-act mission variants', async ({
