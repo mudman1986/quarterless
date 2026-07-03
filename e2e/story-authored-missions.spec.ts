@@ -574,7 +574,7 @@ test('eliminate-story squads stay out of the marker until the eliminate objectiv
   expect(moved).toBe(true);
 });
 
-test('eliminate-story targets spawn clear of the player instead of on the mission marker', async ({
+test('eliminate-story targets spawn off-screen instead of on top of the player at the marker', async ({
   page,
 }) => {
   await launchSindicate(page);
@@ -603,22 +603,43 @@ test('eliminate-story targets spawn clear of the player instead of on the missio
     return eliminate && scene.world.pedestrians.some((ped) => ped.missionTarget);
   });
 
-  const minSeparation = await page.evaluate(() => {
+  // Let the camera settle back onto the player so the visible viewport is measured around them.
+  await page.waitForFunction(() => {
     const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
     const scene = game?.scene.getScene('City') as {
+      cameras: { main: { worldView: { x: number; y: number; width: number; height: number } } };
+      world: { focus: { x: number; y: number } };
+    };
+    const view = scene.cameras.main.worldView;
+    const focus = scene.world.focus;
+    const cx = view.x + view.width / 2;
+    const cy = view.y + view.height / 2;
+    return Math.hypot(cx - focus.x, cy - focus.y) < 32;
+  });
+
+  const spawnCheck = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      cameras: { main: { worldView: { x: number; y: number; width: number; height: number } } };
       world: {
-        focus: { x: number; y: number };
         pedestrians: Array<{ missionTarget?: boolean; pos: { x: number; y: number } }>;
       };
     };
-    const player = scene.world.focus;
+    const view = scene.cameras.main.worldView;
     const targets = scene.world.pedestrians.filter((ped) => ped.missionTarget);
-    return Math.min(...targets.map((ped) => Math.hypot(ped.pos.x - player.x, ped.pos.y - player.y)));
+    const onScreen = (p: { x: number; y: number }): boolean =>
+      p.x >= view.x && p.x <= view.x + view.width && p.y >= view.y && p.y <= view.y + view.height;
+    return {
+      targetCount: targets.length,
+      anyOnScreen: targets.some((ped) => onScreen(ped.pos)),
+    };
   });
 
   // Before the fix the squad materialised on the mission marker, which is exactly where the
-  // player stands after reaching it, so the targets died on contact with zero separation.
-  expect(minSeparation).toBeGreaterThan(100);
+  // player stands after reaching it, so the targets spawned on-screen right on top of the player.
+  // They must now spawn entirely outside the visible camera viewport.
+  expect(spawnCheck.targetCount).toBeGreaterThan(0);
+  expect(spawnCheck.anyOnScreen).toBe(false);
 });
 
 test('pedestrian-route story actors stay out of the marker until the mission entry is triggered', async ({
@@ -831,6 +852,145 @@ test('Wreck Before Dawn uses a 15 second objective banner window after the elimi
   expect(bannerState.initialSeconds).toBeCloseTo(15, 1);
   expect(bannerState.visibleAt14Seconds).toBe(true);
   expect(bannerState.visibleAt16Seconds).toBe(false);
+});
+
+// Per-chapter regressions for Chapters 7-12: each asserts a chapter's distinctive
+// authored system is wired into the live runtime, not only that the mission boots.
+// Chapter 7 (Freight Union Morning) and Chapter 9 (Glass Towers Empty Floors) already
+// have dedicated regressions above (picket-squad reveal, live capture pressure), so the
+// specs below cover the remaining Chapters 8, 10, 11, and 12.
+
+function missionEntry(chapterId: string, missionId: string): AuthoredMissionEntry {
+  const entry = authoredMissions.find(
+    (candidate) => candidate.chapter.id === chapterId && candidate.mission.id === missionId,
+  );
+  if (!entry) throw new Error(`Missing authored mission ${chapterId}/${missionId}`);
+  return entry;
+}
+
+async function bootSignatureMission(
+  page: import('@playwright/test').Page,
+  chapterId: string,
+  missionId: string,
+): Promise<void> {
+  const entry = missionEntry(chapterId, missionId);
+  const progress = storyProgressForMission(entry);
+  await restartIntoStoryMission(page, {
+    actId: entry.actId,
+    chapterId: entry.chapter.id,
+    missionId: entry.mission.id,
+    objectiveIndex: progress.current!.objectiveIndex,
+    unlockedChapterIds: progress.unlockedChapterIds,
+    completedChapterIds: progress.completedChapterIds,
+    completedMissionIds: progress.completedMissionIds,
+    branchOutcomes: progress.branchOutcomes,
+  });
+  await acknowledgeStoryPanel(page);
+  await page.waitForFunction((id) => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as { world: { mission?: { id: string } | null } };
+    return scene?.world.mission?.id === id;
+  }, missionId);
+}
+
+async function activeObjectiveKind(page: import('@playwright/test').Page): Promise<string | null> {
+  return page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: { mission?: { objectives: Array<{ kind: string }>; currentIndex: number } | null };
+    };
+    const mission = scene?.world.mission;
+    return mission ? mission.objectives[mission.currentIndex]?.kind ?? null : null;
+  });
+}
+
+async function scriptedActorSpawned(
+  page: import('@playwright/test').Page,
+  actorId: string,
+): Promise<boolean> {
+  return page.evaluate((id) => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      storyScript?: { actorCarIndices: Record<string, number> } | null;
+    };
+    return scene?.storyScript?.actorCarIndices?.[id] !== undefined;
+  }, actorId);
+}
+
+test('Chapter 8 Neon Couriers wires the courier tail handoff onto a live scripted vehicle', async ({
+  page,
+}) => {
+  await launchSindicate(page);
+  await bootSignatureMission(page, 'neon-couriers', 'rival-tape');
+
+  expect(await activeObjectiveKind(page)).toBe('tail');
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      storyScript?: { actorCarIndices: Record<string, number> } | null;
+    };
+    return scene?.storyScript?.actorCarIndices?.['bike-runner'] !== undefined;
+  });
+  expect(await scriptedActorSpawned(page, 'bike-runner')).toBe(true);
+});
+
+test('Chapter 10 Saints Of The Side Street runs the escort van and its extortion squad together', async ({
+  page,
+}) => {
+  await launchSindicate(page);
+  await bootSignatureMission(page, 'saints-of-the-side-street', 'soup-line-watch');
+
+  expect(await activeObjectiveKind(page)).toBe('eliminate');
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: { pedestrians: Array<{ storyActorId?: string }> };
+    };
+    return scene?.world.pedestrians.some((ped) => ped.storyActorId === 'soup-line-van');
+  });
+
+  expect(await storyPedActorState(page, 'soup-line-van')).toMatchObject({
+    missionId: 'soup-line-watch',
+    actorCount: 1,
+    missionTargetCount: 0,
+  });
+  expect(await storyPedActorState(page, 'extortion-crew')).toMatchObject({
+    missionId: 'soup-line-watch',
+    actorCount: 3,
+    missionTargetCount: 3,
+  });
+});
+
+test('Chapter 11 Broadcast Teeth advances its authored district-state stages on route progress', async ({
+  page,
+}) => {
+  await launchSindicate(page);
+  await bootSignatureMission(page, 'broadcast-teeth', 'antenna-climb');
+
+  const shift = await forceStoryMissionRuntimeState(page, {
+    missionId: 'antenna-climb',
+    routeCompleted: 1,
+  });
+  expect(shift.bannerVisible).toBe(true);
+  expect(shift.bannerText).toContain('STAGE SHIFT');
+  expect(shift.bannerText).toContain('Push the higher ridge');
+});
+
+test('Chapter 12 Debt Collection Weather drives the capture pursuit vehicle for the missed-payment grab', async ({
+  page,
+}) => {
+  await launchSindicate(page);
+  await bootSignatureMission(page, 'debt-collection-weather', 'missed-payment');
+
+  expect(await activeObjectiveKind(page)).toBe('capture');
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      storyScript?: { actorCarIndices: Record<string, number> } | null;
+    };
+    return scene?.storyScript?.actorCarIndices?.['missed-payment-van'] !== undefined;
+  });
+  expect(await scriptedActorSpawned(page, 'missed-payment-van')).toBe(true);
 });
 
 test('story actor pools stay bounded as scripted missions advance across a live chapter sequence', async ({

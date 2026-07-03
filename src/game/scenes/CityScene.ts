@@ -1,6 +1,7 @@
 import {
   buildCity,
   crosswalkStripeRects,
+  nearestRoadTileCenter,
   roadStandoffPoint,
   tileCenter,
   type City,
@@ -245,11 +246,6 @@ const MOVING_TRAFFIC_MIX: readonly VehicleKind[] = [
 /** Parking spot for story actors that have been handed off / dropped by a stage transition or
  * mission change. Far enough outside any city bounds to stay off-screen and off the minimap. */
 const STORY_ACTOR_DESPAWN_POS: Vec2 = vec2(-100000, -100000);
-/** Minimum distance a freshly-spawned story actor must keep from the player. Many authored
- * missions anchor their targets on the very tile that also doubles as the "drive here to start"
- * marker, so without this the targets would materialise on top of the player (instant kill,
- * no chase). Enforced generically for every mission at spawn time. */
-const STORY_ACTOR_MIN_SPAWN_DISTANCE = 160;
 
 interface CitySceneStartData {
   loadSaveKey?: string | null;
@@ -768,18 +764,45 @@ export class CityScene extends Phaser.Scene {
   }
 
   /**
-   * Keep a freshly-spawning story actor off the player's lap. Authored missions frequently anchor
-   * their first target on the same tile that doubles as the mission-start marker, so spawning at
-   * the raw anchor drops the target on top of the player (instant kill / no chase). When the
-   * requested spawn is too close to the player, snap it to the nearest road tile a safe distance
-   * away. Leaves the off-map despawn slot and already-distant spawns untouched, so it only
-   * intervenes on the buggy overlap.
+   * Keep a freshly-spawning story actor off the player's screen. Authored missions frequently
+   * anchor their first target on the same tile that doubles as the mission-start marker, so
+   * spawning at the raw anchor pops the target into view right on top of the player (instant kill /
+   * no chase, and the player watches it materialise). When the requested spawn is on-screen, snap
+   * it to the nearest road tile just beyond the camera viewport instead, so the actor appears
+   * off-screen and has to be approached. Leaves the off-map despawn slot and already-off-screen
+   * spawns untouched, so it only intervenes on the visible overlap.
    */
   private storyActorSpawnPoint(pos: Vec2): Vec2 {
     if (pos.x === STORY_ACTOR_DESPAWN_POS.x && pos.y === STORY_ACTOR_DESPAWN_POS.y) return pos;
     const player = this.world.focus;
-    if (distance(pos, player) >= STORY_ACTOR_MIN_SPAWN_DISTANCE) return pos;
-    return roadStandoffPoint(this.city, player, STORY_ACTOR_MIN_SPAWN_DISTANCE);
+    const minDistance = this.offscreenSpawnDistance();
+    if (distance(pos, player) < minDistance) return roadStandoffPoint(this.city, player, minDistance);
+    // Already off-screen: keep the authored point, but never let an actor start
+    // in the river or off the map — snap those to the nearest drivable tile so
+    // an authoring slip can't strand a mission target in water or out of bounds.
+    if (this.spawnPointIsUnsafe(pos)) return nearestRoadTileCenter(this.city, pos) ?? pos;
+    return pos;
+  }
+
+  /** Whether a would-be spawn point sits in lethal water or outside the map. */
+  private spawnPointIsUnsafe(pos: Vec2): boolean {
+    const { cols, rows, tile } = this.city.spec;
+    const tx = Math.floor(pos.x / tile);
+    const ty = Math.floor(pos.y / tile);
+    if (tx < 0 || ty < 0 || tx >= cols || ty >= rows) return true;
+    return this.city.isWater(tx, ty);
+  }
+
+  /**
+   * Distance from the player, in world units, that is guaranteed to sit just past the visible
+   * camera viewport in every direction (half the viewport diagonal plus a one-tile margin), so a
+   * relocated story actor always spawns off-screen regardless of window size or zoom.
+   */
+  private offscreenSpawnDistance(): number {
+    const { width, height } = this.scale.gameSize;
+    const zoom = this.cameras.main.zoom || 1;
+    const halfDiagonal = 0.5 * Math.hypot(width / zoom, height / zoom);
+    return halfDiagonal + this.city.spec.tile;
   }
 
   private ensureStoryTargetCar(

@@ -501,6 +501,53 @@ export function tileCenter(spec: CitySpec, tx: number, ty: number): Vec2 {
 }
 
 /**
+ * Nearest road-tile centre to `target`, found with a bounded outward ring
+ * search instead of scanning the whole grid. Roads recur on a fixed lattice, so
+ * the nearest lane is almost always a few tiles away; the search stops as soon
+ * as no unexplored ring could beat the best hit, and never scans more than the
+ * full grid. Returns the same tile a full scan would, without the per-call
+ * O(cols×rows) cost that made service dispatch a hot spot. Null only when the
+ * city has no road tiles.
+ */
+export function nearestRoadTileCenter(city: City, target: Vec2): Vec2 | null {
+  const { cols, rows, tile } = city.spec;
+  if (cols <= 0 || rows <= 0) return null;
+  const cx = Math.min(cols - 1, Math.max(0, Math.floor(target.x / tile)));
+  const cy = Math.min(rows - 1, Math.max(0, Math.floor(target.y / tile)));
+  let best: Vec2 | null = null;
+  let bestDistance = Infinity;
+  const consider = (tx: number, ty: number): void => {
+    if (tx < 0 || ty < 0 || tx >= cols || ty >= rows) return;
+    if (!city.isRoad(tx, ty)) return;
+    const candidate = tileCenter(city.spec, tx, ty);
+    const d = distance(candidate, target);
+    if (d < bestDistance) {
+      bestDistance = d;
+      best = candidate;
+    }
+  };
+  const maxRadius = cols + rows;
+  for (let r = 0; r <= maxRadius; r++) {
+    // Every tile centre on ring r sits at least (r-1)*tile from the target, so
+    // once the best hit is closer than that no later ring can improve on it.
+    if (best && (r - 1) * tile > bestDistance) break;
+    if (r === 0) {
+      consider(cx, cy);
+      continue;
+    }
+    for (let dx = -r; dx <= r; dx++) {
+      consider(cx + dx, cy - r);
+      consider(cx + dx, cy + r);
+    }
+    for (let dy = -r + 1; dy <= r - 1; dy++) {
+      consider(cx - r, cy + dy);
+      consider(cx + r, cy + dy);
+    }
+  }
+  return best;
+}
+
+/**
  * Nearest road-tile centre to `anchor` that sits at least `minDistance` pixels
  * away. Used to place a story mission's spawning actors a short walk from the
  * player so arriving at the objective does not drop the targets on top of the

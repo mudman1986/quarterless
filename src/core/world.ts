@@ -57,7 +57,7 @@ import {
   laneCross,
 } from './roadVehicle';
 import { type TrafficLights, createTrafficLights, tickLights, hasGreen } from './trafficLight';
-import { type City, tileCenter } from './city';
+import { type City, tileCenter, nearestRoadTileCenter } from './city';
 import {
   type NavGrid,
   type FlowField,
@@ -2442,19 +2442,7 @@ export class World {
   /** Nearest road-tile centre a service vehicle can actually drive to beside a job. */
   private nearestRoadPoint(target: Vec2): Vec2 | null {
     if (!this.city) return null;
-    let best: Vec2 | null = null;
-    let bestDistance = Infinity;
-    for (let tx = 0; tx < this.city.spec.cols; tx++) {
-      for (let ty = 0; ty < this.city.spec.rows; ty++) {
-        if (!this.city.isRoad(tx, ty)) continue;
-        const candidate = tileCenter(this.city.spec, tx, ty);
-        const candidateDistance = distance(candidate, target);
-        if (candidateDistance >= bestDistance) continue;
-        best = candidate;
-        bestDistance = candidateDistance;
-      }
-    }
-    return best;
+    return nearestRoadTileCenter(this.city, target);
   }
 
   /**

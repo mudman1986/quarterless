@@ -1015,6 +1015,120 @@ test('scripted district-state missions still announce stage shifts without showi
   expect(shift.decoyCarPos).toEqual({ x: -100000, y: -100000 });
 });
 
+test('despawning then respawning the same story actor reuses a clean slot with no leaked state', async ({
+  page,
+}) => {
+  await launchStoryMode(page);
+
+  await restartIntoStoryProgress(page, {
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'spare-parts-gospel',
+      missionId: 'the-empty-shell',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: ['dead-drop-district', 'spare-parts-gospel'],
+    completedChapterIds: ['dead-drop-district'],
+    completedMissionIds: [
+      'night-ferry-run',
+      'burned-locker',
+      'wreck-before-dawn',
+      'false-ambulance',
+      'last-call-at-pier-9',
+      'yard-talk',
+    ],
+    branchOutcomes: {},
+  });
+
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as { storyScript?: unknown | null };
+    return !!scene?.storyScript;
+  });
+
+  const churn = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      world: {
+        pedestrians: Array<{
+          pos: { x: number; y: number };
+          state: string;
+          missionTarget?: boolean;
+          storyActorId?: string;
+        }>;
+      };
+      storyScript?: { actorPedIndices: Record<string, number[]> } | null;
+      ensureStoryTargetPed: (
+        actorId: string,
+        pos: { x: number; y: number },
+        opts?: { count?: number; missionTarget?: boolean },
+      ) => number[];
+      despawnStoryActor: (actorId: string) => void;
+    };
+    const DESPAWN = { x: -100000, y: -100000 };
+    const spawnPos = { x: 2496, y: 2112 };
+
+    const first = scene.ensureStoryTargetPed('churn-actor', spawnPos, {
+      count: 3,
+      missionTarget: true,
+    });
+    // Dirty the actors so a stale reuse would be detectable.
+    for (const idx of first) {
+      scene.world.pedestrians[idx] = { ...scene.world.pedestrians[idx], state: 'flee' };
+    }
+
+    scene.despawnStoryActor('churn-actor');
+    const afterDespawn = first.map((idx) => ({
+      pos: scene.world.pedestrians[idx].pos,
+      missionTarget: !!scene.world.pedestrians[idx].missionTarget,
+      storyActorId: scene.world.pedestrians[idx].storyActorId ?? null,
+    }));
+    const clearedFromScript = scene.storyScript?.actorPedIndices?.['churn-actor'] === undefined;
+
+    const second = scene.ensureStoryTargetPed('churn-actor', spawnPos, {
+      count: 3,
+      missionTarget: false,
+    });
+    const afterRespawn = second.map((idx) => ({
+      pos: scene.world.pedestrians[idx].pos,
+      state: scene.world.pedestrians[idx].state,
+      missionTarget: !!scene.world.pedestrians[idx].missionTarget,
+      storyActorId: scene.world.pedestrians[idx].storyActorId ?? null,
+    }));
+
+    return {
+      first,
+      second,
+      afterDespawn,
+      afterRespawn,
+      clearedFromScript,
+      despawnSlot: DESPAWN,
+    };
+  });
+
+  // Despawn parks every ped off-map and strips its story identity.
+  for (const ped of churn.afterDespawn) {
+    expect(ped.pos).toEqual(churn.despawnSlot);
+    expect(ped.missionTarget).toBe(false);
+    expect(ped.storyActorId).toBeNull();
+  }
+  expect(churn.clearedFromScript).toBe(true);
+
+  // Respawn reuses the freed indices (no world growth) with fresh, clean state.
+  expect([...churn.second].sort()).toEqual([...churn.first].sort());
+  for (const ped of churn.afterRespawn) {
+    expect(ped.pos).not.toEqual(churn.despawnSlot);
+    expect(ped.state).toBe('wait');
+    expect(ped.missionTarget).toBe(false);
+    expect(ped.storyActorId).toBe('churn-actor');
+  }
+});
+
+
 test('scripted encounter mission summaries keep their authored objective outcome text', async ({
   page,
 }) => {
