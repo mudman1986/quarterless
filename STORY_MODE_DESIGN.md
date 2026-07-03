@@ -441,31 +441,6 @@ Implemented now:
 - Story authoring validation now catches unused branch declarations (Stage 11): `validateStoryMode` flags any recorded branch outcome that no mission variant ever reads, matching the existing dangling-actor-reference checks.
 - Act III has opened against the stabilized base (Stage 12): Chapter 13, Civic Shield, is authored entirely inside already-tested encounter patterns (`src/game/story/civicShield.ts`, wired into a new `Expose The Machine` act in `storyCampaign.ts`), extending the playable story to 13 chapters / 65 missions across three acts. Its five missions reuse proving-run tail formation, timed sabotage, a blackout-intersection convoy split with a revealed escort squad, a contract-burn collect, and a shoot-on-sight wanted-pressure finale. Coverage lands with it: the generic boot/complete walk now covers all 65 missions, and a dedicated regression proves Armor Column blacks out the junction and only reveals the four escorts once the junction is reached.
 
-Current production status:
-
-- Chapter 1 through Chapter 13 are the playable slice: 13 chapters, 65 missions, two full acts plus the opening chapter of Act III (Expose The Machine).
-- The encounter pass is no longer limited to the Dead Drop reference slice: later chapters now use multi-stage authored beats such as convoy traps, capture lanes, fallback evacuations, staged handoffs, blackout pressure, reserved routes, and branch-dependent escort routes.
-- Consequence chains now travel beyond Meter Running: grouped-lead outcomes alter later hospital, freight, and property-fraud mission setup instead of stopping at a single local branch.
-- The launcher now surfaces the useful long-run facts directly: chapter progress counts, active carried consequences, dense scorecards, and per-chapter system tags.
-- Mission-start slowdown from story actors piling up across live transitions is fixed by reusing mission-owned actor slots instead of growing the world state every time a scripted mission rolls forward.
-
-## Execution Note
-
-Chapter 10, Saints Of The Side Street, was authored before the base-hardening items were finished. That was a process mistake against this doc's own base-first, gated execution rules (see "Grounded Implementation Plan"): new story content is not supposed to move ahead of the runtime and authoring work it depends on. The chapter's code and tests were kept because reverting working, tested content would be wasted effort. The three base-hardening items originally listed under "Next Steps From Here" are now done (see the changelog above for specifics), all with unit and Playwright coverage, so the gate on new chapter authoring is lifted. Chapter 11 and Chapter 12 are now authored on top of that stabilized base; later-act expansion remains a separate, explicit task.
-
-## Grounded Implementation Plan
-
-The older phase list is no longer a reliable execution order. It described a clean waterfall, but the prototype was built as a vertical slice, so story data, progression, UI, runtime actors, and tests were advanced in parallel to prove the mode. That was useful for discovery, but it is not the right plan for finishing the system safely.
-
-From this point on, implementation should be base-first and gated. Several areas can still be researched in parallel, but code should only move forward when the lower layer is stable, covered by tests, and good enough to support the next layer without rework.
-
-Execution rules:
-
-1. Do not author broad new story content to compensate for weak runtime systems.
-2. Do not add presentation complexity before the underlying runtime facts are stable and observable.
-3. Every new base capability must land with unit or world coverage before it becomes a dependency for later story work.
-4. Vertical slices are still useful, but only after the next required lower layer is complete enough to trust.
-
 ### Stage 0 - Lock The Core Contracts (complete)
 
 Goal: stabilize the data and state interfaces that every later layer depends on.
@@ -786,32 +761,3 @@ Required outcomes:
 12. Author Act III only after the widened base stays stable in real long-form play.
 13. Expand consequences from mission-local variants into citywide reactivity.
 14. Finish the ship gate only after the full 24-chapter run is authored and balanced.
-
-## Recommended Vertical Slice
-
-Best first slice: Chapter 1 - Dead Drop District.
-
-Current status: Complete as the reference slice.
-
-Why:
-
-- It uses mostly existing city strengths.
-- It introduces story stakes without requiring every advanced system at once.
-- Only one or two new objective families are needed early, depending on how strict the follow mission is implemented.
-- It provides a strong benchmark for mission briefings, route pressure, ambush setup, and chapter payoff.
-
-What is already true in code:
-
-- All 5 Dead Drop District missions now have prototype runtime specs and authored runtime scripts.
-- The chapter can compile into a playable sequential campaign.
-- The chapter can save and resume story progress.
-- The prototype can roll forward through Chapter 13 across two full acts plus the opening chapter of Act III.
-- The prototype can replay unlocked chapters from both the story menu and the pause menu.
-- Fake ambulance, convoy, escort, and named-squad behavior are now driven by authored mission-actor script data instead of only hardcoded scene branches.
-- Completed chapters now surface in a recap archive on the act-grouped story menu.
-
-What still remains beyond the completed slice:
-
-- Author and validate the rest of Act III (Chapter 14 through Chapter 24) on top of the now-stable runtime and launcher surfaces (Stage 12; Chapter 13, Civic Shield, has already landed).
-- Broaden branch outcomes from route swaps into durable city-state and faction-state changes that can stack across acts (Stage 13).
-- Finish long-session balance, performance, and ship-quality validation across the full story run (Stage 14).
