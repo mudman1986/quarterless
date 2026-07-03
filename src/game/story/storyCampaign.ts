@@ -12,6 +12,7 @@ import { GLASS_TOWERS_EMPTY_FLOORS } from './glassTowersEmptyFloors';
 import { SAINTS_OF_THE_SIDE_STREET } from './saintsOfTheSideStreet';
 import { BROADCAST_TEETH } from './broadcastTeeth';
 import { DEBT_COLLECTION_WEATHER } from './debtCollectionWeather';
+import { CIVIC_SHIELD } from './civicShield';
 
 export const FIND_THE_MISSING_DISPATCHER: StoryAct = {
   id: 'find-the-missing-dispatcher',
@@ -43,11 +44,19 @@ export const COURT_THE_CITYS_MIDDLE_POWERS: StoryAct = {
     DEBT_COLLECTION_WEATHER,
   ],
 };
+export const EXPOSE_THE_MACHINE: StoryAct = {
+  id: 'expose-the-machine',
+  order: 3,
+  title: 'Expose The Machine',
+  summary:
+    'Rook stops chasing the Switchboard\'s evidence and starts dismantling the private machinery that runs it, beginning with the security contractor that decides which emergencies are answered.',
+  chapters: [CIVIC_SHIELD],
+};
 export const STORY_MODE_PROTOTYPE: StoryMode = {
   schemaVersion: STORY_MODE_SCHEMA_VERSION,
   id: 'sindicate-story-mode',
   title: 'Sindicate Story Mode',
   premise:
     'Rook Vance returns to the city to find their missing sister Nia and uncovers the Switchboard, a shadow system that sells control of emergency movement.',
-  acts: [FIND_THE_MISSING_DISPATCHER, COURT_THE_CITYS_MIDDLE_POWERS],
+  acts: [FIND_THE_MISSING_DISPATCHER, COURT_THE_CITYS_MIDDLE_POWERS, EXPOSE_THE_MACHINE],
 };

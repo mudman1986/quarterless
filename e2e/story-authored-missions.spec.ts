@@ -993,6 +993,45 @@ test('Chapter 12 Debt Collection Weather drives the capture pursuit vehicle for 
   expect(await scriptedActorSpawned(page, 'missed-payment-van')).toBe(true);
 });
 
+test('Chapter 13 Civic Shield blacks out the junction to split the armor column, then reveals the escorts', async ({
+  page,
+}) => {
+  await launchSindicate(page);
+  await bootSignatureMission(page, 'civic-shield', 'armor-column');
+
+  expect(await activeObjectiveKind(page)).toBe('reach');
+  // The opening stage's authored district-state kills the traffic lights to break the convoy box.
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: { storyBlackoutIntersections?: boolean };
+    };
+    return scene?.world.storyBlackoutIntersections === true;
+  });
+
+  // Reaching the junction (objective 0) shifts to the eliminate stage, which reveals the escorts.
+  await movePlayerToActiveObjectiveTarget(page);
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: {
+        mission?: { objectives: Array<{ kind: string }>; currentIndex: number } | null;
+        pedestrians: Array<{ storyActorId?: string }>;
+      };
+    };
+    const eliminate =
+      scene?.world.mission?.objectives[scene.world.mission.currentIndex]?.kind === 'eliminate';
+    return eliminate && scene.world.pedestrians.some((ped) => ped.storyActorId === 'armor-escorts');
+  });
+
+  expect(await storyPedActorState(page, 'armor-escorts')).toMatchObject({
+    missionId: 'armor-column',
+    objectiveKind: 'eliminate',
+    actorCount: 4,
+    missionTargetCount: 4,
+  });
+});
+
 test('story actor pools stay bounded as scripted missions advance across a live chapter sequence', async ({
   page,
 }) => {

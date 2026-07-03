@@ -151,8 +151,8 @@ function withFirstMission(story: StoryMode, mission: StoryMissionPlan): StoryMod
 describe('validateStoryMode', () => {
   it('accepts the first implemented story slice', () => {
     expect(validateStoryMode(STORY_MODE_PROTOTYPE)).toEqual([]);
-    expect(countStoryChapters(STORY_MODE_PROTOTYPE)).toBe(12);
-    expect(countStoryMissions(STORY_MODE_PROTOTYPE)).toBe(60);
+    expect(countStoryChapters(STORY_MODE_PROTOTYPE)).toBe(13);
+    expect(countStoryMissions(STORY_MODE_PROTOTYPE)).toBe(65);
   });
 
   it('accepts a minimal well-formed fixture', () => {

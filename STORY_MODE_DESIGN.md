@@ -439,10 +439,11 @@ Implemented now:
 - Every chapter now has at least one dedicated regression that exercises its distinctive system rather than only the generic boot/complete walk (Stage 11). Chapters 8, 10, 11, and 12 gained focused specs (courier tail handoff on a live scripted vehicle, escort van running alongside its extortion squad, Broadcast Teeth district-state stage shift on route progress, and the Debt Collection Weather capture-pursuit vehicle), joining the existing Chapter 7 picket-squad and Chapter 9 live-capture regressions.
 - An objective/actor/fail-rule exhaustion test now asserts every runtime kind is exercised by authored story data or explicitly allow-listed (Stage 11). The audit confirmed the `wanted` objective and `loseActor` fail rule are defined and unit-tested but used by no story mission; both are recorded as intentional non-story allow-list entries (the `wanted` primitive is exercised by the sandbox campaign, `loseActor` by `runtimeActors.test.ts`) so the decision is enforced instead of silent, and the test fails if either later becomes story-used.
 - Story authoring validation now catches unused branch declarations (Stage 11): `validateStoryMode` flags any recorded branch outcome that no mission variant ever reads, matching the existing dangling-actor-reference checks.
+- Act III has opened against the stabilized base (Stage 12): Chapter 13, Civic Shield, is authored entirely inside already-tested encounter patterns (`src/game/story/civicShield.ts`, wired into a new `Expose The Machine` act in `storyCampaign.ts`), extending the playable story to 13 chapters / 65 missions across three acts. Its five missions reuse proving-run tail formation, timed sabotage, a blackout-intersection convoy split with a revealed escort squad, a contract-burn collect, and a shoot-on-sight wanted-pressure finale. Coverage lands with it: the generic boot/complete walk now covers all 65 missions, and a dedicated regression proves Armor Column blacks out the junction and only reveals the four escorts once the junction is reached.
 
 Current production status:
 
-- Chapter 1 through Chapter 12 remain the playable slice: 12 chapters, 60 missions, two full acts.
+- Chapter 1 through Chapter 13 are the playable slice: 13 chapters, 65 missions, two full acts plus the opening chapter of Act III (Expose The Machine).
 - The encounter pass is no longer limited to the Dead Drop reference slice: later chapters now use multi-stage authored beats such as convoy traps, capture lanes, fallback evacuations, staged handoffs, blackout pressure, reserved routes, and branch-dependent escort routes.
 - Consequence chains now travel beyond Meter Running: grouped-lead outcomes alter later hospital, freight, and property-fraud mission setup instead of stopping at a single local branch.
 - The launcher now surfaces the useful long-run facts directly: chapter progress counts, active carried consequences, dense scorecards, and per-chapter system tags.
@@ -739,15 +740,15 @@ Main code areas:
 - src/game/story/storyMode.ts
 - src/core/mission.ts
 
-### Stage 12 - Author Act III Against The Stable Base
+### Stage 12 - Author Act III Against The Stable Base (in progress)
 
 Goal: use the now-stable runtime, consequence layer, and launcher surfaces to build the remaining 12 chapters without reopening foundation work.
 
 Required outcomes:
 
-1. Author Chapter 13 through Chapter 24 on top of the existing mission/runtime contracts.
-2. Keep each new chapter inside already-tested encounter patterns unless a new runtime feature is explicitly justified.
-3. Add regression coverage for every new chapter as it lands instead of banking test debt for later.
+1. Author Chapter 13 through Chapter 24 on top of the existing mission/runtime contracts. — Chapter 13, Civic Shield, has landed as the opening chapter of Act III (Expose The Machine); Chapters 14 through 24 remain.
+2. Keep each new chapter inside already-tested encounter patterns unless a new runtime feature is explicitly justified. — held so far: Civic Shield reuses tail formation, timed sabotage, blackout-intersection convoy split, revealed escort squad, collect, and wanted-pressure finale with no new runtime primitives.
+3. Add regression coverage for every new chapter as it lands instead of banking test debt for later. — done for Chapter 13: the generic boot/complete walk covers all 65 missions and a dedicated Armor Column blackout/escort-reveal regression was added.
 
 ### Stage 13 - Deepen Citywide Reactivity
 
@@ -804,13 +805,13 @@ What is already true in code:
 - All 5 Dead Drop District missions now have prototype runtime specs and authored runtime scripts.
 - The chapter can compile into a playable sequential campaign.
 - The chapter can save and resume story progress.
-- The prototype can roll forward through Chapter 12 across two acts.
+- The prototype can roll forward through Chapter 13 across two full acts plus the opening chapter of Act III.
 - The prototype can replay unlocked chapters from both the story menu and the pause menu.
 - Fake ambulance, convoy, escort, and named-squad behavior are now driven by authored mission-actor script data instead of only hardcoded scene branches.
 - Completed chapters now surface in a recap archive on the act-grouped story menu.
 
 What still remains beyond the completed slice:
 
-- Author and validate Act III (Chapter 13 through Chapter 24) on top of the now-stable runtime and launcher surfaces (Stage 12).
+- Author and validate the rest of Act III (Chapter 14 through Chapter 24) on top of the now-stable runtime and launcher surfaces (Stage 12; Chapter 13, Civic Shield, has already landed).
 - Broaden branch outcomes from route swaps into durable city-state and faction-state changes that can stack across acts (Stage 13).
 - Finish long-session balance, performance, and ship-quality validation across the full story run (Stage 14).
