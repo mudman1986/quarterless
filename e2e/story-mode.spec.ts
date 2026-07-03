@@ -2403,9 +2403,9 @@ test('story mode shows a prototype-complete panel when the current story slice f
     }
 
     scene.storyProgress.current = {
-      actId: 'court-the-citys-middle-powers',
-      chapterId: 'debt-collection-weather',
-      missionId: 'rain-of-receipts',
+      actId: 'expose-the-machine',
+      chapterId: 'civic-shield',
+      missionId: 'black-badge-mile',
       objectiveIndex: 0,
     };
     scene.storyProgress.completedMissionIds = [
@@ -2438,8 +2438,13 @@ test('story mode shows a prototype-complete panel when the current story slice f
       'three-stores-down',
       'ledger-heat',
       'storm-drain-exit',
+      'rain-of-receipts',
+      'training-day',
+      'panic-demo',
+      'armor-column',
+      'contract-burn',
     ];
-    scene.prevMissionId = 'rain-of-receipts';
+    scene.prevMissionId = 'black-badge-mile';
     scene.prevMissionComplete = false;
     scene.world.campaign.currentIndex = scene.world.campaign.missions.length;
     scene.handleEvents();
