@@ -125,6 +125,25 @@ describe('buildPedestrianGraph', () => {
     const got = graph.nearestNode(probe);
     expect(distance(graph.nodes[got], probe)).toBeLessThanOrEqual(distance(target, probe) + 1e-6);
   });
+
+  it('returns the truly nearest node for a point far outside the city', () => {
+    // A parked/despawned story actor can sit far off the map. The search must
+    // still return the genuinely nearest node (not an arbitrary fallback) and
+    // must not scan the whole map cell-by-cell to do it.
+    const city = buildCity(CITY_SPEC);
+    const graph = buildPedestrianGraph(city);
+    const far = vec2(city.width + 100000, city.height + 100000);
+    let expected = 0;
+    let bestD = Infinity;
+    graph.nodes.forEach((node, i) => {
+      const d = distance(far, node);
+      if (d < bestD) {
+        bestD = d;
+        expected = i;
+      }
+    });
+    expect(graph.nearestNode(far)).toBe(expected);
+  });
 });
 
 describe('nextWanderNode', () => {

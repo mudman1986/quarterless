@@ -1,6 +1,8 @@
 import {
   buildCity,
   crosswalkStripeRects,
+  nearestRoadTileCenter,
+  roadStandoffPoint,
   tileCenter,
   type City,
   type Facility,
@@ -11,6 +13,7 @@ import {
   SERVICE_SPAWN_SPACING,
   World,
   type VehicleKind,
+  type WorldSnapshot,
   vehicleBodySpecForKind,
 } from '../../core/world';
 import type { WorldOptions } from '../../core/world';
@@ -183,8 +186,9 @@ const MAX_ZOOM = 2.5;
 const CAMERA_EDGE_GUTTER = 12;
 /** On-screen size of the square minimap. */
 const MINIMAP_SIZE = 168;
-/** Seconds a mission announcement banner stays on screen. */
-const ANNOUNCE_SECONDS = 3.2;
+const MINIMAP_BG_TEXTURE_KEY = 'minimap-bg';
+const BANNER_DEFAULT_SECONDS = 15;
+const BANNER_MAX_WIDTH = 420;
 
 function enteredCarLabel(kind: VehicleKind): string {
   if (kind === 'ambulance') return 'AMBULANCE';
@@ -351,6 +355,7 @@ export class CityScene extends Phaser.Scene {
   private hud!: Phaser.GameObjects.Text;
   private bustedText!: Phaser.GameObjects.Text;
   private banner!: Phaser.GameObjects.Text;
+  private bannerCloseButton!: Phaser.GameObjects.Text;
   private storyPanel!: Phaser.GameObjects.Text;
   private storyStateText!: Phaser.GameObjects.Text;
   private touchControlsGfx!: Phaser.GameObjects.Graphics;
@@ -377,7 +382,7 @@ export class CityScene extends Phaser.Scene {
   private requestedLoadKey: string | null = GAME_STATE_KEY;
   private skipResumeOnCreate = false;
   private readonly beforeUnloadHandler = (): void => {
-    this.persistGameState();
+    this.persistGameState(GAME_STATE_KEY, { pruneStoryActors: true });
   };
 
   /** Procedural sound effects. */
@@ -406,6 +411,7 @@ export class CityScene extends Phaser.Scene {
   private sirenTimer = 0;
   /** Seconds left to show the announcement banner. */
   private announceRemaining = 0;
+  private bannerStageKey: string | null = null;
   private storyPanelRemaining = 0;
   private storyPanelRequiresAcknowledge = false;
   private storyPanelPauseGame = false;
@@ -431,6 +437,8 @@ export class CityScene extends Phaser.Scene {
   private storyMissionSummaryBaseline: StoryMissionSummaryBaseline | null = null;
   private storyReusableCarIndices: number[] = [];
   private storyReusablePedIndices: number[] = [];
+  private despawnedStoryCarIndices = new Set<number>();
+  private despawnedStoryPedIndices = new Set<number>();
 
   constructor() {
     super('City');
@@ -510,6 +518,8 @@ export class CityScene extends Phaser.Scene {
     this.storyMissionSummaryBaseline = null;
     this.storyReusableCarIndices = [];
     this.storyReusablePedIndices = [];
+    this.despawnedStoryCarIndices.clear();
+    this.despawnedStoryPedIndices.clear();
 
     this.city = buildCity(CITY_SPEC);
     createGameTextures(this);
@@ -588,7 +598,7 @@ export class CityScene extends Phaser.Scene {
     }
     // Browsers block audio until a user gesture: unlock on the first key press.
     this.input.keyboard?.once('keydown', () => this.sfx.resume());
-    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+    const handlePointerDown = (pointer: Phaser.Input.Pointer): void => {
       this.sfx.resume();
       const pointerType = (pointer.event as PointerEvent | undefined)?.pointerType;
       if (pointerType === 'touch') {
@@ -596,9 +606,11 @@ export class CityScene extends Phaser.Scene {
         if (!this.touchEnabled && !this.touchOptedOut) this.setTouchEnabled(true);
         else this.refreshPauseTouchButton();
       }
-    });
+    };
+    this.input.on('pointerdown', handlePointerDown);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       kb.off('keydown-ENTER', handleStoryAcknowledge);
+      this.input.off('pointerdown', handlePointerDown);
       if (typeof window !== 'undefined') {
         window.removeEventListener('beforeunload', this.beforeUnloadHandler);
       }
@@ -663,17 +675,25 @@ export class CityScene extends Phaser.Scene {
       .filter((choice): choice is { mission: StoryMissionPlan; target: Vec2 } => !!choice.target);
   }
 
+  private storyMissionRuntimeActive(): boolean {
+    return this.mode === 'story' && !!this.storyProgress?.current && this.storyProgress.current.objectiveIndex >= 0;
+  }
+
+  private suspendStoryScript(): void {
+    if (this.storyScript) this.clearActiveStoryActors();
+    else {
+      this.world.setStoryObjectiveProgress(null);
+      this.world.setStoryDistrictStateEffects(null);
+    }
+  }
+
   private syncStoryScript(dt = 0): void {
     if (this.mode !== 'story' || !this.storyProgress?.current) {
-      this.storyScript = null;
-      this.world.setStoryObjectiveProgress(null);
-      this.world.setStoryDistrictStateEffects(null);
+      this.suspendStoryScript();
       return;
     }
-    if (this.storyProgress.current.objectiveIndex < 0) {
-      this.storyScript = null;
-      this.world.setStoryObjectiveProgress(null);
-      this.world.setStoryDistrictStateEffects(null);
+    if (!this.storyMissionRuntimeActive()) {
+      this.suspendStoryScript();
       this.syncStoryStateText();
       return;
     }
@@ -743,6 +763,48 @@ export class CityScene extends Phaser.Scene {
     ];
   }
 
+  /**
+   * Keep a freshly-spawning story actor off the player's screen. Authored missions frequently
+   * anchor their first target on the same tile that doubles as the mission-start marker, so
+   * spawning at the raw anchor pops the target into view right on top of the player (instant kill /
+   * no chase, and the player watches it materialise). When the requested spawn is on-screen, snap
+   * it to the nearest road tile just beyond the camera viewport instead, so the actor appears
+   * off-screen and has to be approached. Leaves the off-map despawn slot and already-off-screen
+   * spawns untouched, so it only intervenes on the visible overlap.
+   */
+  private storyActorSpawnPoint(pos: Vec2): Vec2 {
+    if (pos.x === STORY_ACTOR_DESPAWN_POS.x && pos.y === STORY_ACTOR_DESPAWN_POS.y) return pos;
+    const player = this.world.focus;
+    const minDistance = this.offscreenSpawnDistance();
+    if (distance(pos, player) < minDistance) return roadStandoffPoint(this.city, player, minDistance);
+    // Already off-screen: keep the authored point, but never let an actor start
+    // in the river or off the map — snap those to the nearest drivable tile so
+    // an authoring slip can't strand a mission target in water or out of bounds.
+    if (this.spawnPointIsUnsafe(pos)) return nearestRoadTileCenter(this.city, pos) ?? pos;
+    return pos;
+  }
+
+  /** Whether a would-be spawn point sits in lethal water or outside the map. */
+  private spawnPointIsUnsafe(pos: Vec2): boolean {
+    const { cols, rows, tile } = this.city.spec;
+    const tx = Math.floor(pos.x / tile);
+    const ty = Math.floor(pos.y / tile);
+    if (tx < 0 || ty < 0 || tx >= cols || ty >= rows) return true;
+    return this.city.isWater(tx, ty);
+  }
+
+  /**
+   * Distance from the player, in world units, that is guaranteed to sit just past the visible
+   * camera viewport in every direction (half the viewport diagonal plus a one-tile margin), so a
+   * relocated story actor always spawns off-screen regardless of window size or zoom.
+   */
+  private offscreenSpawnDistance(): number {
+    const { width, height } = this.scale.gameSize;
+    const zoom = this.cameras.main.zoom || 1;
+    const halfDiagonal = 0.5 * Math.hypot(width / zoom, height / zoom);
+    return halfDiagonal + this.city.spec.tile;
+  }
+
   private ensureStoryTargetCar(
     actorId: string,
     pos: Vec2,
@@ -753,6 +815,7 @@ export class CityScene extends Phaser.Scene {
     if (existing !== undefined && this.world.cars[existing]) {
       return existing;
     }
+    pos = this.storyActorSpawnPoint(pos);
     const carDrivers = (this.world as unknown as { carDrivers: (TrafficAI | null)[] }).carDrivers;
     const carKinds = (this.world as unknown as { carKinds: VehicleKind[] }).carKinds;
     const taxiStates = (this.world as unknown as { taxiStates: null[] }).taxiStates;
@@ -767,6 +830,7 @@ export class CityScene extends Phaser.Scene {
     const wreckedCars = (this.world as unknown as { wreckedCars: boolean[] }).wreckedCars;
     const towedCars = (this.world as unknown as { towedCars: boolean[] }).towedCars;
     const index = this.storyReusableCarIndices.pop() ?? this.world.cars.length;
+    this.despawnedStoryCarIndices.delete(index);
     const car = {
       pos,
       heading: 0,
@@ -813,16 +877,38 @@ export class CityScene extends Phaser.Scene {
       missionTarget?: boolean;
       count?: number;
       spread?: number;
+      resetPosition?: boolean;
     } = {},
   ): number[] {
     const script = this.storyScript!;
-    const existing = script.actorPedIndices[actorId]?.filter(
-      (index) => !!this.world.pedestrians[index],
-    );
-    if (existing && existing.length > 0) return existing;
-
     const count = Math.max(1, opts.count ?? 1);
     const spread = opts.spread ?? 20;
+    pos = this.storyActorSpawnPoint(pos);
+    const existing = this.storyPedIndices(actorId);
+    if (existing && existing.length > 0) {
+      existing.forEach((index, i) => {
+        const offsetX = count === 1 ? 0 : (i - (count - 1) / 2) * spread;
+        const ped = this.world.pedestrians[index];
+        if (!ped) return;
+        const shouldResetPosition =
+          opts.resetPosition ||
+          (ped.pos.x === STORY_ACTOR_DESPAWN_POS.x && ped.pos.y === STORY_ACTOR_DESPAWN_POS.y);
+        this.world.pedestrians[index] = {
+          ...ped,
+          pos: shouldResetPosition ? vec2(pos.x + offsetX, pos.y) : ped.pos,
+          heading: shouldResetPosition ? 0 : ped.heading,
+          state: shouldResetPosition ? 'wait' : ped.state,
+          target: shouldResetPosition ? vec2(pos.x + offsetX, pos.y) : ped.target,
+          missionTarget: opts.missionTarget ?? false,
+          uniform: opts.uniform,
+          storyActorId: actorId,
+          storyActorOrder: i,
+        };
+        this.despawnedStoryPedIndices.delete(index);
+      });
+      return existing;
+    }
+
     const created: number[] = [];
     for (let i = 0; i < count; i++) {
       const offsetX = count === 1 ? 0 : (i - (count - 1) / 2) * spread;
@@ -834,8 +920,11 @@ export class CityScene extends Phaser.Scene {
         target: vec2(pos.x + offsetX, pos.y),
         missionTarget: opts.missionTarget ?? false,
         uniform: opts.uniform,
+        storyActorId: actorId,
+        storyActorOrder: i,
       };
       const index = this.storyReusablePedIndices.pop() ?? this.world.pedestrians.length;
+      this.despawnedStoryPedIndices.delete(index);
       if (index < this.world.pedestrians.length) {
         this.world.pedestrians[index] = ped;
       } else {
@@ -846,6 +935,17 @@ export class CityScene extends Phaser.Scene {
     script.actorPedIndices[actorId] = created;
     script.actorRouteIndices[actorId] = 0;
     return created;
+  }
+
+  private storyPedIndices(actorId: string): number[] {
+    const matches: Array<{ index: number; order: number }> = [];
+    for (let i = 0; i < this.world.pedestrians.length; i++) {
+      const ped = this.world.pedestrians[i];
+      if (ped.storyActorId !== actorId) continue;
+      matches.push({ index: i, order: ped.storyActorOrder ?? i });
+    }
+    matches.sort((a, b) => a.order - b.order);
+    return matches.map((match) => match.index);
   }
 
   /**
@@ -860,16 +960,19 @@ export class CityScene extends Phaser.Scene {
     if (!script) return;
     const carIndex = script.actorCarIndices[actorId];
     if (carIndex !== undefined && this.world.cars[carIndex]) {
+      const carDrivers = (this.world as unknown as { carDrivers: (TrafficAI | null)[] }).carDrivers;
       this.world.cars[carIndex] = {
         ...this.world.cars[carIndex]!,
         pos: STORY_ACTOR_DESPAWN_POS,
         speed: 0,
       };
+      carDrivers[carIndex] = null;
+      this.despawnedStoryCarIndices.add(carIndex);
       if (!this.storyReusableCarIndices.includes(carIndex)) this.storyReusableCarIndices.push(carIndex);
     }
     delete script.actorCarIndices[actorId];
 
-    const pedIndices = script.actorPedIndices[actorId];
+    const pedIndices = this.storyPedIndices(actorId);
     if (pedIndices) {
       for (const idx of pedIndices) {
         if (!this.world.pedestrians[idx]) continue;
@@ -878,12 +981,25 @@ export class CityScene extends Phaser.Scene {
           pos: STORY_ACTOR_DESPAWN_POS,
           target: STORY_ACTOR_DESPAWN_POS,
           state: 'wait',
+          missionTarget: false,
+          storyActorId: undefined,
+          storyActorOrder: undefined,
         };
+        this.despawnedStoryPedIndices.add(idx);
         if (!this.storyReusablePedIndices.includes(idx)) this.storyReusablePedIndices.push(idx);
       }
     }
     delete script.actorPedIndices[actorId];
     delete script.actorRouteIndices[actorId];
+  }
+
+  private clearActiveStoryActors(): void {
+    if (!this.storyScript) return;
+    for (const actorId of Object.keys(this.storyScript.actorCarIndices)) this.despawnStoryActor(actorId);
+    for (const actorId of Object.keys(this.storyScript.actorPedIndices)) this.despawnStoryActor(actorId);
+    this.storyScript = null;
+    this.world.setStoryObjectiveProgress(null);
+    this.world.setStoryDistrictStateEffects(null);
   }
 
   private storyTargetCarDisabled(carIndex: number): boolean {
@@ -942,12 +1058,20 @@ export class CityScene extends Phaser.Scene {
   }
 
   private runPedestrianSquadActor(actor: PedestrianSquadActorScript): number[] {
-    return this.ensureStoryTargetPed(actor.actorId, actor.center, {
+    const indices = this.ensureStoryTargetPed(actor.actorId, actor.center, {
       count: actor.count,
       spread: actor.spread,
       uniform: actor.uniform,
       missionTarget: actor.missionTargets,
     });
+    if (actor.missionTargets) {
+      for (const index of indices) {
+        const ped = this.world.pedestrians[index];
+        if (!ped || ped.missionTarget) continue;
+        this.world.pedestrians[index] = { ...ped, missionTarget: true };
+      }
+    }
+    return indices;
   }
 
   private restartCurrentStoryMission(failureText: string): void {
@@ -959,7 +1083,7 @@ export class CityScene extends Phaser.Scene {
     saveGameState(
       this.store,
       {
-        world: this.world.snapshot(),
+        world: this.snapshotForPersist({ pruneStoryActors: true }),
         timeOfDay: this.timeOfDay,
       },
       GAME_STATE_KEY,
@@ -1001,6 +1125,7 @@ export class CityScene extends Phaser.Scene {
     this.world.setStoryDistrictStateEffects(stage.districtState ?? null);
 
     const stagePrimaryActorId = stage.primaryActorId ?? runtime.primaryActorId;
+    const liveObjective = this.world.missionObjective;
     const actorPositions: Record<string, Vec2 | null> = {};
     const actorVehicleHealth: Record<string, number | null> = {};
     const actorVehicleDisabled: Record<string, boolean> = {};
@@ -1041,6 +1166,20 @@ export class CityScene extends Phaser.Scene {
           state.routeIndex,
           actor.route.length,
         );
+        continue;
+      }
+      if (actor.missionTargets && liveObjective?.kind !== 'eliminate') {
+        this.ensureStoryTargetPed(actor.actorId, STORY_ACTOR_DESPAWN_POS, {
+          count: actor.count,
+          spread: actor.spread,
+          uniform: actor.uniform,
+          missionTarget: false,
+          resetPosition: true,
+        });
+        actorPositions[actor.actorId] = null;
+        actorVehicleHealth[actor.actorId] = null;
+        actorVehicleDisabled[actor.actorId] = false;
+        routeIndices[actor.actorId] = 0;
         continue;
       }
       const indices = this.runPedestrianSquadActor(actor);
@@ -1123,20 +1262,22 @@ export class CityScene extends Phaser.Scene {
         }
         script.stageIndex += 1;
         script.failCounters = {};
-        this.showStoryPanel(
-          `STAGE SHIFT\n${nextStage.title}\n\n${nextStage.districtState?.summary ?? 'The city is changing around the mission.'}`,
-          3.2,
-        );
+        if (!this.shouldSuppressStageShiftBanner(mission.id, nextStage.id)) {
+          this.showBanner(
+            `STAGE SHIFT\n${nextStage.title}\n${nextStage.districtState?.summary ?? 'The city is changing around the mission.'}`,
+            { stageBound: true },
+          );
+        }
       }
     }
   }
 
-  private persistGameState(key = GAME_STATE_KEY): void {
+  private persistGameState(key = GAME_STATE_KEY, options: { pruneStoryActors?: boolean } = {}): void {
     if (!this.world) return;
     saveGameState(
       this.store,
       {
-        world: this.world.snapshot(),
+        world: this.snapshotForPersist(options),
         timeOfDay: this.timeOfDay,
       },
       key,
@@ -1156,6 +1297,79 @@ export class CityScene extends Phaser.Scene {
       );
     }
     if (key === GAME_STATE_KEY) this.saveAccumulator = 0;
+  }
+
+  private snapshotForPersist(options: { pruneStoryActors?: boolean } = {}): WorldSnapshot {
+    const snapshot = this.world.snapshot();
+    return options.pruneStoryActors ? this.pruneStoryActorsFromSnapshot(snapshot) : snapshot;
+  }
+
+  private pruneStoryActorsFromSnapshot(snapshot: WorldSnapshot): WorldSnapshot {
+    const storyCarIndices = new Set(
+      Object.values(this.storyScript?.actorCarIndices ?? {}).filter((index) => Number.isInteger(index)),
+    );
+    for (const index of this.despawnedStoryCarIndices) storyCarIndices.add(index);
+    const keepCarIndex = (index: number): boolean => {
+      const car = snapshot.cars[index];
+      return (
+        !storyCarIndices.has(index) &&
+        car?.pos.x !== STORY_ACTOR_DESPAWN_POS.x &&
+        car?.pos.y !== STORY_ACTOR_DESPAWN_POS.y
+      );
+    };
+    const carIndexRemap = new Map<number, number>();
+    let nextCarIndex = 0;
+    for (let i = 0; i < snapshot.cars.length; i++) {
+      if (!keepCarIndex(i)) continue;
+      carIndexRemap.set(i, nextCarIndex);
+      nextCarIndex += 1;
+    }
+    const keepCar = (_: unknown, index: number): boolean => keepCarIndex(index);
+    snapshot.cars = snapshot.cars.filter(keepCar);
+    snapshot.wreckedCars = snapshot.wreckedCars.filter(keepCar);
+    snapshot.towedCars = snapshot.towedCars.filter(keepCar);
+    snapshot.carDrivers = snapshot.carDrivers.filter(keepCar);
+    snapshot.carKinds = snapshot.carKinds.filter(keepCar);
+    snapshot.taxiStates = snapshot.taxiStates.filter(keepCar);
+    snapshot.carRespawnsAtTow = snapshot.carRespawnsAtTow.filter(keepCar);
+    snapshot.carHealth = snapshot.carHealth.filter(keepCar);
+    snapshot.carBurnTimers = snapshot.carBurnTimers.filter(keepCar);
+    snapshot.carBurnByPlayer = snapshot.carBurnByPlayer.filter(keepCar);
+    snapshot.stolenServiceVehicles = snapshot.stolenServiceVehicles.filter(keepCar);
+    snapshot.towDispatchCooldowns = snapshot.towDispatchCooldowns.filter(keepCar);
+    snapshot.drivingCarIndex =
+      snapshot.drivingCarIndex === null ? null : (carIndexRemap.get(snapshot.drivingCarIndex) ?? null);
+    snapshot.tows = snapshot.tows.flatMap((tow) => {
+      const targetCar = carIndexRemap.get(tow.targetCar);
+      return targetCar === undefined ? [] : [{ ...tow, targetCar }];
+    });
+    if (snapshot.playerServiceMission?.kind === 'tow') {
+      const targetCar = carIndexRemap.get(snapshot.playerServiceMission.targetCar);
+      snapshot.playerServiceMission =
+        targetCar === undefined ? null : { ...snapshot.playerServiceMission, targetCar };
+    }
+    snapshot.vehicleImpactCooldowns = [];
+    const storyPedIndices = new Set(
+      Object.values(this.storyScript?.actorPedIndices ?? {})
+        .flat()
+        .filter((index) => Number.isInteger(index)),
+    );
+    for (const index of this.despawnedStoryPedIndices) storyPedIndices.add(index);
+    snapshot.pedestrians = snapshot.pedestrians
+      .filter(
+        (ped, index) =>
+          !ped.storyActorId &&
+          !storyPedIndices.has(index) &&
+          ped.pos.x !== STORY_ACTOR_DESPAWN_POS.x &&
+          ped.pos.y !== STORY_ACTOR_DESPAWN_POS.y,
+      )
+      .map((ped) => ({
+        ...ped,
+        missionTarget: false,
+        storyActorId: undefined,
+        storyActorOrder: undefined,
+      }));
+    return snapshot;
   }
 
   /** A lively mix of cars parked in the marked bays and cars driven by NPC traffic. */
@@ -2037,8 +2251,10 @@ export class CityScene extends Phaser.Scene {
     };
 
     place(this.hud, 10, 10); // top-left status readout
-    place(this.banner, width / 2, 84); // mission announcement
-    place(this.storyStateText, width / 2, 140);
+    const bannerTop = 18 + this.hud.height;
+    place(this.banner, 10, bannerTop);
+    place(this.bannerCloseButton, 24 + this.banner.width, bannerTop + 6);
+    place(this.storyStateText, 10, bannerTop + this.banner.height + 8);
     place(this.storyPanel, width / 2, height / 2 - 12);
     place(this.bustedText, width / 2, height / 2);
     place(this.pauseTouchButton, width / 2, height / 2 + 306);
@@ -2089,18 +2305,34 @@ export class CityScene extends Phaser.Scene {
 
     // A transient banner that announces each new mission / objective.
     this.banner = this.add
-      .text(this.scale.width / 2, 84, '', {
+      .text(10, 84, '', {
         fontFamily: 'monospace',
-        fontSize: '20px',
+        fontSize: '16px',
         color: '#67e8f9',
-        align: 'center',
+        align: 'left',
         backgroundColor: '#000000b0',
         padding: { x: 18, y: 10 },
+        wordWrap: { width: BANNER_MAX_WIDTH, useAdvancedWrap: true },
       })
-      .setOrigin(0.5)
+      .setOrigin(0, 0)
       .setScrollFactor(0)
       .setDepth(1500)
       .setVisible(false);
+
+    this.bannerCloseButton = this.add
+      .text(0, 0, '✕', {
+        fontFamily: 'monospace',
+        fontSize: '18px',
+        color: '#f8fafc',
+        backgroundColor: '#000000d0',
+        padding: { x: 6, y: 4 },
+      })
+      .setOrigin(0, 0)
+      .setScrollFactor(0)
+      .setDepth(1501)
+      .setVisible(false)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => this.dismissBanner());
 
     this.storyPanel = this.add
       .text(this.scale.width / 2, this.scale.height / 2 - 12, '', {
@@ -2172,41 +2404,43 @@ export class CityScene extends Phaser.Scene {
   /** Build the corner minimap: a static city backdrop plus a live dot overlay. */
   private createMinimap(): void {
     const scale = MINIMAP_SIZE / this.city.width;
-    const g = this.make.graphics({ x: 0, y: 0 }, false);
-    g.fillStyle(COLORS.mmRoad, 1);
-    g.fillRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
-    g.fillStyle(COLORS.mmBuilding, 1);
-    for (const b of this.city.buildings) {
-      g.fillRect(b.x * scale, b.y * scale, Math.max(1, b.w * scale), Math.max(1, b.h * scale));
+    if (!this.textures.exists(MINIMAP_BG_TEXTURE_KEY)) {
+      const g = this.make.graphics({ x: 0, y: 0 }, false);
+      g.fillStyle(COLORS.mmRoad, 1);
+      g.fillRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
+      g.fillStyle(COLORS.mmBuilding, 1);
+      for (const b of this.city.buildings) {
+        g.fillRect(b.x * scale, b.y * scale, Math.max(1, b.w * scale), Math.max(1, b.h * scale));
+      }
+      for (const facility of this.city.facilities) {
+        g.fillStyle(
+          facility.kind === 'policeStation'
+            ? COLORS.mmPoliceBuilding
+            : facility.kind === 'hospital'
+              ? COLORS.mmHospitalBuilding
+              : facility.kind === 'towYard'
+                ? COLORS.mmTowBuilding
+                : COLORS.mmTaxiBuilding,
+          1,
+        );
+        const b = facility.building;
+        g.fillRect(b.x * scale, b.y * scale, Math.max(1, b.w * scale), Math.max(1, b.h * scale));
+      }
+      g.fillStyle(COLORS.mmWater, 1);
+      for (const water of this.city.water) {
+        g.fillRect(
+          water.x * scale,
+          water.y * scale,
+          Math.max(1, water.w * scale),
+          Math.max(1, water.h * scale),
+        );
+      }
+      g.generateTexture(MINIMAP_BG_TEXTURE_KEY, MINIMAP_SIZE, MINIMAP_SIZE);
+      g.destroy();
     }
-    for (const facility of this.city.facilities) {
-      g.fillStyle(
-        facility.kind === 'policeStation'
-          ? COLORS.mmPoliceBuilding
-          : facility.kind === 'hospital'
-            ? COLORS.mmHospitalBuilding
-            : facility.kind === 'towYard'
-              ? COLORS.mmTowBuilding
-              : COLORS.mmTaxiBuilding,
-        1,
-      );
-      const b = facility.building;
-      g.fillRect(b.x * scale, b.y * scale, Math.max(1, b.w * scale), Math.max(1, b.h * scale));
-    }
-    g.fillStyle(COLORS.mmWater, 1);
-    for (const water of this.city.water) {
-      g.fillRect(
-        water.x * scale,
-        water.y * scale,
-        Math.max(1, water.w * scale),
-        Math.max(1, water.h * scale),
-      );
-    }
-    g.generateTexture('minimap-bg', MINIMAP_SIZE, MINIMAP_SIZE);
-    g.destroy();
 
     this.minimapBg = this.add
-      .image(0, 0, 'minimap-bg')
+      .image(0, 0, MINIMAP_BG_TEXTURE_KEY)
       .setOrigin(0, 0)
       .setScrollFactor(0)
       .setDepth(1400)
@@ -2258,7 +2492,7 @@ export class CityScene extends Phaser.Scene {
       const carIndex = this.storyScript.actorCarIndices[actor.actorId];
       return carIndex !== undefined ? (this.world.cars[carIndex]?.pos ?? null) : null;
     }
-    const pedIndex = this.storyScript.actorPedIndices[actor.actorId]?.[0];
+    const pedIndex = this.storyPedIndices(actor.actorId)[0];
     return pedIndex !== undefined ? (this.world.pedestrians[pedIndex]?.pos ?? null) : null;
   }
 
@@ -2479,8 +2713,16 @@ export class CityScene extends Phaser.Scene {
 
     // Count down the announcement banner.
     if (this.announceRemaining > 0) {
+      const activeStageKey = this.currentStoryStageKey();
+      if (
+        this.bannerStageKey &&
+        activeStageKey !== this.bannerStageKey &&
+        !this.rebindStageBoundObjectiveBanner(activeStageKey)
+      ) {
+        this.dismissBanner();
+      }
       this.announceRemaining -= dt;
-      if (this.announceRemaining <= 0) this.banner.setVisible(false);
+      if (this.announceRemaining <= 0) this.dismissBanner();
     }
     if (!this.storyPanelRequiresAcknowledge && this.storyPanelRemaining > 0) {
       this.storyPanelRemaining -= dt;
@@ -2612,7 +2854,8 @@ export class CityScene extends Phaser.Scene {
         const nextChapter = this.storyProgress
           ? currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress)
           : null;
-        this.persistGameState();
+        this.clearActiveStoryActors();
+        this.persistGameState(GAME_STATE_KEY, { pruneStoryActors: true });
         if (nextMission?.prototypeRuntime && nextChapter) {
           this.showStoryPanel(
             `CHAPTER COMPLETE\n${previousStoryChapter?.title ?? 'Story Chapter'}\n\n${previousStoryChapter?.combinedGoal ?? ''}\n\nNext: ${nextChapter.title}`,
@@ -2636,13 +2879,14 @@ export class CityScene extends Phaser.Scene {
       if (this.prevMissionId !== null) this.sfx.fanfare();
       if (w.mission) {
         if (this.mode === 'story') {
+          if (this.prevMissionId !== null) this.clearActiveStoryActors();
           if (this.prevMissionId !== null) this.showMissionTransitionPanel(this.prevMissionId);
           else this.showMissionBriefingPanel();
         }
-        this.showBanner(`NEW MISSION\n${w.mission.title}\n${objective}`);
+        this.showBanner(`NEW MISSION\n${w.mission.title}\n${objective}`, { stageBound: true });
       }
     } else if (objective !== '' && objective !== this.prevObjective) {
-      this.showBanner(objective); // next objective within the same mission
+      this.showBanner(objective, { stageBound: true }); // next objective within the same mission
     }
 
     const taxiMission = w.taxiMission;
@@ -2694,10 +2938,44 @@ export class CityScene extends Phaser.Scene {
     return minimap ? COLORS.mmTowTarget : COLORS.towMarker;
   }
 
-  /** Flash a banner message for a few seconds. */
-  private showBanner(text: string): void {
-    this.banner.setText(text).setVisible(true);
-    this.announceRemaining = ANNOUNCE_SECONDS;
+  /** Flash a banner message in the HUD corner for a few seconds. */
+  private showBanner(
+    text?: string,
+    options: {
+      seconds?: number;
+      stageBound?: boolean;
+    } = {},
+  ): void {
+    const content = typeof text === 'string' ? text.trim() : '';
+    if (content.length === 0) {
+      this.dismissBanner();
+      return;
+    }
+    this.banner.setText(content).setVisible(true);
+    this.bannerCloseButton.setVisible(true);
+    this.announceRemaining = Math.max(0, options.seconds ?? BANNER_DEFAULT_SECONDS);
+    this.bannerStageKey = options.stageBound ? this.currentStoryStageKey() : null;
+    this.layoutHud();
+  }
+
+  private shouldSuppressStageShiftBanner(missionId: string, nextStageId?: string): boolean {
+    return missionId === 'wreck-before-dawn' && nextStageId === 'wreck-hold';
+  }
+
+  private rebindStageBoundObjectiveBanner(activeStageKey: string | null): boolean {
+    if (!activeStageKey || !this.banner.visible) return false;
+    const objectiveText = this.world.missionObjective?.description?.trim() ?? '';
+    if (objectiveText.length === 0 || this.banner.text.trim() !== objectiveText) return false;
+    this.bannerStageKey = activeStageKey;
+    return true;
+  }
+
+  private dismissBanner(): void {
+    this.banner.setVisible(false).setText('');
+    this.bannerCloseButton.setVisible(false);
+    this.announceRemaining = 0;
+    this.bannerStageKey = null;
+    this.layoutHud();
   }
 
   private showStoryPanel(text: string, seconds: number): void {
@@ -2735,12 +3013,16 @@ export class CityScene extends Phaser.Scene {
   }
 
   private syncStoryStateText(): void {
-    const label = this.storyScript?.stageLabel?.trim() ?? '';
-    if (!label) {
-      this.storyStateText.setVisible(false);
-      return;
-    }
-    this.storyStateText.setText(`DISTRICT STATE\n${label}`).setVisible(true);
+    this.storyStateText.setVisible(false);
+  }
+
+  private currentStoryStageKey(): string | null {
+    if (this.mode !== 'story' || !this.storyProgress?.current || !this.storyScript) return null;
+    return [
+      this.storyProgress.current.chapterId,
+      this.storyProgress.current.missionId,
+      this.storyScript.stageIndex,
+    ].join(':');
   }
 
   private showMissionBriefingPanel(): void {
@@ -3215,59 +3497,7 @@ export class CityScene extends Phaser.Scene {
     this.syncBustedText();
   }
 
-  /** A "(done/goal)" tag for the current objective, or '' for reach/none. */
-  private progressText(): string {
-    const p = this.world.missionProgress;
-    return p ? `  (${p.current}/${p.goal})` : '';
-  }
-
-  private serviceDetail(mission: {
-    kind: 'police' | 'ambulance' | 'tow';
-    stage?: 'pickup' | 'return';
-  }): string {
-    if (mission.kind === 'police') return 'Bust the suspect';
-    if (mission.kind === 'ambulance')
-      return mission.stage === 'pickup' ? 'Recover the body' : 'Return to the hospital';
-    return mission.stage === 'pickup' ? 'Recover the wreck' : 'Return to the tow yard';
-  }
-
-  private serviceUnavailableText(kind: 'police' | 'ambulance' | 'tow' | 'taxi'): string {
-    if (kind === 'police') return 'No suspect available';
-    if (kind === 'ambulance') return 'No corpses to recover';
-    if (kind === 'taxi') return 'No fares available';
-    return 'No wrecks to recover';
-  }
-
-  private missionText(): string {
-    const w = this.world;
-    if (w.missionComplete) return 'ALL MISSIONS COMPLETE';
-    if (this.selectingStoryMission()) {
-      const choices = this.storyMissionChoices();
-      if (choices.length > 0)
-        return `▶ Choose a lead: ${choices.map((mission) => mission.title).join(' / ')}`;
-    }
-    if (!w.mission || !w.missionObjective) return '';
-    const objective = w.missionObjective;
-    const detail =
-      objective.kind === 'service'
-        ? (() => {
-            if (objective.service === 'taxi' && w.taxiMission) {
-              return w.taxiMission.stage === 'pickup'
-                ? `Pick up ${w.taxiMission.passengerName}`
-                : `Drop off ${w.taxiMission.passengerName}`;
-            }
-            if (w.serviceMission?.kind === objective.service)
-              return this.serviceDetail(w.serviceMission);
-            if (w.drivingCarIndex !== null && w.carKind(w.drivingCarIndex) === objective.service) {
-              return this.serviceUnavailableText(objective.service);
-            }
-            return objective.description;
-          })()
-        : objective.description;
-    return `▶ ${w.mission.title}: ${detail}${this.progressText()}`;
-  }
-
-  /** Build the multi-line HUD: wanted, health, money, weapon, mission, controls. */
+  /** Build the multi-line HUD: wanted, health, money, weapon, and controls. */
   private hudText(): string {
     const w = this.world;
     const stars = '★'.repeat(w.wantedStars) || '—';
@@ -3275,20 +3505,6 @@ export class CityScene extends Phaser.Scene {
     const money =
       w.score.best > 0 ? `$${w.score.current}  (best $${w.score.best})` : `$${w.score.current}`;
     const speed = w.drivingCar ? Math.round(Math.abs(w.drivingCar.speed)) : 0;
-
-    const mission = this.missionText();
-    const taxi = w.taxiMission
-      ? `TAXI: ${w.taxiMission.stage === 'pickup' ? `Pick up ${w.taxiMission.passengerName}` : `Drop off ${w.taxiMission.passengerName}`}  +$${w.taxiMission.reward}`
-      : '';
-    const service = w.serviceMission
-      ? `${w.serviceMission.kind.toUpperCase()}: ${this.serviceDetail(w.serviceMission)}  +$${w.serviceMission.reward}`
-      : w.drivingCarIndex !== null && w.carKind(w.drivingCarIndex) === 'police'
-        ? `POLICE: ${this.serviceUnavailableText('police')}`
-        : w.drivingCarIndex !== null && w.carKind(w.drivingCarIndex) === 'ambulance'
-          ? `AMBULANCE: ${this.serviceUnavailableText('ambulance')}`
-          : w.drivingCarIndex !== null && w.carKind(w.drivingCarIndex) === 'tow'
-            ? `TOW: ${this.serviceUnavailableText('tow')}`
-            : '';
 
     const ammo =
       w.weapon.ammo <= 4
@@ -3302,9 +3518,18 @@ export class CityScene extends Phaser.Scene {
       : w.isDriving
         ? `DRIVING ${speed}  ·  WASD steer · Space exit · F shoot · P pause`
         : 'ON FOOT  ·  WASD move · Space car · F shoot · P pause';
+    const objective = w.missionObjective?.description;
+    const compactObjective =
+      objective && objective.startsWith('Go to the mission marker to start ')
+        ? 'Go to the mission marker'
+        : objective;
+    const progress = w.missionProgress;
+    const objectiveLine = compactObjective
+      ? `OBJECTIVE ${compactObjective}${progress ? ` (${progress.current}/${progress.goal})` : ''}`
+      : null;
 
-    return [`WANTED ${stars}    HP ${hp}`, `${money}    ${ammo}`, mission, taxi, service, status]
-      .filter(Boolean)
+    return [`WANTED ${stars}    HP ${hp}`, `${money}    ${ammo}`, status, objectiveLine]
+      .filter((line): line is string => !!line)
       .join('\n');
   }
 
@@ -3313,6 +3538,7 @@ export class CityScene extends Phaser.Scene {
     if (text === this.prevHudText) return;
     this.prevHudText = text;
     this.hud.setText(text);
+    this.layoutHud();
   }
 
   private syncBustedText(): void {

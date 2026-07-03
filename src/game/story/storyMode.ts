@@ -825,6 +825,20 @@ function collectStoryBranchOutcomes(story: StoryMode): Set<string> {
   return outcomes;
 }
 
+function collectStoryVariantBranchReferences(story: StoryMode): Set<string> {
+  const refs = new Set<string>();
+  for (const act of story.acts) {
+    for (const chapter of act.chapters) {
+      for (const mission of chapter.missions) {
+        for (const variant of mission.variants ?? []) {
+          refs.add(`${variant.branchId}::${variant.outcomeId}`);
+        }
+      }
+    }
+  }
+  return refs;
+}
+
 export function validateStoryMode(story: StoryMode): StoryValidationIssue[] {
   const issues: StoryValidationIssue[] = [];
   const actIds = new Set<string>();
@@ -969,6 +983,19 @@ export function validateStoryMode(story: StoryMode): StoryValidationIssue[] {
           });
         }
       }
+    }
+  }
+
+  // Dead flexibility: a branch outcome a mission records but no variant ever
+  // reads is a dangling declaration — either a variant is missing or the branch
+  // is dead and should be removed.
+  const variantBranchReferences = collectStoryVariantBranchReferences(story);
+  for (const outcome of knownBranchOutcomes) {
+    if (!variantBranchReferences.has(outcome)) {
+      issues.push({
+        path: 'branchOutcomes',
+        message: `Branch outcome "${outcome.replace('::', '=')}" is recorded by a mission but no variant ever reads it`,
+      });
     }
   }
 

@@ -32,7 +32,7 @@ import {
   storyObjectiveIndexFromRuntime,
   validateStoryMode,
 } from './storyMode';
-import type { StoryChapter, StoryMissionPlan, StoryMode } from './storyMode';
+import type { StoryChapter, StoryMissionPlan, StoryMode, StoryRuntimeScript } from './storyMode';
 
 function fixedObjectiveTargets(runtime: ReturnType<typeof compileStoryMissionRuntime>) {
   return (
@@ -151,8 +151,8 @@ function withFirstMission(story: StoryMode, mission: StoryMissionPlan): StoryMod
 describe('validateStoryMode', () => {
   it('accepts the first implemented story slice', () => {
     expect(validateStoryMode(STORY_MODE_PROTOTYPE)).toEqual([]);
-    expect(countStoryChapters(STORY_MODE_PROTOTYPE)).toBe(12);
-    expect(countStoryMissions(STORY_MODE_PROTOTYPE)).toBe(60);
+    expect(countStoryChapters(STORY_MODE_PROTOTYPE)).toBe(13);
+    expect(countStoryMissions(STORY_MODE_PROTOTYPE)).toBe(65);
   });
 
   it('accepts a minimal well-formed fixture', () => {
@@ -227,6 +227,20 @@ describe('validateStoryMode', () => {
     expect(
       validateStoryMode(malformed).some((issue) =>
         issue.message.includes('that no mission ever sets'),
+      ),
+    ).toBe(true);
+  });
+
+  it('flags a recorded branch outcome that no variant ever reads', () => {
+    const story = minimalStoryMode();
+    const mission: StoryMissionPlan = {
+      ...minimalMission('chapter-1-m1'),
+      branchOutcome: { branchId: 'orphan-branch', outcomeId: 'orphan-outcome' },
+    };
+    const malformed = withFirstMission(story, mission);
+    expect(
+      validateStoryMode(malformed).some((issue) =>
+        issue.message.includes('no variant ever reads it'),
       ),
     ).toBe(true);
   });
@@ -395,6 +409,80 @@ describe('compileStoryChapterRuntimeCampaign', () => {
 
     expect(checkedTargets).toBeGreaterThan(0);
     expect([...invalidTargets]).toEqual([]);
+  });
+});
+
+describe('authored story capability coverage', () => {
+  // Every objective / actor / fail-rule kind the runtime supports should be
+  // exercised by at least one authored story mission, or be explicitly
+  // allow-listed as intentionally exercised only elsewhere (sandbox campaigns
+  // or unit tests). This keeps unused runtime flexibility from rotting silently.
+  const ALL_OBJECTIVE_KINDS = [
+    'reach', 'eliminate', 'collect', 'route', 'sabotage', 'tail', 'capture', 'survive', 'defend',
+    'wanted', 'service',
+  ] as const;
+  const ALL_ACTOR_KINDS = ['vehicleRoute', 'pedestrianRoute', 'pedestrianSquad'] as const;
+  const ALL_FAIL_RULE_KINDS = [
+    'loseActor', 'escortRadius', 'wantedPressure', 'actorVehicleCondition',
+  ] as const;
+
+  // `wanted` is a core mission primitive covered by the sandbox campaign and
+  // mission.test.ts, but no authored story mission drives to a star rating.
+  const NON_STORY_OBJECTIVE_KINDS = new Set<string>(['wanted']);
+  // `loseActor` is implemented and covered in runtimeActors.test.ts, but every
+  // authored escort uses the `escortRadius` variant instead.
+  const NON_STORY_FAIL_RULE_KINDS = new Set<string>(['loseActor']);
+
+  const usedObjectiveKinds = new Set<string>();
+  const usedActorKinds = new Set<string>();
+  const usedFailRuleKinds = new Set<string>();
+
+  const visitScript = (script?: StoryRuntimeScript): void => {
+    if (!script) return;
+    const visitActors = (actors?: readonly { kind: string }[]): void => {
+      for (const actor of actors ?? []) usedActorKinds.add(actor.kind);
+    };
+    const visitFailRules = (rules?: readonly { kind: string }[]): void => {
+      for (const rule of rules ?? []) usedFailRuleKinds.add(rule.kind);
+    };
+    visitActors(script.actors);
+    visitFailRules(script.failRules);
+    for (const stage of script.stages ?? []) {
+      visitActors(stage.actors);
+      visitFailRules(stage.failRules);
+    }
+  };
+
+  for (const { plan } of storyPlansForMarkerValidation()) {
+    for (const objective of compileStoryMissionRuntime(plan)?.objectives ?? []) {
+      usedObjectiveKinds.add(objective.kind);
+    }
+    visitScript(plan.prototypeScript);
+  }
+
+  it('exercises every objective kind, or explicitly allow-lists it as non-story', () => {
+    for (const kind of ALL_OBJECTIVE_KINDS) {
+      expect(usedObjectiveKinds.has(kind) || NON_STORY_OBJECTIVE_KINDS.has(kind)).toBe(true);
+    }
+    // Keep the allow-list honest: nothing on it should actually be used by a story mission.
+    for (const kind of NON_STORY_OBJECTIVE_KINDS) {
+      expect(usedObjectiveKinds.has(kind)).toBe(false);
+    }
+  });
+
+  it('exercises every actor-script kind in authored story data', () => {
+    for (const kind of ALL_ACTOR_KINDS) {
+      expect(usedActorKinds.has(kind)).toBe(true);
+    }
+  });
+
+  it('exercises every fail-rule kind, or explicitly allow-lists it as non-story', () => {
+    for (const kind of ALL_FAIL_RULE_KINDS) {
+      expect(usedFailRuleKinds.has(kind) || NON_STORY_FAIL_RULE_KINDS.has(kind)).toBe(true);
+    }
+    for (const kind of NON_STORY_FAIL_RULE_KINDS) {
+      expect(usedFailRuleKinds.has(kind)).toBe(false);
+    }
   });
 });
 

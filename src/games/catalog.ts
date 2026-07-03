@@ -24,7 +24,7 @@ export const arcadeGames: readonly ArcadeGame[] = [
     badge: 'Work in progress',
     description: 'Top-down city chaos with traffic, wanted heat, service vehicles, taxis, and missions.',
     accent: '#47d7ff',
-    load: () => import('../game/main'),
+    load: () => import('./sindicate'),
   },
   {
     id: 'pixel-sprint',

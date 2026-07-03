@@ -57,7 +57,7 @@ import {
   laneCross,
 } from './roadVehicle';
 import { type TrafficLights, createTrafficLights, tickLights, hasGreen } from './trafficLight';
-import { type City, tileCenter } from './city';
+import { type City, tileCenter, nearestRoadTileCenter } from './city';
 import {
   type NavGrid,
   type FlowField,
@@ -790,6 +790,18 @@ export class World {
   /** Story-driven reserved route lanes: NPC cars near these points nearly
    * stop, keeping the lane clear for a scripted escort or getaway. */
   private storyReservedRoutes: { points: Vec2[]; radius: number }[] = [];
+  /** The currently applied scripted district-state object, used to skip
+   * reapplying identical per-stage effects every frame. */
+  private activeStoryDistrictEffects:
+    | {
+        serviceLaneBlocks?: readonly ServiceObjectiveKind[];
+        trafficSpeedMultiplier?: number;
+        suppressNpcDriving?: boolean;
+        wantedPressureBonus?: number;
+        blackoutIntersections?: boolean;
+        reservedRoutes?: readonly { points: readonly Vec2[]; radius: number }[];
+      }
+    | null = null;
   /** Seconds elapsed in the current run (drives survive objectives). */
   private elapsed = 0;
   /** The currently active player taxi fare, if the player is driving a cab. */
@@ -1146,6 +1158,8 @@ export class World {
       reservedRoutes?: readonly { points: readonly Vec2[]; radius: number }[];
     } | null,
   ): void {
+    if (this.activeStoryDistrictEffects === effects) return;
+    this.activeStoryDistrictEffects = effects;
     this.storyServiceLaneBlocks = new Set(effects?.serviceLaneBlocks ?? []);
     this.storyTrafficSpeedMultiplier = Math.max(0.25, effects?.trafficSpeedMultiplier ?? 1);
     this.storyNpcDrivingSuppressed = !!effects?.suppressNpcDriving;
@@ -2428,19 +2442,7 @@ export class World {
   /** Nearest road-tile centre a service vehicle can actually drive to beside a job. */
   private nearestRoadPoint(target: Vec2): Vec2 | null {
     if (!this.city) return null;
-    let best: Vec2 | null = null;
-    let bestDistance = Infinity;
-    for (let tx = 0; tx < this.city.spec.cols; tx++) {
-      for (let ty = 0; ty < this.city.spec.rows; ty++) {
-        if (!this.city.isRoad(tx, ty)) continue;
-        const candidate = tileCenter(this.city.spec, tx, ty);
-        const candidateDistance = distance(candidate, target);
-        if (candidateDistance >= bestDistance) continue;
-        best = candidate;
-        bestDistance = candidateDistance;
-      }
-    }
-    return best;
+    return nearestRoadTileCenter(this.city, target);
   }
 
   /**
@@ -3486,7 +3488,12 @@ export class World {
       // steering behavior (wander, flee, panic-exit) chose the raw target.
       if (this.isWaterAt(pos)) {
         pos = ped.pos; // never let a pedestrian step into the water
-      } else if (!returningTo && stepped.state === 'wander' && this.onForbiddenRoad(pos)) {
+      } else if (
+        !returningTo &&
+        stepped.state === 'wander' &&
+        this.onForbiddenRoad(pos) &&
+        !ped.missionTarget
+      ) {
         // When calm, a pedestrian keeps to the pavement and only steps onto the
         // road at a crosswalk; a fleeing pedestrian will bolt across anywhere.
         pos = ped.pos; // hold at the kerb instead of jaywalking
@@ -3875,6 +3882,8 @@ export class World {
 
     const progress = Math.max(0, this.targetKills - this.objectiveBaseline.targetKills);
     const remaining = Math.max(0, obj.count - progress);
+    const scriptedTargeted: number[] = [];
+    const scriptedCandidates: number[] = [];
     const targeted: number[] = [];
     const candidates: number[] = [];
 
@@ -3885,21 +3894,29 @@ export class World {
         continue;
       }
       if (ped.missionTarget) {
-        targeted.push(i);
+        if (ped.storyActorId) scriptedTargeted.push(i);
+        else targeted.push(i);
+      } else if (ped.storyActorId) {
+        scriptedCandidates.push(i);
       } else {
         candidates.push(i);
       }
     }
 
-    for (let i = remaining; i < targeted.length; i++) {
-      const idx = targeted[i];
+    const priority = [...scriptedTargeted, ...scriptedCandidates, ...targeted];
+    const keep = new Set(priority.slice(0, remaining));
+
+    for (const idx of [...scriptedTargeted, ...targeted]) {
+      if (keep.has(idx)) continue;
       this.pedestrians[idx] = { ...this.pedestrians[idx], missionTarget: false };
     }
 
-    const need = Math.max(0, remaining - Math.min(targeted.length, remaining));
-    const pool = candidates.slice();
+    const need = remaining - keep.size;
+    if (need <= 0) return;
+    const scriptedPool = scriptedCandidates.filter((idx) => !keep.has(idx));
+    const pool = [...scriptedPool, ...candidates];
     for (let i = 0; i < need && pool.length > 0; i++) {
-      const pick = Math.floor(this.rng() * pool.length);
+      const pick = scriptedPool.length > i ? 0 : Math.floor(this.rng() * pool.length);
       const idx = pool.splice(pick, 1)[0];
       this.pedestrians[idx] = { ...this.pedestrians[idx], missionTarget: true };
     }

@@ -23,7 +23,9 @@
         "/^node scripts/profile-runtime\\.mjs$/": {
             "approve": true,
             "matchCommandLine": true
-        }
+        },
+        "npx tsc": true,
+        "npx eslint": true
     },
     "cSpell.words": [
         "cooldown",

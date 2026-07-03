@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
-import { CityScene } from './scenes/CityScene';
-import type { GameRuntime } from '../arcade/types';
+import { CityScene } from '../../game/scenes/CityScene';
+import type { GameRuntime } from '../../arcade/types';
 
 function config(parent: HTMLElement): Phaser.Types.Core.GameConfig {
   return {

@@ -430,10 +430,20 @@ Implemented now:
 - Stage 6 authoring helpers now also cover reusable vehicle-route actors, mission-target squads, and wanted-pressure district beats, reducing the repeated literal script boilerplate across later chapters.
 - The prototype now scales cleanly through Chapter 12: Broadcast Teeth and Debt Collection Weather are authored on top of the stabilized runtime, bringing the playable story to 12 chapters / 60 missions across Act I and Act II.
 - Story mission failure retries now preserve the current run state instead of wiping money, ammo, and health, and Flatline Gap now uses route-progress district beats instead of an impossible escort fail state.
+- Story mission-target and route actors no longer spawn on top of the player, and no longer pop into view while the player watches. Because many authored missions anchor their first target on the same tile that doubles as the "drive here to start" marker, reaching the marker used to drop the squad/vehicle directly onto the player (instant-kill eliminate objectives, zero-difficulty tails, and stray NPCs materialising on the mission ring). Spawns are now road-snapped to a point just beyond the camera viewport (`roadStandoffPoint` in `src/core/city.ts`, applied in `CityScene.storyActorSpawnPoint` using an `offscreenSpawnDistance` derived from the live viewport and zoom), so targets always appear off-screen and have to be approached instead of spawning in the player's face.
+- Pedestrian navigation no longer stalls the game after a story mission ends. Despawned story actors are parked far off-map, and the pedestrian graph's `nearestNode` used to answer those far-off lookups by scanning the entire tile grid cell-by-cell every frame; it now short-circuits out-of-bounds queries with a direct nearest-node scan (`src/core/pedestrianGraph.ts`), removing the post-mission slowdown.
+- Story actor spawn placement now has explicit, tested safety guarantees (Stage 10). Relocated actors that would land in water or off-map are snapped to the nearest drivable tile via a new bounded ring-search helper (`nearestRoadTileCenter` in `src/core/city.ts`, applied in `CityScene.storyActorSpawnPoint`), and `city.test.ts` proves that both the off-screen standoff point and the widest authored squad spread always stay on the road band and clear of water, buildings, and the off-map despawn slot.
+- The last per-dispatch full-grid scan is gone (Stage 10). `World.nearestRoadPoint` used to sweep every `cols × rows` tile on each service dispatch; it now delegates to the bounded `nearestRoadTileCenter` ring search, which unit tests confirm does bounded work even for far-off/unreachable inputs while matching a full-grid scan's result.
+- Despawn/reuse is now proven correct under churn (Stage 10). A Playwright regression drops a scripted actor and respawns the same id, asserting the reused slot is clean (no leaked mission-target flag, position, route index, or story-actor id) and reuses the original pool indices.
+- Load-time and fallback spawns fail safe (Stage 10): a generic water/off-map safety net in `CityScene.storyActorSpawnPoint` keeps foot actors, story actors, and service vehicles from starting a mission inside water or off-map.
+- Every chapter now has at least one dedicated regression that exercises its distinctive system rather than only the generic boot/complete walk (Stage 11). Chapters 8, 10, 11, and 12 gained focused specs (courier tail handoff on a live scripted vehicle, escort van running alongside its extortion squad, Broadcast Teeth district-state stage shift on route progress, and the Debt Collection Weather capture-pursuit vehicle), joining the existing Chapter 7 picket-squad and Chapter 9 live-capture regressions.
+- An objective/actor/fail-rule exhaustion test now asserts every runtime kind is exercised by authored story data or explicitly allow-listed (Stage 11). The audit confirmed the `wanted` objective and `loseActor` fail rule are defined and unit-tested but used by no story mission; both are recorded as intentional non-story allow-list entries (the `wanted` primitive is exercised by the sandbox campaign, `loseActor` by `runtimeActors.test.ts`) so the decision is enforced instead of silent, and the test fails if either later becomes story-used.
+- Story authoring validation now catches unused branch declarations (Stage 11): `validateStoryMode` flags any recorded branch outcome that no mission variant ever reads, matching the existing dangling-actor-reference checks.
+- Act III has opened against the stabilized base (Stage 12): Chapter 13, Civic Shield, is authored entirely inside already-tested encounter patterns (`src/game/story/civicShield.ts`, wired into a new `Expose The Machine` act in `storyCampaign.ts`), extending the playable story to 13 chapters / 65 missions across three acts. Its five missions reuse proving-run tail formation, timed sabotage, a blackout-intersection convoy split with a revealed escort squad, a contract-burn collect, and a shoot-on-sight wanted-pressure finale. Coverage lands with it: the generic boot/complete walk now covers all 65 missions, and a dedicated regression proves Armor Column blacks out the junction and only reveals the four escorts once the junction is reached.
 
 Current production status:
 
-- Chapter 1 through Chapter 12 remain the playable slice: 12 chapters, 60 missions, two full acts.
+- Chapter 1 through Chapter 13 are the playable slice: 13 chapters, 65 missions, two full acts plus the opening chapter of Act III (Expose The Machine).
 - The encounter pass is no longer limited to the Dead Drop reference slice: later chapters now use multi-stage authored beats such as convoy traps, capture lanes, fallback evacuations, staged handoffs, blackout pressure, reserved routes, and branch-dependent escort routes.
 - Consequence chains now travel beyond Meter Running: grouped-lead outcomes alter later hospital, freight, and property-fraud mission setup instead of stopping at a single local branch.
 - The launcher now surfaces the useful long-run facts directly: chapter progress counts, active carried consequences, dense scorecards, and per-chapter system tags.
@@ -670,17 +680,77 @@ Completed outcomes:
 2. Mission-result surfacing is now tuned for future reference: recent scorecards preserve outcome, vehicle, service-lane, faction, unlock, and next-step data in a compact format.
 3. Presentation now matches the deeper encounter/consequence work from Stage 8 closely enough that future content authoring can rely on it instead of treating it as temporary UI.
 
-### Stage 10 - Author Act III Against The Stable Base
+### Post-Completion Hardening Gate
+
+A retrospective audit of Stages 0 through 9 found that every claimed outcome is functionally present and covered by tests, but a recurring class of defects surfaced *after* stages were marked complete: story actors spawning on top of — and in full view of — the player at the mission marker, the pedestrian graph stalling the whole game while resolving off-map actors, and foot NPCs walking straight into the river. All three sat inside "completed" Stage 2 and Stage 5 territory. Their shared root is that the runtime base was declared done without adversarial coverage of spawn placement, navigation edge cases, and performance under scale, and that Chapters 7 through 12 lean almost entirely on the generic "every authored mission boots and completes" walk. Stages 10 and 11 close that class and bring the completed base to a shippable standard before Act III authoring widens the surface further. They gate Stage 12. Both are now complete: spawn placement, bounded navigation/dispatch scans, and despawn/reuse churn are covered by unit and Playwright regressions, every chapter (including 7 through 12) has a distinctive-system regression, an exhaustion test enforces the objective/actor/fail-rule coverage decision, and validation now rejects unused branch declarations — so the gate on Act III authoring is lifted.
+
+### Stage 10 - Harden The Completed Runtime Base (complete)
+
+Goal: close the class of spawn-placement, navigation, performance, and actor-lifecycle defects that kept surfacing after the base stages were marked complete, so new content is authored on a base that is robust under adversarial conditions rather than only happy-path ones.
+
+Why before more content:
+
+- Three separate post-completion regressions (marker-overlap spawns, off-map navigation stalls, water-walking foot actors) all traced back to the same missing discipline. Authoring 12 more chapters on top of that base multiplies the blast radius of each latent gap.
+
+Required outcomes:
+
+1. Story actor spawn placement has explicit, tested guarantees: relocated actors land on a walkable/drivable tile, off-screen from the player, and clear of water, buildings, and the off-map despawn slot. The off-screen guarantee is done (`roadStandoffPoint` in `src/core/city.ts`, `CityScene.storyActorSpawnPoint`); extend it so squad-spread members and vehicle spawns are also asserted on valid ground.
+2. No per-dispatch or per-frame full-grid scans remain in hot paths. `pedestrianGraph.nearestNode` now short-circuits off-map queries; give `World.nearestRoadPoint` (a full `cols × rows` scan on every service dispatch) the same bounded treatment, and audit the per-tick `updatePedestrians`/traffic loops for hidden O(n × grid) work.
+3. Despawn/reuse is correct under churn: an actor id dropped and respawned within the same or next frame reuses a clean slot with no stale mission-target flag, position, route index, or `storyActorOrder`.
+4. Load-time and fallback invariants fail loudly instead of silently: no foot actor, story actor, or service vehicle starts a mission inside water, a building, or off-map, and an unreachable-road fallback surfaces the failure rather than parking the vehicle off-road at the raw job location.
+
+Required tests before moving on:
+
+1. Spawn-safety coverage: relocated eliminate/tail/decoy actors and every squad member land on walkable, off-screen, non-water, non-building tiles.
+2. Performance guards: unit tests asserting `nearestNode` and `nearestRoadPoint` do bounded work for far-off/unreachable inputs, plus a long-run smoke test that spawns and despawns story actors repeatedly without frame-time or allocation growth.
+3. Churn regression: rapid despawn-then-respawn of the same actor id yields a fresh actor with no leaked state.
+
+Main code areas:
+
+- src/core/pedestrianGraph.ts
+- src/core/world.ts
+- src/core/city.ts
+- src/game/scenes/CityScene.ts
+- src/game/story/runtimeActors.ts
+
+### Stage 11 - Close Coverage And Cut Dead Flexibility (complete)
+
+Goal: raise test coverage and the authored surface to the same standard as the runtime, and remove capability that exists but is never exercised, before Act III doubles the content.
+
+Why before more content:
+
+- Chapters 7 through 12 currently rely almost entirely on the generic authored-mission walk, so chapter-specific systems (branch leads, district-state beats, actor handoffs) can regress silently. Adding 12 more chapters on top of thin coverage banks exactly the test debt the plan's execution rules forbid.
+
+Required outcomes:
+
+1. Every chapter has at least one dedicated regression that exercises its distinctive system, not only the generic boot/complete walk — priority on Chapters 7 through 12, which currently have none.
+2. Every objective kind, actor-script type, and fail-rule kind is exercised by at least one authored mission or an isolated regression. Today the `wanted` objective is defined and unit-tested but used by no story mission (only `sandboxCampaigns.ts`); either author a story mission that uses it or delete the unused story-layer plumbing.
+3. Authoring validation catches unused or dangling branch declarations (a declared mission variant or branch id that no mission ever records), matching the existing dangling-actor-reference checks in `validateStoryMode`.
+
+Required tests before moving on:
+
+1. Per-chapter regression specs for Chapters 7 through 12.
+2. An objective/actor/fail-rule exhaustion test asserting each kind is reachable from authored data or explicitly covered.
+3. Validation-fixture tests for unused branch/variant declarations.
+
+Main code areas:
+
+- e2e/story-authored-missions.spec.ts
+- e2e/story-mode.spec.ts
+- src/game/story/storyMode.ts
+- src/core/mission.ts
+
+### Stage 12 - Author Act III Against The Stable Base (in progress)
 
 Goal: use the now-stable runtime, consequence layer, and launcher surfaces to build the remaining 12 chapters without reopening foundation work.
 
 Required outcomes:
 
-1. Author Chapter 13 through Chapter 24 on top of the existing mission/runtime contracts.
-2. Keep each new chapter inside already-tested encounter patterns unless a new runtime feature is explicitly justified.
-3. Add regression coverage for every new chapter as it lands instead of banking test debt for later.
+1. Author Chapter 13 through Chapter 24 on top of the existing mission/runtime contracts. — Chapter 13, Civic Shield, has landed as the opening chapter of Act III (Expose The Machine); Chapters 14 through 24 remain.
+2. Keep each new chapter inside already-tested encounter patterns unless a new runtime feature is explicitly justified. — held so far: Civic Shield reuses tail formation, timed sabotage, blackout-intersection convoy split, revealed escort squad, collect, and wanted-pressure finale with no new runtime primitives.
+3. Add regression coverage for every new chapter as it lands instead of banking test debt for later. — done for Chapter 13: the generic boot/complete walk covers all 65 missions and a dedicated Armor Column blackout/escort-reveal regression was added.
 
-### Stage 11 - Deepen Citywide Reactivity
+### Stage 13 - Deepen Citywide Reactivity
 
 Goal: make later acts feel like the city remembers what the player changed, not just which mission variant loaded next.
 
@@ -690,7 +760,7 @@ Required outcomes:
 2. Let later missions read accumulated city-state summaries, not only a single branch key.
 3. Surface those broader changes in both the launcher archive and mission summaries without hiding the raw runtime facts.
 
-### Stage 12 - Final Content, Balance, And Ship Gate
+### Stage 14 - Final Content, Balance, And Ship Gate
 
 Goal: close the remaining gap between a complete story prototype and a shippable story mode.
 
@@ -711,9 +781,11 @@ Required outcomes:
 7. Build authoring helpers and only then widen the story.
 8. Scale to the next 2 chapters only once the runtime base is stable.
 9. Return for bespoke encounter depth and presentation polish after the widened slice holds.
-10. Author Act III only after the widened base stays stable in real long-form play.
-11. Expand consequences from mission-local variants into citywide reactivity.
-12. Finish the ship gate only after the full 24-chapter run is authored and balanced.
+10. Harden the completed runtime base — tested spawn-placement guarantees, bounded navigation/dispatch scans, despawn/reuse churn correctness, and long-session performance — before authoring more content on top of it.
+11. Close per-chapter regression coverage for Chapters 7 through 12 and cut runtime flexibility that no authored mission exercises.
+12. Author Act III only after the widened base stays stable in real long-form play.
+13. Expand consequences from mission-local variants into citywide reactivity.
+14. Finish the ship gate only after the full 24-chapter run is authored and balanced.
 
 ## Recommended Vertical Slice
 
@@ -733,13 +805,13 @@ What is already true in code:
 - All 5 Dead Drop District missions now have prototype runtime specs and authored runtime scripts.
 - The chapter can compile into a playable sequential campaign.
 - The chapter can save and resume story progress.
-- The prototype can roll forward through Chapter 12 across two acts.
+- The prototype can roll forward through Chapter 13 across two full acts plus the opening chapter of Act III.
 - The prototype can replay unlocked chapters from both the story menu and the pause menu.
 - Fake ambulance, convoy, escort, and named-squad behavior are now driven by authored mission-actor script data instead of only hardcoded scene branches.
 - Completed chapters now surface in a recap archive on the act-grouped story menu.
 
 What still remains beyond the completed slice:
 
-- Author and validate Act III (Chapter 13 through Chapter 24) on top of the now-stable runtime and launcher surfaces (Stage 10).
-- Broaden branch outcomes from route swaps into durable city-state and faction-state changes that can stack across acts (Stage 11).
-- Finish long-session balance, performance, and ship-quality validation across the full story run (Stage 12).
+- Author and validate the rest of Act III (Chapter 14 through Chapter 24) on top of the now-stable runtime and launcher surfaces (Stage 12; Chapter 13, Civic Shield, has already landed).
+- Broaden branch outcomes from route swaps into durable city-state and faction-state changes that can stack across acts (Stage 13).
+- Finish long-session balance, performance, and ship-quality validation across the full story run (Stage 14).

@@ -4,12 +4,15 @@ import {
   CROSSWALK_BELT_WIDTH,
   crosswalkStripeRects,
   DEFAULT_CITY,
+  nearestRoadTileCenter,
+  roadStandoffPoint,
   tileCenter,
 } from './city';
 import { describe, it, expect } from 'vitest';
 import { rect, circleIntersectsRect, pointInRect, randomPointInRect } from './collision';
 import { CITY_SPEC } from '../game/citySpec';
 import { vec2 } from './vector';
+import { distance } from './vector';
 
 const overlapsRect = (a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }): boolean =>
   a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
@@ -436,3 +439,135 @@ describe('randomPointInRect', () => {
     expect(pointInRect(p, r)).toBe(true);
   });
 });
+
+describe('roadStandoffPoint', () => {
+  const city = buildCity(CITY_SPEC);
+
+  const onRoad = (p: { x: number; y: number }): boolean => {
+    const tx = Math.floor(p.x / city.spec.tile);
+    const ty = Math.floor(p.y / city.spec.tile);
+    return city.isRoad(tx, ty);
+  };
+
+  it('returns a road-tile centre at least minDistance from the anchor', () => {
+    const anchor = vec2(city.width / 2, city.height / 2);
+    const minDistance = city.spec.tile * 3;
+    const p = roadStandoffPoint(city, anchor, minDistance);
+    expect(onRoad(p)).toBe(true);
+    expect(distance(p, anchor)).toBeGreaterThanOrEqual(minDistance);
+  });
+
+  it('returns the nearest qualifying road point (none closer satisfies the minimum)', () => {
+    const anchor = vec2(city.width / 2, city.height / 2);
+    const minDistance = city.spec.tile * 3;
+    const p = roadStandoffPoint(city, anchor, minDistance);
+    const chosen = distance(p, anchor);
+    // No road tile that also clears the minimum sits closer to the anchor.
+    for (let tx = 0; tx < city.spec.cols; tx++) {
+      for (let ty = 0; ty < city.spec.rows; ty++) {
+        if (!city.isRoad(tx, ty)) continue;
+        const d = distance(tileCenter(city.spec, tx, ty), anchor);
+        if (d >= minDistance) expect(d).toBeGreaterThanOrEqual(chosen);
+      }
+    }
+  });
+
+  it('never returns water, a building interior, or the off-map despawn slot', () => {
+    // Sample many anchors; every relocated spawn must be valid drivable ground.
+    for (let ax = 0; ax <= city.width; ax += city.spec.tile * 5) {
+      for (let ay = 0; ay <= city.height; ay += city.spec.tile * 5) {
+        const p = roadStandoffPoint(city, vec2(ax, ay), city.spec.tile * 4);
+        const tx = Math.floor(p.x / city.spec.tile);
+        const ty = Math.floor(p.y / city.spec.tile);
+        expect(city.isRoad(tx, ty)).toBe(true);
+        expect(city.isWater(tx, ty)).toBe(false);
+        expect(city.buildings.some((b) => pointInRect(p, b))).toBe(false);
+        expect(p.x).toBeGreaterThanOrEqual(0);
+        expect(p.y).toBeGreaterThanOrEqual(0);
+      }
+    }
+  });
+
+  it('keeps the widest authored squad spread inside the road band', () => {
+    // pedestrianSquad members fan out by (count-1)/2 * spread along x. The
+    // widest authored squad (count 5, spread 26) reaches 52px from the base
+    // point, well inside the 256px (roadWidth 4 x tile 64) road band, so every
+    // member stays on drivable ground around any road-tile standoff point.
+    const maxHalfSpread = ((5 - 1) / 2) * 26;
+    const roadBandHalfWidth = ((city.spec.roadWidth ?? 1) * city.spec.tile) / 2;
+    expect(maxHalfSpread).toBeLessThan(roadBandHalfWidth);
+  });
+});
+
+describe('nearestRoadTileCenter', () => {
+  // A full-grid brute-force scan: the ground truth the bounded ring search must match.
+  const bruteForceNearest = (city: ReturnType<typeof buildCity>, target: { x: number; y: number }) => {
+    let best: { x: number; y: number } | null = null;
+    let bestDistance = Infinity;
+    for (let tx = 0; tx < city.spec.cols; tx++) {
+      for (let ty = 0; ty < city.spec.rows; ty++) {
+        if (!city.isRoad(tx, ty)) continue;
+        const candidate = tileCenter(city.spec, tx, ty);
+        const d = distance(candidate, target);
+        if (d < bestDistance) {
+          bestDistance = d;
+          best = candidate;
+        }
+      }
+    }
+    return best;
+  };
+
+  const cities = {
+    default: buildCity(DEFAULT_CITY),
+    live: buildCity(CITY_SPEC),
+    river: buildCity({
+      ...DEFAULT_CITY,
+      rivers: [{ orientation: 'horizontal', start: 6, span: 4, bridgeEvery: 2 }],
+    }),
+  };
+
+  for (const [name, city] of Object.entries(cities)) {
+    it(`matches a full-grid scan across ${name} city sample points`, () => {
+      const { width, height, spec } = city;
+      const samples: Array<{ x: number; y: number }> = [];
+      for (let x = -spec.tile; x <= width + spec.tile; x += spec.tile * 1.5) {
+        for (let y = -spec.tile; y <= height + spec.tile; y += spec.tile * 1.5) {
+          samples.push(vec2(x, y));
+        }
+      }
+      for (const target of samples) {
+        const bounded = nearestRoadTileCenter(city, target);
+        const brute = bruteForceNearest(city, target);
+        // Ties (equidistant road tiles) are equally valid, so compare the
+        // achieved distance rather than the specific tile chosen.
+        expect(bounded).not.toBeNull();
+        expect(distance(bounded!, target)).toBeCloseTo(distance(brute!, target), 6);
+      }
+    });
+
+    it(`always returns a drivable, non-water tile for ${name} city`, () => {
+      const p = nearestRoadTileCenter(city, vec2(city.width / 2, city.height / 2));
+      expect(p).not.toBeNull();
+      const tx = Math.floor(p!.x / city.spec.tile);
+      const ty = Math.floor(p!.y / city.spec.tile);
+      expect(city.isRoad(tx, ty)).toBe(true);
+      expect(city.isWater(tx, ty)).toBe(false);
+    });
+  }
+
+  it('finds the true nearest road for a far off-map query (despawn slot)', () => {
+    const city = buildCity(CITY_SPEC);
+    const target = vec2(-100000, -100000);
+    const bounded = nearestRoadTileCenter(city, target);
+    const brute = bruteForceNearest(city, target);
+    expect(bounded).not.toBeNull();
+    expect(distance(bounded!, target)).toBeCloseTo(distance(brute!, target), 6);
+  });
+
+  it('returns null when the city has no road tiles', () => {
+    const empty = { ...DEFAULT_CITY, cols: 0, rows: 0 };
+    expect(nearestRoadTileCenter(buildCity(empty), vec2(0, 0))).toBeNull();
+  });
+});
+

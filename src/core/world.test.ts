@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   World,
   AMBULANCE_DISPATCH_DELAY,
@@ -343,6 +343,54 @@ describe('World story objective progress', () => {
     advance(slowed, 1);
 
     expect(base.cars[0].pos.y).toBeGreaterThan(slowed.cars[0].pos.y);
+  });
+
+  it('does not reapply identical story district effects every frame', () => {
+    const state = { serviceLaneBlocks: ['taxi'] as const };
+    const w = new World({
+      player: player(),
+      cars: [carAt(20, 0), carAt(40, 0), carAt(60, 0)],
+      carKinds: ['taxi', 'taxi', 'taxi'],
+    });
+    const clearNpcTaxiFare = vi.spyOn(w as unknown as { clearNpcTaxiFare: () => void }, 'clearNpcTaxiFare');
+
+    w.setStoryDistrictStateEffects(state);
+    for (let i = 0; i < 180; i++) w.setStoryDistrictStateEffects(state);
+
+    expect(clearNpcTaxiFare).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps story district effect caches stable while the same stage stays active', () => {
+    const state = {
+      serviceLaneBlocks: ['taxi'] as const,
+      reservedRoutes: [{ points: [vec2(0, 0), vec2(64, 0)] as const, radius: 48 }],
+    };
+    const w = new World({
+      player: player(),
+      cars: [carAt(20, 0)],
+      carKinds: ['taxi'],
+    });
+
+    w.setStoryDistrictStateEffects(state);
+    const serviceLaneBlocks = (
+      w as unknown as { storyServiceLaneBlocks: Set<string> }
+    ).storyServiceLaneBlocks;
+    const reservedRoutes = (
+      w as unknown as { storyReservedRoutes: { points: { x: number; y: number }[]; radius: number }[] }
+    ).storyReservedRoutes;
+
+    for (let i = 0; i < 180; i++) w.setStoryDistrictStateEffects(state);
+
+    expect((w as unknown as { storyServiceLaneBlocks: Set<string> }).storyServiceLaneBlocks).toBe(
+      serviceLaneBlocks,
+    );
+    expect(
+      (
+        w as unknown as {
+          storyReservedRoutes: { points: { x: number; y: number }[]; radius: number }[];
+        }
+      ).storyReservedRoutes,
+    ).toBe(reservedRoutes);
   });
 
   it('adds checkpoint pressure on top of live wanted stars', () => {
