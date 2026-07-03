@@ -178,11 +178,39 @@ export function buildPedestrianGraph(city: City): PedestrianGraph {
   }
 
   const index = new NodeIndex(nodes, Math.max(16, city.spec.tile));
+  // Bounding box of all nodes, so a query far outside it can be answered with a
+  // single linear scan instead of the expanding-radius search below scanning
+  // hundreds of thousands of empty grid cells (which happens for parked/
+  // off-map story actors sitting at coordinates like -100000).
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const n of nodes) {
+    if (n.x < minX) minX = n.x;
+    if (n.y < minY) minY = n.y;
+    if (n.x > maxX) maxX = n.x;
+    if (n.y > maxY) maxY = n.y;
+  }
   return {
     nodes,
     adjacency,
     nearestNode(pos: Vec2): number {
       if (nodes.length === 0) return -1;
+      // Outside the node bounds: pick the globally nearest node directly. This
+      // is exact and O(nodes), avoiding a runaway cell scan for far-off points.
+      if (pos.x < minX || pos.x > maxX || pos.y < minY || pos.y > maxY) {
+        let best = 0;
+        let bestD = Infinity;
+        for (let i = 0; i < nodes.length; i++) {
+          const d = distance(pos, nodes[i]);
+          if (d < bestD) {
+            bestD = d;
+            best = i;
+          }
+        }
+        return best;
+      }
       for (let r = city.spec.tile; r <= city.width + city.height; r *= 2) {
         let best = -1;
         let bestD = Infinity;

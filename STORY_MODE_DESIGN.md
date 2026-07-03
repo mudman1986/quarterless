@@ -430,6 +430,8 @@ Implemented now:
 - Stage 6 authoring helpers now also cover reusable vehicle-route actors, mission-target squads, and wanted-pressure district beats, reducing the repeated literal script boilerplate across later chapters.
 - The prototype now scales cleanly through Chapter 12: Broadcast Teeth and Debt Collection Weather are authored on top of the stabilized runtime, bringing the playable story to 12 chapters / 60 missions across Act I and Act II.
 - Story mission failure retries now preserve the current run state instead of wiping money, ammo, and health, and Flatline Gap now uses route-progress district beats instead of an impossible escort fail state.
+- Story mission-target and route actors no longer spawn on top of the player. Because many authored missions anchor their first target on the same tile that doubles as the "drive here to start" marker, reaching the marker used to drop the squad/vehicle directly onto the player (instant-kill eliminate objectives, zero-difficulty tails, and stray NPCs materialising on the mission ring). Spawns are now road-snapped a minimum distance from the player generically for every mission (`roadStandoffPoint` in `src/core/city.ts`, applied in `CityScene.storyActorSpawnPoint`), so arriving at the marker starts a real encounter instead of an instant contact.
+- Pedestrian navigation no longer stalls the game after a story mission ends. Despawned story actors are parked far off-map, and the pedestrian graph's `nearestNode` used to answer those far-off lookups by scanning the entire tile grid cell-by-cell every frame; it now short-circuits out-of-bounds queries with a direct nearest-node scan (`src/core/pedestrianGraph.ts`), removing the post-mission slowdown.
 
 Current production status:
 

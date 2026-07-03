@@ -4,12 +4,14 @@ import {
   CROSSWALK_BELT_WIDTH,
   crosswalkStripeRects,
   DEFAULT_CITY,
+  roadStandoffPoint,
   tileCenter,
 } from './city';
 import { describe, it, expect } from 'vitest';
 import { rect, circleIntersectsRect, pointInRect, randomPointInRect } from './collision';
 import { CITY_SPEC } from '../game/citySpec';
 import { vec2 } from './vector';
+import { distance } from './vector';
 
 const overlapsRect = (a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }): boolean =>
   a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
@@ -434,5 +436,38 @@ describe('randomPointInRect', () => {
     expect(randomPointInRect(r, () => 0.5)).toEqual(vec2(25, 40));
     const p = randomPointInRect(r, () => 0.99);
     expect(pointInRect(p, r)).toBe(true);
+  });
+});
+
+describe('roadStandoffPoint', () => {
+  const city = buildCity(CITY_SPEC);
+
+  const onRoad = (p: { x: number; y: number }): boolean => {
+    const tx = Math.floor(p.x / city.spec.tile);
+    const ty = Math.floor(p.y / city.spec.tile);
+    return city.isRoad(tx, ty);
+  };
+
+  it('returns a road-tile centre at least minDistance from the anchor', () => {
+    const anchor = vec2(city.width / 2, city.height / 2);
+    const minDistance = city.spec.tile * 3;
+    const p = roadStandoffPoint(city, anchor, minDistance);
+    expect(onRoad(p)).toBe(true);
+    expect(distance(p, anchor)).toBeGreaterThanOrEqual(minDistance);
+  });
+
+  it('returns the nearest qualifying road point (none closer satisfies the minimum)', () => {
+    const anchor = vec2(city.width / 2, city.height / 2);
+    const minDistance = city.spec.tile * 3;
+    const p = roadStandoffPoint(city, anchor, minDistance);
+    const chosen = distance(p, anchor);
+    // No road tile that also clears the minimum sits closer to the anchor.
+    for (let tx = 0; tx < city.spec.cols; tx++) {
+      for (let ty = 0; ty < city.spec.rows; ty++) {
+        if (!city.isRoad(tx, ty)) continue;
+        const d = distance(tileCenter(city.spec, tx, ty), anchor);
+        if (d >= minDistance) expect(d).toBeGreaterThanOrEqual(chosen);
+      }
+    }
   });
 });

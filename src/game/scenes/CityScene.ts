@@ -1,6 +1,7 @@
 import {
   buildCity,
   crosswalkStripeRects,
+  roadStandoffPoint,
   tileCenter,
   type City,
   type Facility,
@@ -244,6 +245,11 @@ const MOVING_TRAFFIC_MIX: readonly VehicleKind[] = [
 /** Parking spot for story actors that have been handed off / dropped by a stage transition or
  * mission change. Far enough outside any city bounds to stay off-screen and off the minimap. */
 const STORY_ACTOR_DESPAWN_POS: Vec2 = vec2(-100000, -100000);
+/** Minimum distance a freshly-spawned story actor must keep from the player. Many authored
+ * missions anchor their targets on the very tile that also doubles as the "drive here to start"
+ * marker, so without this the targets would materialise on top of the player (instant kill,
+ * no chase). Enforced generically for every mission at spawn time. */
+const STORY_ACTOR_MIN_SPAWN_DISTANCE = 160;
 
 interface CitySceneStartData {
   loadSaveKey?: string | null;
@@ -761,6 +767,21 @@ export class CityScene extends Phaser.Scene {
     ];
   }
 
+  /**
+   * Keep a freshly-spawning story actor off the player's lap. Authored missions frequently anchor
+   * their first target on the same tile that doubles as the mission-start marker, so spawning at
+   * the raw anchor drops the target on top of the player (instant kill / no chase). When the
+   * requested spawn is too close to the player, snap it to the nearest road tile a safe distance
+   * away. Leaves the off-map despawn slot and already-distant spawns untouched, so it only
+   * intervenes on the buggy overlap.
+   */
+  private storyActorSpawnPoint(pos: Vec2): Vec2 {
+    if (pos.x === STORY_ACTOR_DESPAWN_POS.x && pos.y === STORY_ACTOR_DESPAWN_POS.y) return pos;
+    const player = this.world.focus;
+    if (distance(pos, player) >= STORY_ACTOR_MIN_SPAWN_DISTANCE) return pos;
+    return roadStandoffPoint(this.city, player, STORY_ACTOR_MIN_SPAWN_DISTANCE);
+  }
+
   private ensureStoryTargetCar(
     actorId: string,
     pos: Vec2,
@@ -771,6 +792,7 @@ export class CityScene extends Phaser.Scene {
     if (existing !== undefined && this.world.cars[existing]) {
       return existing;
     }
+    pos = this.storyActorSpawnPoint(pos);
     const carDrivers = (this.world as unknown as { carDrivers: (TrafficAI | null)[] }).carDrivers;
     const carKinds = (this.world as unknown as { carKinds: VehicleKind[] }).carKinds;
     const taxiStates = (this.world as unknown as { taxiStates: null[] }).taxiStates;
@@ -838,6 +860,7 @@ export class CityScene extends Phaser.Scene {
     const script = this.storyScript!;
     const count = Math.max(1, opts.count ?? 1);
     const spread = opts.spread ?? 20;
+    pos = this.storyActorSpawnPoint(pos);
     const existing = this.storyPedIndices(actorId);
     if (existing && existing.length > 0) {
       existing.forEach((index, i) => {

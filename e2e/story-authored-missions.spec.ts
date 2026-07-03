@@ -574,6 +574,53 @@ test('eliminate-story squads stay out of the marker until the eliminate objectiv
   expect(moved).toBe(true);
 });
 
+test('eliminate-story targets spawn clear of the player instead of on the mission marker', async ({
+  page,
+}) => {
+  await launchSindicate(page);
+  await restartIntoStoryMission(page, {
+    actId: 'find-the-missing-dispatcher',
+    chapterId: 'dead-drop-district',
+    missionId: 'wreck-before-dawn',
+    objectiveIndex: 0,
+    unlockedChapterIds: ['dead-drop-district'],
+    completedMissionIds: ['night-ferry-run', 'burned-locker'],
+    completedChapterIds: [],
+  });
+  await acknowledgeStoryPanel(page);
+
+  await movePlayerToActiveObjectiveTarget(page);
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: {
+        mission?: { objectives: Array<{ kind: string }>; currentIndex: number } | null;
+        pedestrians: Array<{ missionTarget?: boolean }>;
+      };
+    };
+    const eliminate =
+      scene?.world.mission?.objectives[scene.world.mission.currentIndex]?.kind === 'eliminate';
+    return eliminate && scene.world.pedestrians.some((ped) => ped.missionTarget);
+  });
+
+  const minSeparation = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: {
+        focus: { x: number; y: number };
+        pedestrians: Array<{ missionTarget?: boolean; pos: { x: number; y: number } }>;
+      };
+    };
+    const player = scene.world.focus;
+    const targets = scene.world.pedestrians.filter((ped) => ped.missionTarget);
+    return Math.min(...targets.map((ped) => Math.hypot(ped.pos.x - player.x, ped.pos.y - player.y)));
+  });
+
+  // Before the fix the squad materialised on the mission marker, which is exactly where the
+  // player stands after reaching it, so the targets died on contact with zero separation.
+  expect(minSeparation).toBeGreaterThan(100);
+});
+
 test('pedestrian-route story actors stay out of the marker until the mission entry is triggered', async ({
   page,
 }) => {

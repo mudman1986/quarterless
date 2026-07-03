@@ -1,5 +1,5 @@
 import { type Rect, rect } from './collision';
-import { type Vec2, vec2 } from './vector';
+import { type Vec2, vec2, distance } from './vector';
 
 /**
  * A band of water cutting across the map. A horizontal river spans a range of
@@ -498,6 +498,37 @@ function buildParkingSpots(
 /** Pixel centre of a tile. */
 export function tileCenter(spec: CitySpec, tx: number, ty: number): Vec2 {
   return vec2(tx * spec.tile + spec.tile / 2, ty * spec.tile + spec.tile / 2);
+}
+
+/**
+ * Nearest road-tile centre to `anchor` that sits at least `minDistance` pixels
+ * away. Used to place a story mission's spawning actors a short walk from the
+ * player so arriving at the objective does not drop the targets on top of the
+ * player (instant kill / no chase). Falls back to the farthest road point if
+ * nothing clears the minimum, and to `anchor` itself if the city has no roads.
+ */
+export function roadStandoffPoint(city: City, anchor: Vec2, minDistance: number): Vec2 {
+  let best: Vec2 | null = null;
+  let bestDistance = Infinity;
+  let farthest: Vec2 | null = null;
+  let farthestDistance = -Infinity;
+  for (let tx = 0; tx < city.spec.cols; tx++) {
+    for (let ty = 0; ty < city.spec.rows; ty++) {
+      if (!city.isRoad(tx, ty)) continue;
+      const candidate = tileCenter(city.spec, tx, ty);
+      const d = distance(candidate, anchor);
+      if (d > farthestDistance) {
+        farthestDistance = d;
+        farthest = candidate;
+      }
+      if (d < minDistance) continue;
+      if (d < bestDistance) {
+        bestDistance = d;
+        best = candidate;
+      }
+    }
+  }
+  return best ?? farthest ?? anchor;
 }
 
 /** Solid rectangles enclosing the city so entities cannot leave the map. */
