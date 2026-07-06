@@ -544,7 +544,7 @@ describe('nearestRoadTileCenter', () => {
         expect(bounded).not.toBeNull();
         expect(distance(bounded!, target)).toBeCloseTo(distance(brute!, target), 6);
       }
-    });
+    }, 15000);
 
     it(`always returns a drivable, non-water tile for ${name} city`, () => {
       const p = nearestRoadTileCenter(city, vec2(city.width / 2, city.height / 2));

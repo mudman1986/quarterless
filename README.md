@@ -103,6 +103,7 @@ initial landing-page cost.
 The core Sindicate logic is covered by Vitest unit tests next to the source files.
 The browser behavior is covered by Playwright against the production build.
 Story-mode unit coverage also checks that fixed authored mission markers stay on dry drivable tiles in the live city layout, so river-adjacent objectives do not regress back into water.
+The exhaustive live-city nearest-road comparison in the city tests carries its own higher per-test timeout because coverage instrumentation makes that brute-force cross-check materially slower than the rest of the unit suite.
 
 Recommended local check before pushing:
 
