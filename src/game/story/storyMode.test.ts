@@ -151,8 +151,8 @@ function withFirstMission(story: StoryMode, mission: StoryMissionPlan): StoryMod
 describe('validateStoryMode', () => {
   it('accepts the first implemented story slice', () => {
     expect(validateStoryMode(STORY_MODE_PROTOTYPE)).toEqual([]);
-    expect(countStoryChapters(STORY_MODE_PROTOTYPE)).toBe(13);
-    expect(countStoryMissions(STORY_MODE_PROTOTYPE)).toBe(65);
+    expect(countStoryChapters(STORY_MODE_PROTOTYPE)).toBe(24);
+    expect(countStoryMissions(STORY_MODE_PROTOTYPE)).toBe(120);
   });
 
   it('accepts a minimal well-formed fixture', () => {
@@ -426,9 +426,7 @@ describe('authored story capability coverage', () => {
     'loseActor', 'escortRadius', 'wantedPressure', 'actorVehicleCondition',
   ] as const;
 
-  // `wanted` is a core mission primitive covered by the sandbox campaign and
-  // mission.test.ts, but no authored story mission drives to a star rating.
-  const NON_STORY_OBJECTIVE_KINDS = new Set<string>(['wanted']);
+  const NON_STORY_OBJECTIVE_KINDS = new Set<string>();
   // `loseActor` is implemented and covered in runtimeActors.test.ts, but every
   // authored escort uses the `escortRadius` variant instead.
   const NON_STORY_FAIL_RULE_KINDS = new Set<string>(['loseActor']);
@@ -483,6 +481,74 @@ describe('authored story capability coverage', () => {
     for (const kind of NON_STORY_FAIL_RULE_KINDS) {
       expect(usedFailRuleKinds.has(kind)).toBe(false);
     }
+  });
+});
+
+describe('authored eliminate objectives spawn scripted mission targets', () => {
+  // An `eliminate` + `targetsOnly` objective only makes sense if scripted mission
+  // targets actually appear at the objective location: otherwise nothing shows on
+  // the minimap and the target squad may never spawn. Every such objective must be
+  // served by a `pedestrianSquad` with `missionTargets: true` in the stage that is
+  // active while that objective is live, holding at least as many members as the
+  // objective asks the player to take down. This guards the whole authored story so
+  // no future mission can regress into a targetless eliminate step.
+  type Stage = {
+    actors: readonly { kind: string; missionTargets?: boolean; count?: number }[];
+    nextWhen?: { kind: string; objectiveIndex?: number };
+  };
+
+  const scriptStages = (script: StoryRuntimeScript): Stage[] => {
+    if (script.stages && script.stages.length > 0) return script.stages as unknown as Stage[];
+    return [{ actors: script.actors ?? [] }];
+  };
+
+  // Which stage is live while authored objective `objectiveIndex` is the goal.
+  // Stages advance one at a time when their `storyObjective` transition is met
+  // (`storyObjectiveIndex >= objectiveIndex`), mirroring the runtime.
+  const activeStageIndex = (stages: Stage[], objectiveIndex: number): number => {
+    let index = 0;
+    while (index < stages.length - 1) {
+      const transition = stages[index].nextWhen;
+      if (transition?.kind === 'storyObjective' && objectiveIndex >= (transition.objectiveIndex ?? 0)) {
+        index += 1;
+      } else {
+        break;
+      }
+    }
+    return index;
+  };
+
+  it('places a sufficient missionTargets squad in the active stage of every eliminate objective', () => {
+    const failures: string[] = [];
+
+    for (const { label, plan } of storyPlansForMarkerValidation()) {
+      const objectives = plan.prototypeRuntime?.objectives ?? [];
+      const script = plan.prototypeScript;
+      objectives.forEach((objective, objectiveIndex) => {
+        if (objective.kind !== 'eliminate' || !objective.targetsOnly) return;
+        if (!script) {
+          failures.push(`${label} eliminate[${objectiveIndex}] has no prototypeScript`);
+          return;
+        }
+        const stages = scriptStages(script);
+        const stage = stages[activeStageIndex(stages, objectiveIndex)];
+        const squads = stage.actors.filter(
+          (actor) => actor.kind === 'pedestrianSquad' && actor.missionTargets === true,
+        );
+        if (squads.length === 0) {
+          failures.push(`${label} eliminate[${objectiveIndex}] has no missionTargets squad in its active stage`);
+          return;
+        }
+        const largest = Math.max(...squads.map((squad) => squad.count ?? 0));
+        if (largest < objective.count) {
+          failures.push(
+            `${label} eliminate[${objectiveIndex}] squad size ${largest} < required ${objective.count}`,
+          );
+        }
+      });
+    }
+
+    expect(failures).toEqual([]);
   });
 });
 

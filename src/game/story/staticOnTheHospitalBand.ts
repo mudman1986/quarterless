@@ -1,5 +1,6 @@
 import {
   createWantedPressureMissionScript,
+  missionTargetSquadActor,
   vehicleRouteActor,
 } from './storyMode';
 import type { StoryChapter } from './storyMode';
@@ -342,6 +343,7 @@ export const STATIC_ON_THE_HOSPITAL_BAND: StoryChapter = {
             uniform: 'medic',
             escortRadius: 180,
           },
+          missionTargetSquadActor('ward6-enforcers', { x: 3776, y: 1280 }, 5, 24),
         ],
         failRules: [
           {

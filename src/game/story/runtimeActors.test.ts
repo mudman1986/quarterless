@@ -6,9 +6,54 @@ import {
   applyStoryFailRules,
   isStageTransitionMet,
   normalizeRouteCompletion,
+  placeStorySquadMember,
   updateTailCaptureProgress,
   type StoryProgressState,
 } from './runtimeActors';
+
+describe('placeStorySquadMember', () => {
+  const despawn = vec2(-100000, -100000);
+
+  it('snaps a parked mission-target squad member onto the map when its objective activates', () => {
+    // While inactive, squad members park off-map fanned out along X, so a
+    // member's parked X never matches the despawn anchor's X — only its Y stays
+    // pinned to the off-map row. Reactivation must still recognise it as parked
+    // and move it to the objective anchor, otherwise the eliminate targets never
+    // appear on the map or the minimap (the towline-oath regression).
+    const parkedWithSpreadOffset = vec2(despawn.x + 42, despawn.y);
+    const placement = placeStorySquadMember(
+      parkedWithSpreadOffset,
+      vec2(1216, 2304),
+      4,
+      6,
+      28,
+      despawn,
+    );
+    expect(placement.reset).toBe(true);
+    expect(placement.pos.y).toBe(2304);
+    // Anchored near the objective center (with its fan-out offset), i.e. on the map.
+    expect(Math.abs(placement.pos.x - 1216)).toBeLessThanOrEqual(6 * 28);
+  });
+
+  it('leaves an already-active squad member exactly where it stands', () => {
+    const active = vec2(1250, 2310);
+    const placement = placeStorySquadMember(active, vec2(1216, 2304), 0, 6, 28, despawn);
+    expect(placement.reset).toBe(false);
+    expect(placement.pos).toEqual(active);
+  });
+
+  it('always re-anchors when a reset is forced (parking an actor off-map)', () => {
+    const placement = placeStorySquadMember(vec2(1250, 2310), despawn, 2, 6, 28, despawn, true);
+    expect(placement.reset).toBe(true);
+    expect(placement.pos.y).toBe(despawn.y);
+  });
+
+  it('treats a never-spawned member as parked so it anchors on first activation', () => {
+    const placement = placeStorySquadMember(null, vec2(300, 400), 0, 1, 20, despawn);
+    expect(placement.reset).toBe(true);
+    expect(placement.pos).toEqual(vec2(300, 400));
+  });
+});
 
 describe('advanceVehicleRouteActor', () => {
   it('moves a route vehicle from the first waypoint toward the second waypoint', () => {

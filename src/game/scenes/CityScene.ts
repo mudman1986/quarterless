@@ -81,6 +81,7 @@ import {
   applyStoryFailRules,
   isStageTransitionMet,
   normalizeRouteCompletion,
+  placeStorySquadMember,
   updateTailCaptureProgress,
 } from '../story/runtimeActors';
 
@@ -887,18 +888,23 @@ export class CityScene extends Phaser.Scene {
     const existing = this.storyPedIndices(actorId);
     if (existing && existing.length > 0) {
       existing.forEach((index, i) => {
-        const offsetX = count === 1 ? 0 : (i - (count - 1) / 2) * spread;
         const ped = this.world.pedestrians[index];
         if (!ped) return;
-        const shouldResetPosition =
-          opts.resetPosition ||
-          (ped.pos.x === STORY_ACTOR_DESPAWN_POS.x && ped.pos.y === STORY_ACTOR_DESPAWN_POS.y);
+        const placement = placeStorySquadMember(
+          ped.pos,
+          pos,
+          i,
+          count,
+          spread,
+          STORY_ACTOR_DESPAWN_POS,
+          opts.resetPosition ?? false,
+        );
         this.world.pedestrians[index] = {
           ...ped,
-          pos: shouldResetPosition ? vec2(pos.x + offsetX, pos.y) : ped.pos,
-          heading: shouldResetPosition ? 0 : ped.heading,
-          state: shouldResetPosition ? 'wait' : ped.state,
-          target: shouldResetPosition ? vec2(pos.x + offsetX, pos.y) : ped.target,
+          pos: placement.pos,
+          heading: placement.reset ? 0 : ped.heading,
+          state: placement.reset ? 'wait' : ped.state,
+          target: placement.reset ? placement.pos : ped.target,
           missionTarget: opts.missionTarget ?? false,
           uniform: opts.uniform,
           storyActorId: actorId,

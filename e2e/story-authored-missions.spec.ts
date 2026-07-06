@@ -247,6 +247,7 @@ test.afterEach(async ({ page }) => {
 });
 
 test('every authored runtime mission boots into the expected mission shell', async ({ page }) => {
+  test.setTimeout(420_000);
   await launchSindicate(page);
 
   for (const entry of authoredMissions) {
@@ -564,6 +565,18 @@ test('eliminate-story squads stay out of the marker until the eliminate objectiv
     missionTargetCount: 4,
   });
 
+  // Regression guard (towline-oath bug): a squad parked off-map during the
+  // preceding objective fans out along X, so an exact despawn-position check
+  // never recognises it as parked and leaves every member stranded at the
+  // off-map sentinel. When the eliminate objective activates, members must snap
+  // onto the map near their objective center — nowhere near the off-map row.
+  const activated = await storyPedActorPositions(page, 'picket-blockers');
+  expect(activated).toHaveLength(4);
+  for (const ped of activated) {
+    expect(ped.x).toBeGreaterThan(-50000);
+    expect(ped.y).toBeGreaterThan(-50000);
+  }
+
   const beforeMove = await storyPedActorPositions(page, 'picket-blockers');
   await page.waitForTimeout(600);
   const afterMove = await storyPedActorPositions(page, 'picket-blockers');
@@ -675,7 +688,7 @@ test('pedestrian-route story actors stay out of the marker until the mission ent
   expect(await storyPedActorState(page, 'ward6-nurse')).toMatchObject({
     missionId: 'ward-6-exit',
     actorCount: 1,
-    storyTaggedCount: 1,
+    storyTaggedCount: 6,
     missionTargetCount: 0,
   });
 });

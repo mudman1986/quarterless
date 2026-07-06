@@ -2403,48 +2403,18 @@ test('story mode shows a prototype-complete panel when the current story slice f
     }
 
     scene.storyProgress.current = {
-      actId: 'expose-the-machine',
-      chapterId: 'civic-shield',
-      missionId: 'black-badge-mile',
+      actId: 'break-the-four-pillars',
+      chapterId: 'dawn-through-concrete',
+      missionId: 'first-light-exit',
       objectiveIndex: 0,
     };
     scene.storyProgress.completedMissionIds = [
-      'union-test-run',
-      'picket-line-breaker',
-      'harbor-echo',
-      'crane-jam',
-      'the-long-manifest',
-      'signal-sprint',
-      'drop-stack',
-      'blind-corner',
-      'rival-tape',
-      'lamps-out',
-      'tenant-warning',
-      'window-tax',
-      'lobby-flood',
-      'fire-sale-run',
-      'vacancy-notice',
-      'soup-line-watch',
-      'siren-swap',
-      'half-block-safehouse',
-      'medicine-debt',
-      'quiet-chapel',
-      'antenna-climb',
-      'open-mic-trap',
-      'jingle-bomb',
-      'studio-sweep',
-      'citywide-readout',
-      'missed-payment',
-      'three-stores-down',
-      'ledger-heat',
-      'storm-drain-exit',
-      'rain-of-receipts',
-      'training-day',
-      'panic-demo',
-      'armor-column',
-      'contract-burn',
+      'breach-window',
+      'live-wire',
+      'failsafe-fleet',
+      'heartbeat-zero',
     ];
-    scene.prevMissionId = 'black-badge-mile';
+    scene.prevMissionId = 'first-light-exit';
     scene.prevMissionComplete = false;
     scene.world.campaign.currentIndex = scene.world.campaign.missions.length;
     scene.handleEvents();

@@ -79,6 +79,39 @@ export function normalizeRouteCompletion(routeIndex: number, routeLength: number
   return routeIndex >= routeLength - 1 ? Number.MAX_SAFE_INTEGER : routeIndex;
 }
 
+export interface StorySquadMemberPlacement {
+  reset: boolean;
+  pos: Vec2;
+}
+
+/**
+ * Decide where a scripted mission-target squad member sits this frame. Members
+ * fan out along X around `center`, and park off-map at a fixed despawn row while
+ * their objective is inactive. Because parking keeps the per-member fan-out
+ * offset, a parked member's X never equals the despawn anchor's X — only its Y
+ * stays pinned to the off-map row. Detecting "parked" by that (never-offset) Y,
+ * rather than by an exact position match, is what lets a member snap back onto
+ * the map when its eliminate objective goes live. The previous exact-match check
+ * stranded every offset member off-screen, so eliminate targets never appeared
+ * (the towline-oath bug). A `null` current position (never spawned) also counts
+ * as parked so the first activation anchors it correctly.
+ */
+export function placeStorySquadMember(
+  current: Vec2 | null,
+  center: Vec2,
+  memberIndex: number,
+  count: number,
+  spread: number,
+  despawn: Vec2,
+  forceReset = false,
+): StorySquadMemberPlacement {
+  const offsetX = count <= 1 ? 0 : (memberIndex - (count - 1) / 2) * spread;
+  const parked = current === null || current.y === despawn.y;
+  const reset = forceReset || parked;
+  return { reset, pos: reset ? vec2(center.x + offsetX, center.y) : current };
+}
+
+
 function moveAlongRoute(
   pos: Vec2,
   route: readonly Vec2[],

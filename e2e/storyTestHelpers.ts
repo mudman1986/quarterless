@@ -93,6 +93,8 @@ export async function completeActiveStoryMission(page: Page): Promise<StoryCompl
       };
       storyPanel?: { text: string; visible: boolean };
       storyProgress?: StoryProgressSnapshotLike | null;
+      prevMissionId?: string | null;
+      prevMissionComplete?: boolean;
       pendingStoryRestart?: StoryProgressSnapshotLike | null;
       pendingStoryRestartResume?: boolean;
       syncStoryMissionSummaryBaseline?: () => void;
@@ -108,6 +110,10 @@ export async function completeActiveStoryMission(page: Page): Promise<StoryCompl
     const missionId = scene.storyProgress.current?.missionId ?? null;
     if (!missions) {
       throw new Error('Missing story campaign missions');
+    }
+    if (scene.prevMissionId == null && missionId) {
+      scene.prevMissionId = missionId;
+      scene.prevMissionComplete = false;
     }
     const activeMission = missions[campaign.currentIndex];
     if (!activeMission) {
