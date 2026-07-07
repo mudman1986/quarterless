@@ -30,6 +30,49 @@ export interface RuntimeCampaignTemplate {
   missions: readonly MissionSpec[];
 }
 
+/**
+ * Citywide reactivity (Stage 13). A branch outcome no longer only swaps mission text/runtime;
+ * it can also push signed consequences onto three accumulating axes so later missions and the
+ * launcher can read how the city has shifted overall, not just which single branch key was set.
+ * - `district`: how a physical district now behaves toward Rook.
+ * - `faction`: how a power bloc (union, informants, pirate radio, police) stands.
+ * - `service`: how an emergency/service network (ambulance, tow, police response) is strained.
+ */
+export type StoryCityAxis = 'district' | 'faction' | 'service';
+
+export interface StoryCityEffect {
+  axis: StoryCityAxis;
+  /** Stable id within its axis, e.g. `informants`, `nightlife`, `ambulance`. */
+  id: string;
+  /** Human display label, e.g. `Informant Network`. */
+  label: string;
+  /** Signed intensity: positive = allied/relieved, negative = hostile/strained. */
+  delta: number;
+  /** Optional short human phrase surfaced in the archive and mission summaries. */
+  note?: string;
+}
+
+export interface StoryCityStanding {
+  axis: StoryCityAxis;
+  id: string;
+  label: string;
+  total: number;
+  notes: string[];
+}
+
+export interface StoryCityState {
+  standings: StoryCityStanding[];
+}
+
+/** A threshold test a mission variant can run against the accumulated city state instead of, or
+ * in addition to, a single branch key. */
+export interface StoryCityStateCondition {
+  axis: StoryCityAxis;
+  id: string;
+  atLeast?: number;
+  atMost?: number;
+}
+
 export interface StoryMissionVariantOverride {
   title?: string;
   hook?: string;
@@ -43,13 +86,19 @@ export interface StoryMissionVariantOverride {
 }
 
 export interface StoryMissionVariant extends StoryMissionVariantOverride {
-  branchId: string;
-  outcomeId: string;
+  branchId?: string;
+  outcomeId?: string;
+  /** City-state thresholds this variant requires. When present, the variant only resolves if the
+   * accumulated city state satisfies every condition. A variant must declare a branch key, at
+   * least one city-state condition, or both. */
+  cityState?: readonly StoryCityStateCondition[];
 }
 
 export interface StoryMissionBranchOutcome {
   branchId: string;
   outcomeId: string;
+  /** Citywide consequences this outcome applies when recorded (Stage 13). */
+  effects?: readonly StoryCityEffect[];
 }
 
 export interface StoryMissionPlan {
@@ -499,25 +548,133 @@ export function storyChapterPendingMissionGroup(
   return null;
 }
 
+const STORY_CITY_AXIS_ORDER: Record<StoryCityAxis, number> = {
+  district: 0,
+  faction: 1,
+  service: 2,
+};
+
+function storyCityEffectsByOutcome(story: StoryMode): Map<string, readonly StoryCityEffect[]> {
+  const effects = new Map<string, readonly StoryCityEffect[]>();
+  for (const act of story.acts) {
+    for (const chapter of act.chapters) {
+      for (const mission of chapter.missions) {
+        const outcome = mission.branchOutcome;
+        if (outcome?.effects && outcome.effects.length > 0) {
+          effects.set(`${outcome.branchId}::${outcome.outcomeId}`, outcome.effects);
+        }
+      }
+    }
+  }
+  return effects;
+}
+
+/** Accumulate the citywide consequences of every recorded branch outcome into a single, ordered
+ * city-state summary. Later missions and the launcher read this instead of probing one branch key. */
+export function summarizeStoryCityState(
+  story: StoryMode,
+  branchOutcomes: Record<string, string> = {},
+): StoryCityState {
+  const effectsByOutcome = storyCityEffectsByOutcome(story);
+  const standings = new Map<string, StoryCityStanding>();
+  for (const [branchId, outcomeId] of Object.entries(branchOutcomes)) {
+    const effects = effectsByOutcome.get(`${branchId}::${outcomeId}`);
+    if (!effects) continue;
+    for (const effect of effects) {
+      const key = `${effect.axis}::${effect.id}`;
+      const existing = standings.get(key);
+      if (existing) {
+        existing.total += effect.delta;
+        if (effect.note) existing.notes.push(effect.note);
+      } else {
+        standings.set(key, {
+          axis: effect.axis,
+          id: effect.id,
+          label: effect.label,
+          total: effect.delta,
+          notes: effect.note ? [effect.note] : [],
+        });
+      }
+    }
+  }
+  return {
+    standings: [...standings.values()].sort(
+      (a, b) =>
+        STORY_CITY_AXIS_ORDER[a.axis] - STORY_CITY_AXIS_ORDER[b.axis] ||
+        a.label.localeCompare(b.label),
+    ),
+  };
+}
+
+export function storyCityStandingTotal(
+  state: StoryCityState,
+  axis: StoryCityAxis,
+  id: string,
+): number {
+  return (
+    state.standings.find((standing) => standing.axis === axis && standing.id === id)?.total ?? 0
+  );
+}
+
+export function storyCityStateConditionMet(
+  state: StoryCityState,
+  condition: StoryCityStateCondition,
+): boolean {
+  const total = storyCityStandingTotal(state, condition.axis, condition.id);
+  if (condition.atLeast !== undefined && total < condition.atLeast) return false;
+  if (condition.atMost !== undefined && total > condition.atMost) return false;
+  return true;
+}
+
+function storyVariantMatches(
+  variant: StoryMissionVariant,
+  branchOutcomes: Record<string, string>,
+  cityState: StoryCityState | undefined,
+): boolean {
+  if (variant.branchId !== undefined && variant.outcomeId !== undefined) {
+    if (branchOutcomes[variant.branchId] !== variant.outcomeId) return false;
+  }
+  const conditions = variant.cityState ?? [];
+  if (conditions.length > 0) {
+    if (!cityState) return false;
+    for (const condition of conditions) {
+      if (!storyCityStateConditionMet(cityState, condition)) return false;
+    }
+  }
+  return true;
+}
+
+/** One-line label for a standing, e.g. `Informant Network +2`. */
+export function formatStoryCityStanding(standing: StoryCityStanding): string {
+  const sign = standing.total > 0 ? `+${standing.total}` : `${standing.total}`;
+  return `${standing.label} ${sign}`;
+}
+
+/** Compact accumulated-standing line for the launcher and mission summaries. */
+export function formatStoryCityState(state: StoryCityState): string {
+  if (state.standings.length === 0) return 'City steady — no lasting shifts yet';
+  return state.standings.map(formatStoryCityStanding).join(' · ');
+}
+
 export function resolveStoryMissionPlan(
   plan: StoryMissionPlan,
   branchOutcomes: Record<string, string> = {},
+  cityState?: StoryCityState,
 ): StoryMissionPlan {
-  const variant = plan.variants?.find(
-    ({ branchId, outcomeId }) => branchOutcomes[branchId] === outcomeId,
+  const variant = plan.variants?.find((candidate) =>
+    storyVariantMatches(candidate, branchOutcomes, cityState),
   );
   if (!variant) return plan;
-  const overrides: StoryMissionVariantOverride = {
-    title: variant.title,
-    hook: variant.hook,
-    primaryGoal: variant.primaryGoal,
-    secondaryPressure: variant.secondaryPressure,
-    failureState: variant.failureState,
-    payoff: variant.payoff,
-    requiredSystems: variant.requiredSystems,
-    prototypeRuntime: variant.prototypeRuntime,
-    prototypeScript: variant.prototypeScript,
-  };
+  const overrides: StoryMissionVariantOverride = {};
+  if (variant.title !== undefined) overrides.title = variant.title;
+  if (variant.hook !== undefined) overrides.hook = variant.hook;
+  if (variant.primaryGoal !== undefined) overrides.primaryGoal = variant.primaryGoal;
+  if (variant.secondaryPressure !== undefined) overrides.secondaryPressure = variant.secondaryPressure;
+  if (variant.failureState !== undefined) overrides.failureState = variant.failureState;
+  if (variant.payoff !== undefined) overrides.payoff = variant.payoff;
+  if (variant.requiredSystems !== undefined) overrides.requiredSystems = variant.requiredSystems;
+  if (variant.prototypeRuntime !== undefined) overrides.prototypeRuntime = variant.prototypeRuntime;
+  if (variant.prototypeScript !== undefined) overrides.prototypeScript = variant.prototypeScript;
   return {
     ...plan,
     ...overrides,
@@ -633,12 +790,13 @@ export function compileStoryChapterRuntimeCampaign(
   startMissionId = chapter.missions[0]?.id,
   startObjectiveIndex?: number,
   branchOutcomes: Record<string, string> = {},
+  cityState?: StoryCityState,
 ): Mission[] | null {
   const startIndex = chapter.missions.findIndex((mission) => mission.id === startMissionId);
   if (startIndex === -1) return null;
   const plans = chapter.missions
     .slice(startIndex)
-    .map((mission) => resolveStoryMissionPlan(mission, branchOutcomes));
+    .map((mission) => resolveStoryMissionPlan(mission, branchOutcomes, cityState));
   if (plans.some((mission) => !mission.prototypeRuntime)) return null;
 
   return plans.map((plan, index) => {
@@ -831,7 +989,9 @@ function collectStoryVariantBranchReferences(story: StoryMode): Set<string> {
     for (const chapter of act.chapters) {
       for (const mission of chapter.missions) {
         for (const variant of mission.variants ?? []) {
-          refs.add(`${variant.branchId}::${variant.outcomeId}`);
+          if (variant.branchId !== undefined && variant.outcomeId !== undefined) {
+            refs.add(`${variant.branchId}::${variant.outcomeId}`);
+          }
         }
       }
     }
@@ -839,11 +999,28 @@ function collectStoryVariantBranchReferences(story: StoryMode): Set<string> {
   return refs;
 }
 
+/** Every `axis::id` that some branch outcome actually pushes an effect onto — the set of city-state
+ * standings a variant condition is allowed to reference. */
+function collectStoryCityAxes(story: StoryMode): Set<string> {
+  const axes = new Set<string>();
+  for (const act of story.acts) {
+    for (const chapter of act.chapters) {
+      for (const mission of chapter.missions) {
+        for (const effect of mission.branchOutcome?.effects ?? []) {
+          axes.add(`${effect.axis}::${effect.id}`);
+        }
+      }
+    }
+  }
+  return axes;
+}
+
 export function validateStoryMode(story: StoryMode): StoryValidationIssue[] {
   const issues: StoryValidationIssue[] = [];
   const actIds = new Set<string>();
   const chapterIds = new Set<string>();
   const knownBranchOutcomes = collectStoryBranchOutcomes(story);
+  const knownCityAxes = collectStoryCityAxes(story);
 
   if (story.schemaVersion !== STORY_MODE_SCHEMA_VERSION) {
     issues.push({
@@ -924,11 +1101,35 @@ export function validateStoryMode(story: StoryMode): StoryValidationIssue[] {
         }
         for (const [variantIndex, variant] of (mission.variants ?? []).entries()) {
           const variantPath = `${missionPath}.variants[${variantIndex}]`;
-          if (!knownBranchOutcomes.has(`${variant.branchId}::${variant.outcomeId}`)) {
+          const hasBranch = variant.branchId !== undefined && variant.outcomeId !== undefined;
+          const conditions = variant.cityState ?? [];
+          if (!hasBranch && conditions.length === 0) {
+            issues.push({
+              path: variantPath,
+              message:
+                'Variant must declare a branch outcome, at least one city-state condition, or both',
+            });
+          }
+          if (hasBranch && !knownBranchOutcomes.has(`${variant.branchId}::${variant.outcomeId}`)) {
             issues.push({
               path: variantPath,
               message: `Variant references branch outcome "${variant.branchId}=${variant.outcomeId}" that no mission ever sets`,
             });
+          }
+          for (const [conditionIndex, condition] of conditions.entries()) {
+            const conditionPath = `${variantPath}.cityState[${conditionIndex}]`;
+            if (condition.atLeast === undefined && condition.atMost === undefined) {
+              issues.push({
+                path: conditionPath,
+                message: 'City-state condition must set atLeast, atMost, or both',
+              });
+            }
+            if (!knownCityAxes.has(`${condition.axis}::${condition.id}`)) {
+              issues.push({
+                path: conditionPath,
+                message: `City-state condition references "${condition.axis}=${condition.id}" that no branch outcome ever affects`,
+              });
+            }
           }
           if (variant.prototypeScript) {
             validateStoryRuntimeScript(
@@ -995,6 +1196,174 @@ export function validateStoryMode(story: StoryMode): StoryValidationIssue[] {
       issues.push({
         path: 'branchOutcomes',
         message: `Branch outcome "${outcome.replace('::', '=')}" is recorded by a mission but no variant ever reads it`,
+      });
+    }
+  }
+
+  return issues;
+}
+
+/**
+ * Numeric balance envelope every authored mission must stay inside (Stage 14 ship gate). These are
+ * deliberately wide "typo and gross-imbalance" guards, not a rigid difficulty curve: they catch a
+ * mission that pays 50 credits, demands a 9-star response, or uses an impossible 5-unit escort
+ * radius, while still leaving authoring room inside each act.
+ */
+export const STORY_BALANCE_BOUNDS = {
+  reward: { min: 1000, max: 15000 },
+  routeTimeLimitSeconds: { min: 30, max: 180 },
+  holdSeconds: { min: 1, max: 90 },
+  wantedStars: { min: 1, max: 6 },
+  objectiveRadius: { min: 10, max: 600 },
+  actorRadius: { min: 40, max: 800 },
+  failRuleSeconds: { min: 0.25, max: 300 },
+  actorMinHealthPercent: { min: 1, max: 100 },
+} as const;
+
+type StoryBalanceBound = { min: number; max: number };
+
+function checkStoryBalanceRange(
+  value: number,
+  bound: StoryBalanceBound,
+  label: string,
+  path: string,
+  issues: StoryValidationIssue[],
+): void {
+  if (!Number.isFinite(value) || value < bound.min || value > bound.max) {
+    issues.push({
+      path,
+      message: `${label} ${value} is outside the balance range [${bound.min}, ${bound.max}]`,
+    });
+  }
+}
+
+function validateStoryObjectiveBalance(
+  objectives: readonly Objective[],
+  path: string,
+  issues: StoryValidationIssue[],
+): void {
+  for (const [index, objective] of objectives.entries()) {
+    const objPath = `${path}.objectives[${index}]`;
+    if (objective.kind === 'reach' || objective.kind === 'route' || objective.kind === 'sabotage' || objective.kind === 'defend') {
+      checkStoryBalanceRange(objective.radius, STORY_BALANCE_BOUNDS.objectiveRadius, 'Objective radius', objPath, issues);
+    }
+    if ((objective.kind === 'route' || objective.kind === 'sabotage') && objective.timeLimitSeconds !== undefined) {
+      checkStoryBalanceRange(objective.timeLimitSeconds, STORY_BALANCE_BOUNDS.routeTimeLimitSeconds, 'Route time limit', objPath, issues);
+    }
+    if (objective.kind === 'tail' || objective.kind === 'capture' || objective.kind === 'survive' || objective.kind === 'defend') {
+      checkStoryBalanceRange(objective.seconds, STORY_BALANCE_BOUNDS.holdSeconds, 'Hold seconds', objPath, issues);
+    }
+    if (objective.kind === 'wanted') {
+      checkStoryBalanceRange(objective.stars, STORY_BALANCE_BOUNDS.wantedStars, 'Wanted stars', objPath, issues);
+    }
+  }
+}
+
+function validateStoryScriptBalance(
+  script: StoryRuntimeScript,
+  path: string,
+  issues: StoryValidationIssue[],
+): void {
+  const stages =
+    script.stages && script.stages.length > 0
+      ? script.stages.map((stage, index) => ({
+          label: stage.id || `stages[${index}]`,
+          actors: stage.actors,
+          failRules: stage.failRules ?? script.failRules ?? [],
+        }))
+      : [{ label: 'stage', actors: script.actors, failRules: script.failRules ?? [] }];
+  for (const stage of stages) {
+    const stagePath = `${path} (${stage.label})`;
+    for (const actor of stage.actors) {
+      if (actor.kind === 'vehicleRoute') {
+        checkStoryBalanceRange(actor.followRadius, STORY_BALANCE_BOUNDS.actorRadius, 'Follow radius', stagePath, issues);
+        if (actor.captureRadius !== undefined) {
+          checkStoryBalanceRange(actor.captureRadius, STORY_BALANCE_BOUNDS.actorRadius, 'Capture radius', stagePath, issues);
+        }
+      } else if (actor.kind === 'pedestrianRoute' && actor.escortRadius !== undefined) {
+        checkStoryBalanceRange(actor.escortRadius, STORY_BALANCE_BOUNDS.actorRadius, 'Escort radius', stagePath, issues);
+      }
+    }
+    for (const rule of stage.failRules) {
+      checkStoryBalanceRange(rule.maxSeconds, STORY_BALANCE_BOUNDS.failRuleSeconds, 'Fail-rule maxSeconds', stagePath, issues);
+      if (rule.kind === 'escortRadius') {
+        checkStoryBalanceRange(rule.radius, STORY_BALANCE_BOUNDS.actorRadius, 'Escort-radius fail rule radius', stagePath, issues);
+      }
+      if (rule.kind === 'wantedPressure') {
+        checkStoryBalanceRange(rule.minStars, STORY_BALANCE_BOUNDS.wantedStars, 'Wanted-pressure minStars', stagePath, issues);
+      }
+      if (rule.kind === 'actorVehicleCondition') {
+        checkStoryBalanceRange(rule.minHealth, STORY_BALANCE_BOUNDS.actorMinHealthPercent, 'Actor vehicle minHealth', stagePath, issues);
+      }
+    }
+  }
+}
+
+/**
+ * Stage 14 ship gate: assert the authored economy, mission timings, wanted pressure, and escort
+ * tolerances stay inside {@link STORY_BALANCE_BOUNDS}, and that the reward economy never regresses
+ * from one act to the next. This keeps the balance that was hand-tuned once from silently drifting
+ * as later edits land. Kept separate from {@link validateStoryMode} (structural integrity) so each
+ * gate can be reasoned about — and fixed — independently.
+ */
+export function validateStoryBalance(story: StoryMode): StoryValidationIssue[] {
+  const issues: StoryValidationIssue[] = [];
+  const actAverageRewards: { actId: string; average: number }[] = [];
+
+  for (const [actIndex, act] of story.acts.entries()) {
+    let rewardSum = 0;
+    let rewardCount = 0;
+    for (const [chapterIndex, chapter] of act.chapters.entries()) {
+      for (const [missionIndex, mission] of chapter.missions.entries()) {
+        const missionPath = `acts[${actIndex}].chapters[${chapterIndex}].missions[${missionIndex}]`;
+
+        const baseReward = mission.prototypeRuntime?.reward;
+        if (mission.prototypeRuntime && baseReward === undefined) {
+          issues.push({
+            path: `${missionPath}.prototypeRuntime.reward`,
+            message: 'Shippable mission must define a reward',
+          });
+        } else if (baseReward !== undefined) {
+          rewardSum += baseReward;
+          rewardCount += 1;
+        }
+
+        const runtimes: { runtime: MissionSpec; script?: StoryRuntimeScript; label: string }[] = [];
+        if (mission.prototypeRuntime) {
+          runtimes.push({ runtime: mission.prototypeRuntime, script: mission.prototypeScript, label: missionPath });
+        }
+        for (const [variantIndex, variant] of (mission.variants ?? []).entries()) {
+          if (variant.prototypeRuntime) {
+            runtimes.push({
+              runtime: variant.prototypeRuntime,
+              script: variant.prototypeScript ?? mission.prototypeScript,
+              label: `${missionPath}.variants[${variantIndex}]`,
+            });
+          }
+        }
+        for (const entry of runtimes) {
+          if (entry.runtime.reward !== undefined) {
+            checkStoryBalanceRange(entry.runtime.reward, STORY_BALANCE_BOUNDS.reward, 'Reward', `${entry.label}.reward`, issues);
+          }
+          validateStoryObjectiveBalance(entry.runtime.objectives, entry.label, issues);
+          if (entry.script) {
+            validateStoryScriptBalance(entry.script, `${entry.label}.prototypeScript`, issues);
+          }
+        }
+      }
+    }
+    if (rewardCount > 0) {
+      actAverageRewards.push({ actId: act.id, average: rewardSum / rewardCount });
+    }
+  }
+
+  for (let i = 1; i < actAverageRewards.length; i += 1) {
+    const previous = actAverageRewards[i - 1]!;
+    const current = actAverageRewards[i]!;
+    if (current.average < previous.average) {
+      issues.push({
+        path: `acts[${i}]`,
+        message: `Act "${current.actId}" average reward ${Math.round(current.average)} regresses below the previous act "${previous.actId}" average ${Math.round(previous.average)}; the reward economy should not drop across acts`,
       });
     }
   }

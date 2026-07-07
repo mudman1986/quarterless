@@ -291,6 +291,24 @@ export const THE_COMMISSIONER: StoryChapter = {
         blackoutIntersections: true,
         serviceLaneBlocks: ['police', 'ambulance', 'tow'],
       }),
+      variants: [
+        {
+          cityState: [{ axis: 'faction', id: 'radio', atLeast: 1 }],
+          hook: 'The nightlife host who still trusts Rook throws the open channel wide the moment the confession starts.',
+          primaryGoal:
+            'Reach the open channel the pirate-radio net already primed, hold a 4-star police response, and keep the confession live.',
+          payoff:
+            'The pirate-radio net carries the confession city-wide before the badge can jam it, and selective law collapses in public.',
+        },
+        {
+          cityState: [{ axis: 'faction', id: 'informants', atLeast: 1 }],
+          hook: 'Rook\'s informant network feeds the confession straight onto the command band the loyal cops still monitor.',
+          primaryGoal:
+            'Reach the open channel the informant network exposed, hold a 4-star police response, and keep the confession live.',
+          payoff:
+            'The informant-fed leak lands on the same radio the loyalists trusted, and selective law falls with the badge still listening.',
+        },
+      ],
     },
   ],
 };

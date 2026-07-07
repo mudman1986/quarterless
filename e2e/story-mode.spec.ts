@@ -290,6 +290,7 @@ test('story menu surfaces active consequences and dense scorecards for later ref
           vehicleConditionText: '92% → 80%',
           serviceLaneText: 'Paused: tow',
           factionEffectText: 'Union route secured',
+          cityStateText: 'Informant Network +2 · Police Response -1',
           systemsText: 'Tail · Scripted Encounter · District State',
           recordedAt: Date.now(),
         },
@@ -300,10 +301,12 @@ test('story menu surfaces active consequences and dense scorecards for later ref
 
   await expect(page.getByRole('heading', { name: 'Active Consequences' })).toBeVisible();
   await expect(page.getByText('double-booking')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'City Standing' })).toBeVisible();
+  await expect(page.getByLabel('City standing').getByText('Informant Network', { exact: false })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Recent Scorecards' })).toBeVisible();
   await expect(page.getByText('Harbor Echo')).toBeVisible();
   await expect(page.getByText('Reward')).toBeVisible();
-  await expect(page.getByText('Service')).toBeVisible();
+  await expect(page.getByLabel('Recent mission scorecards').getByText('Service', { exact: true })).toBeVisible();
   await expect(page.getByLabel('Recent mission scorecards').getByText('Tail')).toBeVisible();
 });
 

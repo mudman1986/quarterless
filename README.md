@@ -50,7 +50,7 @@ The repo has moved from a single-game page to a small retro arcade shell.
 - Animated gameplay-style card previews are drawn with canvas in [src/arcade/previews.ts](src/arcade/previews.ts).
 - The extra arcade games live in [src/games](src/games) with one folder per game plus a shared catalog; Penguins of Tangram uses Phaser, while Pixel Sprint and Void Sweep use small vanilla canvas loops.
 - Sindicate remains the main Phaser game and now opens through a dedicated story launcher instead of a sandbox entry point.
-- The authored Sindicate story prototype now spans all 24 planned chapters and 120 missions across four acts, with launcher resume/replay and regression coverage wired against the full run.
+- The authored Sindicate story prototype now spans all 24 planned chapters and 120 missions across four acts, with launcher resume/replay and regression coverage wired against the full run. See [STORY_MODE.md](STORY_MODE.md) for the full status, roadmap, and story reference.
 - Story missions now begin from in-world mission markers, keep location and chase targets visible on the minimap, support grouped free-order mission picks across several chapters, and route pause back into the integrated Sindicate launcher instead of an in-game overlay.
 - The Sindicate launcher now owns resume, checkpoint restart, manual save/load slots, current-objective presentation, and chapter replay.
 - Story mission transitions now use a richer summary card with reward, outcome, duration, collateral, and unlock deltas.

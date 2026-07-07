@@ -60,11 +60,13 @@ import {
 import { clearStoryLaunchRequest, loadStoryLaunchRequest } from '../story/storyLaunchState';
 import {
   compileStoryChapterRuntimeCampaign,
+  formatStoryCityState,
   formatStorySystem,
   resolveStoryMissionPlan,
   STORY_MISSION_GROUP_SELECTION_INDEX,
   storyMissionStartPosition,
   storyObjectiveIndexFromRuntime,
+  summarizeStoryCityState,
 } from '../story/storyMode';
 import type {
   PedestrianRouteActorScript,
@@ -302,6 +304,7 @@ interface StoryMissionSummaryCard {
   vehicleConditionText: string;
   serviceLaneText: string;
   factionEffectText: string;
+  cityStateText: string;
   systemsText: string;
   unlockText: string;
   nextText: string;
@@ -658,6 +661,7 @@ export class CityScene extends Phaser.Scene {
       this.storyProgress.current.missionId,
       this.storyProgress.current.objectiveIndex,
       this.storyProgress.branchOutcomes,
+      summarizeStoryCityState(STORY_MODE_PROTOTYPE, this.storyProgress.branchOutcomes),
     );
   }
 
@@ -3058,6 +3062,7 @@ export class CityScene extends Phaser.Scene {
     const resolvedPreviousMission = resolveStoryMissionPlan(
       previousMission,
       this.storyProgress.branchOutcomes,
+      summarizeStoryCityState(STORY_MODE_PROTOTYPE, this.storyProgress.branchOutcomes),
     );
     const summary = this.buildStoryMissionSummaryCard(resolvedPreviousMission, this.storyProgress);
     if (summary) {
@@ -3076,6 +3081,7 @@ export class CityScene extends Phaser.Scene {
         vehicleConditionText: summary.vehicleConditionText,
         serviceLaneText: summary.serviceLaneText,
         factionEffectText: summary.factionEffectText,
+        cityStateText: summary.cityStateText,
         systemsText: summary.systemsText,
         recordedAt: Date.now(),
       });
@@ -3099,7 +3105,11 @@ export class CityScene extends Phaser.Scene {
       ? chapter.missions.find((entry) => entry.id === previousMissionId)
       : null;
     const resolvedPreviousMission = previousMission
-      ? resolveStoryMissionPlan(previousMission, this.storyProgress.branchOutcomes)
+      ? resolveStoryMissionPlan(
+          previousMission,
+          this.storyProgress.branchOutcomes,
+          summarizeStoryCityState(STORY_MODE_PROTOTYPE, this.storyProgress.branchOutcomes),
+        )
       : null;
     const leads = choices
       .map((mission, index) => `${index + 1}. ${mission.title}\n${mission.primaryGoal}`)
@@ -3282,6 +3292,12 @@ export class CityScene extends Phaser.Scene {
       vehicleConditionText,
       serviceLaneText: this.storyServiceLaneSummary(previousMission),
       factionEffectText: this.storyFactionEffectSummary(baseline, nextProgress),
+      cityStateText: formatStoryCityState(
+        summarizeStoryCityState(
+          STORY_MODE_PROTOTYPE,
+          nextProgress?.branchOutcomes ?? baseline.branchOutcomes,
+        ),
+      ),
       systemsText: this.storySystemsText(previousMission),
       unlockText: unlockLines.length > 0 ? unlockLines.join(' • ') : 'No new unlocks',
       nextText,
@@ -3305,6 +3321,7 @@ export class CityScene extends Phaser.Scene {
       `Vehicle Condition: ${card.vehicleConditionText}`,
       `Service Lanes: ${card.serviceLaneText}`,
       `Faction Effects: ${card.factionEffectText}`,
+      `City Standing: ${card.cityStateText}`,
       `Systems: ${card.systemsText}`,
       `Story Changes: ${card.unlockText}`,
       card.nextText,

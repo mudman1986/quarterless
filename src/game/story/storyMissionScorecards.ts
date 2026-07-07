@@ -15,6 +15,7 @@ export interface StoryMissionScorecardSnapshot {
   vehicleConditionText: string;
   serviceLaneText: string;
   factionEffectText: string;
+  cityStateText: string;
   systemsText: string;
   recordedAt: number;
 }
@@ -37,6 +38,7 @@ function isScorecard(value: unknown): value is StoryMissionScorecardSnapshot {
     typeof value.vehicleConditionText === 'string' &&
     typeof value.serviceLaneText === 'string' &&
     typeof value.factionEffectText === 'string' &&
+    typeof value.cityStateText === 'string' &&
     typeof value.systemsText === 'string' &&
     typeof value.recordedAt === 'number'
   );

@@ -6,7 +6,9 @@ import {
   storyChapterPendingMissionGroup,
   storyMissionGroupObjectiveIndex,
   storyMissionInitialObjectiveIndex,
+  summarizeStoryCityState,
   type StoryChapter,
+  type StoryCityState,
   type StoryMissionPlan,
   type StoryMode,
 } from './storyMode';
@@ -87,10 +89,11 @@ function cursorForPendingGroup(
   chapter: StoryChapter,
   pending: readonly StoryMissionPlan[],
   branchOutcomes: Record<string, string> = {},
+  cityState?: StoryCityState,
 ): StoryCursor {
   const mission = pending[0];
   if (!mission) throw new Error(`Chapter "${chapter.id}" has no pending missions`);
-  const resolvedMission = resolveStoryMissionPlan(mission, branchOutcomes);
+  const resolvedMission = resolveStoryMissionPlan(mission, branchOutcomes, cityState);
   return {
     actId: chapter.actId,
     chapterId: chapter.id,
@@ -134,7 +137,9 @@ export function currentStoryMission(
   const chapter = currentStoryChapter(story, progress);
   if (!chapter || !progress.current) return null;
   const mission = storyMissionById(chapter, progress.current.missionId);
-  return mission ? resolveStoryMissionPlan(mission, progress.branchOutcomes ?? {}) : null;
+  if (!mission) return null;
+  const branchOutcomes = progress.branchOutcomes ?? {};
+  return resolveStoryMissionPlan(mission, branchOutcomes, summarizeStoryCityState(story, branchOutcomes));
 }
 
 export function currentStoryMissionChoices(
@@ -144,8 +149,10 @@ export function currentStoryMissionChoices(
   if (!progress.current || progress.storyId !== story.id) return [];
   const chapter = currentStoryChapter(story, progress);
   if (!chapter || progress.current.objectiveIndex !== STORY_MISSION_GROUP_SELECTION_INDEX) return [];
+  const branchOutcomes = progress.branchOutcomes ?? {};
+  const cityState = summarizeStoryCityState(story, branchOutcomes);
   return (storyChapterPendingMissionGroup(chapter, progress.completedMissionIds) ?? []).map((mission) =>
-    resolveStoryMissionPlan(mission, progress.branchOutcomes ?? {}),
+    resolveStoryMissionPlan(mission, branchOutcomes, cityState),
   );
 }
 
@@ -192,6 +199,7 @@ export function selectStoryChapter(
       chapter,
       storyChapterPendingMissionGroup(chapter, progress.completedMissionIds) ?? [firstMission(chapter)],
       progress.branchOutcomes,
+      summarizeStoryCityState(story, progress.branchOutcomes),
     ),
   };
 }
@@ -210,7 +218,11 @@ export function selectStoryMission(
   const branchOutcomes = mission.branchOutcome
     ? { ...progress.branchOutcomes, [mission.branchOutcome.branchId]: mission.branchOutcome.outcomeId }
     : progress.branchOutcomes;
-  const resolvedMission = resolveStoryMissionPlan(mission, branchOutcomes);
+  const resolvedMission = resolveStoryMissionPlan(
+    mission,
+    branchOutcomes,
+    summarizeStoryCityState(story, branchOutcomes),
+  );
   return {
     ...progress,
     branchOutcomes,
@@ -239,12 +251,13 @@ export function completeStoryMission(
   if (missionIndex === -1) return progress;
 
   const completedMissionIds = unique([...progress.completedMissionIds, missionId]);
+  const cityState = summarizeStoryCityState(story, progress.branchOutcomes);
   const pendingGroup = storyChapterPendingMissionGroup(chapter, completedMissionIds);
   if (pendingGroup) {
     return {
       ...progress,
       completedMissionIds,
-      current: cursorForPendingGroup(chapter, pendingGroup, progress.branchOutcomes),
+      current: cursorForPendingGroup(chapter, pendingGroup, progress.branchOutcomes, cityState),
     };
   }
 
@@ -266,7 +279,7 @@ export function completeStoryMission(
     completedMissionIds,
     completedChapterIds,
     unlockedChapterIds: unique([...progress.unlockedChapterIds, nextChapter.id]),
-    current: cursorForPendingGroup(nextChapter, nextPendingGroup, progress.branchOutcomes),
+    current: cursorForPendingGroup(nextChapter, nextPendingGroup, progress.branchOutcomes, cityState),
   };
 }
 

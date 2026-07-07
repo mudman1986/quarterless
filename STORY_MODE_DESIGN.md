@@ -440,6 +440,8 @@ Implemented now:
 - An objective/actor/fail-rule exhaustion test now asserts every runtime kind is exercised by authored story data or explicitly allow-listed (Stage 11). The authored story now uses the `wanted` objective directly in later-act missions, so only the `loseActor` fail rule remains intentionally non-story and is enforced via the allow-list instead of silently drifting.
 - Story authoring validation now catches unused branch declarations (Stage 11): `validateStoryMode` flags any recorded branch outcome that no mission variant ever reads, matching the existing dangling-actor-reference checks.
 - Stage 12 is now fully authored against the stabilized base: Chapters 13 through 24 are implemented under `src/game/story/`, wiring Acts III and IV into `storyCampaign.ts` and extending the playable story to 24 chapters / 120 missions across four acts. The later chapters stay inside already-tested encounter patterns: tail formation, timed route/sabotage pressure, escort lanes, protected vehicles, blackout intersections, marked target squads, collect/defend beats, and wanted-pressure finales. Coverage scales with the content: the generic authored-mission boot/complete walk now covers all 120 authored runtime missions, while the focused story regressions continue to exercise the distinctive chapter systems and runtime seams those chapters rely on.
+- Branch outcomes now drive a citywide-reactivity model (Stage 12 base extended by Stage 13). Each `branchOutcome` can carry typed `StoryCityEffect[]` across three axes (`district`, `faction`, `service`); `summarizeStoryCityState` accumulates every recorded outcome into an ordered `StoryCityState`, and mission variants can gate on accumulated `cityState` thresholds instead of a single branch key. The `double-booking` choice in Meter Running now applies opposing informant/police-response versus pirate-radio/nightlife consequences, the Chapter 20 finale `open-channel` re-skins itself from the accumulated faction standing, and the accumulated standing is surfaced in the launcher archive (a dedicated "City Standing" block), the mission summary card, and mission scorecards (a `cityStateText` line) without hiding the underlying branch outcomes. `resolveStoryMissionPlan` now applies only the override fields a variant actually declares, so text-only city-state variants no longer wipe a mission's runtime.
+- The story now has a numeric balance ship gate (Stage 14). `validateStoryBalance` in `src/game/story/storyMode.ts` checks every authored runtime (base missions plus each variant that overrides its runtime) against `STORY_BALANCE_BOUNDS` — reward, route/hold timings, wanted stars, objective and actor radii, fail-rule seconds, and actor min-health — and asserts per-act average rewards never regress across consecutive acts. It stays separate from `validateStoryMode` (structural integrity) so each gate is independently testable, and `validateStoryBalance(STORY_MODE_PROTOTYPE)` returns zero issues against the shipped data. A fresh dead-surface sweep found nothing to cut: reserved routes, protected-vehicle tail scripts, and blackout intersections are all exercised by authored chapters and covered by the Stage 11 dead-flexibility validation.
 
 ### Stage 0 - Lock The Core Contracts (complete)
 
@@ -725,25 +727,25 @@ Required outcomes:
 2. Keep each new chapter inside already-tested encounter patterns unless a new runtime feature is explicitly justified. — complete: the later acts stay inside the existing route, sabotage, escort, capture, protected-vehicle, target-squad, blackout, defend, and wanted-pressure primitives rather than reopening foundation work.
 3. Add regression coverage for every new chapter as it lands instead of banking test debt for later. — complete at the prototype level: the generic authored-mission boot/complete sweep automatically covers all 120 authored runtime missions, while the focused story regressions continue covering the runtime seams and distinctive encounter patterns those chapters depend on.
 
-### Stage 13 - Deepen Citywide Reactivity
+### Stage 13 - Deepen Citywide Reactivity (complete)
 
 Goal: make later acts feel like the city remembers what the player changed, not just which mission variant loaded next.
 
 Required outcomes:
 
-1. Expand branch outcomes from route swaps into broader district-state, faction, and service-network consequences.
-2. Let later missions read accumulated city-state summaries, not only a single branch key.
-3. Surface those broader changes in both the launcher archive and mission summaries without hiding the raw runtime facts.
+1. Expand branch outcomes from route swaps into broader district-state, faction, and service-network consequences. — complete: branch outcomes now carry typed `StoryCityEffect[]` across three axes (`district`, `faction`, `service`) in `src/game/story/storyMode.ts`, and the `double-booking` outcomes in `meterRunning.ts` apply opposing informant/police-response and pirate-radio/nightlife consequences.
+2. Let later missions read accumulated city-state summaries, not only a single branch key. — complete: `summarizeStoryCityState` accumulates every recorded outcome's effects into an ordered `StoryCityState`, mission variants can gate on `cityState` thresholds (`StoryCityStateCondition`), and the Chapter 20 finale `open-channel` reads the accumulated faction standing instead of a raw branch key.
+3. Surface those broader changes in both the launcher archive and mission summaries without hiding the raw runtime facts. — complete: the launcher archive gained a dedicated "City Standing" block (`bootstrap.ts`), mission summary cards and scorecards gained a `cityStateText` line (`CityScene.ts`, `storyMissionScorecards.ts`), and both still show the underlying branch outcomes and effect notes.
 
-### Stage 14 - Final Content, Balance, And Ship Gate
+### Stage 14 - Final Content, Balance, And Ship Gate (complete)
 
 Goal: close the remaining gap between a complete story prototype and a shippable story mode.
 
 Required outcomes:
 
-1. Balance mission timings, wanted pressure, escort tolerances, and economy across the full 24-chapter run.
-2. Finish the final quality gates: long-session performance, authored-content validation, end-to-end completion coverage, and regression triage.
-3. Cut or rewrite any chapter/mode surface that still does not earn its maintenance cost.
+1. Balance mission timings, wanted pressure, escort tolerances, and economy across the full 24-chapter run. — complete: `validateStoryBalance` in `src/game/story/storyMode.ts` is a dedicated ship gate that asserts every authored runtime (base missions and each variant that overrides its runtime) stays inside `STORY_BALANCE_BOUNDS` — reward, route/hold timings, wanted stars, objective and actor radii, fail-rule seconds, and actor min-health — and that per-act average rewards never regress across consecutive acts. It is kept separate from `validateStoryMode` (structural integrity) so each gate is reasoned about independently; `validateStoryBalance(STORY_MODE_PROTOTYPE)` returns zero issues.
+2. Finish the final quality gates: long-session performance, authored-content validation, end-to-end completion coverage, and regression triage. — complete: the balance gate joins the existing structural (`validateStoryMode`) and dead-flexibility gates; the full 593-test unit suite and 213-test Playwright suite (including the generic authored-mission boot/complete sweep across all 120 missions) pass green, and long-session performance was already hardened in Stage 10.
+3. Cut or rewrite any chapter/mode surface that still does not earn its maintenance cost. — no removals warranted: the Stage 11 survey and dead-flexibility validation already guard against unused runtime flexibility, and a fresh sweep found no genuinely dead surfaces (reserved routes, protected-vehicle tail scripts, and blackout intersections are all exercised by authored chapters). Working features are left in place rather than cut to check a box.
 
 ### Revised Delivery Order
 
@@ -761,3 +763,84 @@ Required outcomes:
 12. Author Act III only after the widened base stays stable in real long-form play.
 13. Expand consequences from mission-local variants into citywide reactivity.
 14. Finish the ship gate only after the full 24-chapter run is authored and balanced.
+
+## Post-Ship / Future Work
+
+Status honesty: all 14 planned stages are complete, and the story mode is a fully
+playable, end-to-end prototype with green unit (593) and e2e (213) suites, automated
+structural/dead-flexibility/balance gates, and the full 24-chapter / 120-mission run
+authored. That means the *engineering plan* is finished — but "finished game" is a
+higher bar. The balance gate validates numeric *sanity* (no 50-credit missions, no
+9-star demands), not a hand-tuned *fun* curve, and several whole-product surfaces
+(audio, onboarding, options, art, writing) are still placeholder-level. The items
+below are the honest remaining gap between "complete prototype" and "shippable game",
+roughly ordered by player-visible impact.
+
+### Tier 1 - Highest player-visible impact
+
+- **Audio.** The README still says all sounds are procedural placeholders. A
+  story-driven game with no music, no mission stingers, and no SFX for combat,
+  pickups, arrests, or UI feels unfinished regardless of how solid the systems are.
+  Add a small audio bus (music + SFX channels, master mute/volume persisted to
+  localStorage), per-scene music, and event-driven SFX hooks off the existing
+  mission/world events. Respect a "reduced audio" setting.
+- **Onboarding / tutorial.** Missions start from in-world markers, but a new player
+  is dropped into a top-down city with no explanation of controls, wanted level,
+  markers, minimap, or how to start a mission. Add a short scripted first-run
+  tutorial (or an optional "how to play" panel in the launcher) that teaches drive,
+  enter/exit vehicle, start mission, and the wanted/arrest loop.
+- **Options / settings menu.** There is no central settings surface. Add one to the
+  launcher covering audio volumes, key rebinding, difficulty (see below), reduced
+  motion, and text size, all persisted alongside the existing save keys.
+- **Human-tuned difficulty curve.** The Stage 14 gate only enforces `STORY_BALANCE_BOUNDS`
+  as wide guardrails. Real balance needs playtest data: are Act I missions too hard
+  before the economy ramps? Is wanted pressure fair on a keyboard vs touch? Add an
+  optional difficulty setting (e.g. Story / Standard / Hard scaling reward, timers,
+  wanted decay, enemy aggression) and tune the actual numbers from real play, not
+  just the range validator.
+
+### Tier 2 - Presentation and content polish
+
+- **Art and animation pass.** Replace procedural placeholder sprites/tiles with a
+  cohesive art style, add vehicle/pedestrian variety, damage states, and simple
+  particle feedback (skids, hits, pickups).
+- **Narrative/writing polish.** The authored hooks, goals, and payoffs are
+  prototype-grade. A dedicated writing pass for voice, consistency, and payoff
+  across all 24 chapters would raise the story from "functional" to "engaging".
+- **Cutscene / beat presentation.** City-state consequences and branch outcomes are
+  surfaced as text lines today. Consider lightweight staged beats (camera moves,
+  character portraits) for act openers and finales.
+- **Accessibility.** Colorblind-safe minimap/marker palettes, remappable controls,
+  larger-text mode, screen-reader labels on launcher controls, and a reduced-motion
+  toggle for camera/effects.
+
+### Tier 3 - Depth, replayability, and reach
+
+- **Endgame / replayability.** New Game+, chapter time-attack or challenge modifiers,
+  a per-chapter score/medal system, and a story-wide completion summary would give
+  reasons to replay beyond branch exploration.
+- **Mobile/touch quality pass.** Touch menu and touch controls exist and are tested,
+  but a dedicated pass on control ergonomics, HUD scaling, and performance on real
+  mid-range phones is needed before calling mobile "supported".
+- **Cloud / cross-device saves.** Saves are localStorage-only. Optional export/import
+  or account-backed sync would protect long story runs.
+- **Localization (i18n).** All strings are inline English. Extract user-facing text
+  to a resource layer if non-English reach matters.
+- **Telemetry (opt-in).** Lightweight, privacy-respecting completion/drop-off metrics
+  would turn future balance passes from guesswork into data.
+
+### Tier 4 - Repo / product loose ends (not story-mode specific)
+
+- **Finish or cut the WIP mini-games.** `Pixel Sprint` and `Void Sweep` are still
+  marked "Work in progress" in the README/arcade. Either finish them to the bar the
+  other games meet, or remove them from the lineup so the arcade doesn't ship with
+  visibly unfinished entries.
+- **Performance telemetry / budget in CI.** Long-session performance was hardened in
+  Stage 10 by construction, but there is no automated frame-time/regression budget.
+  A perf smoke check would catch future regressions before players do.
+- **Parallelize the slow e2e file.** `story-authored-missions.spec.ts` alone is ~5.6m
+  of the ~9.4m suite; sharding it (Playwright already suggests this) would shorten the
+  ship-gate loop.
+
+None of these are blockers for "the planned story mode is done" — they are the
+backlog for turning a complete, tested prototype into a polished, shippable product.
