@@ -37,7 +37,7 @@ export const arcadeGames: readonly ArcadeGame[] = [
   {
     id: 'penguins-of-tangram',
     title: 'Penguins of Tangram',
-    badge: 'Expanded',
+    badge: 'Work in progress',
     description:
       'A cartoony school-themed Phaser platformer with a five-zone map, light character traits, badges, secrets, checkpoints, and a festival finish.',
     accent: '#59d0ff',
