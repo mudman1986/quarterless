@@ -16,6 +16,13 @@ export const BONE_WHITE_MORNING: StoryChapter = {
     'Rook finds the industrial chain that moved missing dispatchers and witnesses off the books, and finally hears Nia name the Board that has been treating the city like inventory.',
   combinedGoal:
     'Trace the detention route, split the transport convoy, free the surviving captives, and recover Nia\'s recorded proof before the Board relocates her again.',
+  presentation: {
+    opener: {
+      speaker: 'Rook Vance',
+      role: 'Following the hidden convoys',
+      kicker: 'The Bays Beneath The City',
+    },
+  },
   missions: [
     {
       id: 'quarry-wake',

@@ -13,6 +13,13 @@ export const THE_GARDEN_DISTRICT_LIE: StoryChapter = {
     'Rook pushes into the manicured districts that bought their safety with diverted emergency cover, turning private comfort into public proof.',
   combinedGoal:
     'Mark the hidden panic bunkers, break the donor district\'s traffic choreography, and chase its patron into the open before the rich blocks can buy another clean version of the truth.',
+  presentation: {
+    opener: {
+      speaker: 'Rook Vance',
+      role: 'Dragging comfort into daylight',
+      kicker: 'Luxury Bought With Delay',
+    },
+  },
   missions: [
     {
       id: 'white-curb-tour',

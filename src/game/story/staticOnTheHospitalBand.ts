@@ -20,6 +20,13 @@ export const STATIC_ON_THE_HOSPITAL_BAND: StoryChapter = {
     ['crash-cart'],
     ['ward-6-exit'],
   ],
+  presentation: {
+    opener: {
+      speaker: 'Rook Vance',
+      role: 'Chasing ambulance ghosts',
+      kicker: 'Static Beneath The Sirens',
+    },
+  },
   missions: [
     {
       id: 'cold-intake',

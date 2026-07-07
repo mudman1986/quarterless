@@ -42,6 +42,37 @@ export async function acknowledgeStoryPanel(page: Page): Promise<void> {
   });
 }
 
+export async function acknowledgeStoryPanelsUntilGameplay(page: Page, maxSteps = 4): Promise<void> {
+  for (let step = 0; step < maxSteps; step += 1) {
+    const visible = await page.evaluate(() => {
+      const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+      const scene = game?.scene.getScene('City') as {
+        storyPanel?: { visible: boolean };
+        acknowledgeStoryPanel?: () => void;
+      };
+      if (!scene?.storyPanel?.visible) return false;
+      scene.acknowledgeStoryPanel?.();
+      return true;
+    });
+    if (!visible) break;
+    await page.waitForFunction(() => {
+      const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+      const scene = game?.scene.getScene('City') as {
+        storyPanel?: { visible: boolean };
+      };
+      return scene !== undefined && scene.storyPanel !== undefined;
+    });
+  }
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      paused: boolean;
+      storyPanel?: { visible: boolean };
+    };
+    return scene?.paused === false && !scene?.storyPanel?.visible;
+  });
+}
+
 export async function restartIntoStoryMission(page: Page, target: StoryMissionTarget): Promise<void> {
   await page.evaluate(
     ({

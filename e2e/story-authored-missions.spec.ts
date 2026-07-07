@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import { launchSindicate } from './helpers';
 import {
   acknowledgeStoryPanel,
+  acknowledgeStoryPanelsUntilGameplay,
   completeActiveStoryMission,
   restartIntoStoryMission,
   waitForStoryProgress,
@@ -304,7 +305,7 @@ for (const { entry, expectedProgress, startProgress } of missionCompletionCases)
       completedMissionIds: startProgress.completedMissionIds,
       branchOutcomes: startProgress.branchOutcomes,
     });
-    await acknowledgeStoryPanel(page);
+    await acknowledgeStoryPanelsUntilGameplay(page);
 
     const completion = await completeActiveStoryMission(page);
 

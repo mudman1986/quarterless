@@ -14,6 +14,13 @@ export const BROADCAST_TEETH: StoryChapter = {
     'Rook leans on a pirate-radio network to expose Switchboard routes, only to find the station web full of compromised hosts and retaliation crews.',
   combinedGoal:
     'Rebuild the radio network, flush out the compromised host, and keep the final citywide broadcast alive long enough to turn proof into open pressure.',
+  presentation: {
+    opener: {
+      speaker: 'Rook Vance',
+      role: 'Feeding the pirate airwaves',
+      kicker: 'Dead Air, Live Teeth',
+    },
+  },
   missions: [
     {
       id: 'antenna-climb',

@@ -23,6 +23,13 @@ export const SAINTS_OF_THE_SIDE_STREET: StoryChapter = {
     ['medicine-debt'],
     ['quiet-chapel'],
   ],
+  presentation: {
+    opener: {
+      speaker: 'Rook Vance',
+      role: 'Protecting the forgotten blocks',
+      kicker: 'Care On Borrowed Time',
+    },
+  },
   missions: [
     {
       id: 'soup-line-watch',

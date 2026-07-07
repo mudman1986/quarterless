@@ -14,6 +14,13 @@ export const THE_BROKER: StoryChapter = {
     'Rook takes the first pillar head-on, tearing into the freight broker who turned wrecks, claims, and reroutes into a private balance sheet for urban disaster.',
   combinedGoal:
     'Hijack the broker\'s paper flow, break the scrapyard shell game, and burn the live accounting vault so the first pillar falls in both numbers and spectacle.',
+  presentation: {
+    opener: {
+      speaker: 'Rook Vance',
+      role: 'Burning the freight books',
+      kicker: 'Burn The Ledgers',
+    },
+  },
   missions: [
     {
       id: 'invoice-run',

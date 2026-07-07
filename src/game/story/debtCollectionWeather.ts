@@ -16,6 +16,13 @@ export const DEBT_COLLECTION_WEATHER: StoryChapter = {
     'Rook turns from propaganda to the street-level damage cycle itself, exposing the fake service-call traps that keep entire blocks in permanent debt.',
   combinedGoal:
     'Save the trapped witnesses, steal the collectors’ records, and collapse the fake-callout debt market before the district can be reset.',
+  presentation: {
+    opener: {
+      speaker: 'Rook Vance',
+      role: 'Calling the bluff on fear',
+      kicker: 'Receipts In The Rain',
+    },
+  },
   missions: [
     {
       id: 'missed-payment',

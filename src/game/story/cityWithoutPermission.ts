@@ -13,6 +13,13 @@ export const CITY_WITHOUT_PERMISSION: StoryChapter = {
     'The Board is wounded and finally answers by trying to shut the whole city down at once, forcing Rook and every allied bloc to keep it alive long enough to fight back.',
   combinedGoal:
     'Reconnect the severed neighborhoods, cross the blackout city, hold the community convoy together, and keep the tower alive until the allies can organize the real counterstrike.',
+  presentation: {
+    opener: {
+      speaker: 'Rook Vance',
+      role: 'Holding the city together',
+      kicker: 'Hold The City Together',
+    },
+  },
   missions: [
     {
       id: 'grid-slip',

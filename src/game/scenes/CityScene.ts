@@ -69,8 +69,10 @@ import {
   summarizeStoryCityState,
 } from '../story/storyMode';
 import type {
+  StoryBeatPresentation,
   PedestrianRouteActorScript,
   PedestrianSquadActorScript,
+  StoryChapter,
   StoryMissionPlan,
   StoryRuntimeScript,
   StoryRuntimeStage,
@@ -296,6 +298,8 @@ interface StoryMissionSummaryBaseline {
 interface StoryMissionSummaryCard {
   chapterTitle: string;
   title: string;
+  voiceText: string | null;
+  beatText: string | null;
   reward: number;
   outcome: string;
   durationSeconds: number;
@@ -308,6 +312,18 @@ interface StoryMissionSummaryCard {
   systemsText: string;
   unlockText: string;
   nextText: string;
+}
+
+type StoryPanelTone = 'chapter' | 'brief' | 'summary' | 'complete' | 'danger';
+
+interface StoryPanelBeat {
+  text: string;
+  tone: StoryPanelTone;
+  beat?: StoryBeatPresentation;
+  focusTarget?: Vec2 | null;
+  seconds?: number;
+  requiresAcknowledge?: boolean;
+  pauseGame?: boolean;
 }
 
 /**
@@ -360,6 +376,15 @@ export class CityScene extends Phaser.Scene {
   private bustedText!: Phaser.GameObjects.Text;
   private banner!: Phaser.GameObjects.Text;
   private bannerCloseButton!: Phaser.GameObjects.Text;
+  private storyPanelFrame!: Phaser.GameObjects.Graphics;
+  private storyPanelAccent!: Phaser.GameObjects.Rectangle;
+  private storyPortraitBackdrop!: Phaser.GameObjects.Graphics;
+  private storyPortraitFrame!: Phaser.GameObjects.Graphics;
+  private storyPortraitBadge!: Phaser.GameObjects.Arc;
+  private storyPortraitMonogram!: Phaser.GameObjects.Text;
+  private storyPortraitName!: Phaser.GameObjects.Text;
+  private storyPortraitRole!: Phaser.GameObjects.Text;
+  private storyPortraitKicker!: Phaser.GameObjects.Text;
   private storyPanel!: Phaser.GameObjects.Text;
   private storyStateText!: Phaser.GameObjects.Text;
   private touchControlsGfx!: Phaser.GameObjects.Graphics;
@@ -419,6 +444,11 @@ export class CityScene extends Phaser.Scene {
   private storyPanelRemaining = 0;
   private storyPanelRequiresAcknowledge = false;
   private storyPanelPauseGame = false;
+  private storyPanelTone: StoryPanelTone = 'brief';
+  private storyPanelCinematicActive = false;
+  private storyPanelBaseZoom = 1;
+  private storyPanelFocusTarget: Vec2 | null = null;
+  private storyPanelQueue: StoryPanelBeat[] = [];
   private pendingStoryRestart: StoryProgressSnapshot | null = null;
   /** True when the pending restart should resume from the just-saved game
    * state (e.g. a chapter-complete advance) instead of wiping progress (a
@@ -516,6 +546,7 @@ export class CityScene extends Phaser.Scene {
     this.storyPanelRemaining = 0;
     this.storyPanelRequiresAcknowledge = false;
     this.storyPanelPauseGame = false;
+    this.storyPanelQueue = [];
     this.pendingStoryRestart = null;
     this.pendingStoryRestartResume = false;
     this.storyScript = null;
@@ -575,6 +606,7 @@ export class CityScene extends Phaser.Scene {
     this.createMinimap();
     this.layoutHud();
     this.syncMinimap();
+    this.paused = false;
     this.syncStoryScript(0);
     this.syncStoryMissionSummaryBaseline();
     this.showStoryBriefingIfNeeded();
@@ -596,7 +628,6 @@ export class CityScene extends Phaser.Scene {
       if (this.storyPanelRequiresAcknowledge) this.acknowledgeStoryPanel();
     };
     kb.on('keydown-ENTER', handleStoryAcknowledge);
-    this.paused = false;
     if (typeof window !== 'undefined') {
       window.addEventListener('beforeunload', this.beforeUnloadHandler);
     }
@@ -1103,6 +1134,7 @@ export class CityScene extends Phaser.Scene {
     this.showStoryPanel(
       `MISSION FAILED\n\n${failureText}\n\nRetrying ${currentStoryMission(STORY_MODE_PROTOTYPE, restart)?.title ?? 'mission'}...`,
       2.6,
+      'danger',
     );
     this.pendingStoryRestart = restart;
     this.pendingStoryRestartResume = true;
@@ -2213,20 +2245,31 @@ export class CityScene extends Phaser.Scene {
     });
   }
 
+  private viewportBaseZoom(): number {
+    const { width, height } = this.scale.gameSize;
+    const span = Math.min(width, height);
+    if (span <= 0) return MIN_ZOOM;
+    return Phaser.Math.Clamp(span / VIEW_SPAN, MIN_ZOOM, MAX_ZOOM);
+  }
+
   /** Fit the camera zoom to the current viewport so the player stays centred and
    * a consistent amount of the city is visible on every device. */
   private applyZoom(): void {
-    const { width, height } = this.scale.gameSize;
-    const span = Math.min(width, height);
-    if (span <= 0) return;
-    const zoom = Phaser.Math.Clamp(span / VIEW_SPAN, MIN_ZOOM, MAX_ZOOM);
+    const zoom = this.viewportBaseZoom();
     this.cameras.main.setZoom(zoom);
     this.cameras.main.centerOn(this.world.focus.x, this.world.focus.y);
   }
 
   /** Handle a viewport resize: refit the zoom and recentre screen-space UI. */
   private onResize(): void {
-    this.applyZoom();
+    if (this.storyPanelCinematicActive) {
+      this.storyPanelBaseZoom = this.viewportBaseZoom();
+      this.cameras.main.setZoom(this.storyPanelTargetZoom(this.storyPanelTone));
+      const focus = this.storyPanelFocusTarget ?? this.world.focus;
+      this.cameras.main.centerOn(focus.x, focus.y);
+    } else {
+      this.applyZoom();
+    }
     const { width, height } = this.scale.gameSize;
     this.dayNightOverlay?.setSize(width * 3, height * 3);
     this.layoutHud();
@@ -2251,6 +2294,8 @@ export class CityScene extends Phaser.Scene {
         | Phaser.GameObjects.Image
         | Phaser.GameObjects.Text
         | Phaser.GameObjects.Graphics
+        | Phaser.GameObjects.Rectangle
+        | Phaser.GameObjects.Arc
         | undefined,
       screenX: number,
       screenY: number,
@@ -2265,6 +2310,15 @@ export class CityScene extends Phaser.Scene {
     place(this.banner, 10, bannerTop);
     place(this.bannerCloseButton, 24 + this.banner.width, bannerTop + 6);
     place(this.storyStateText, 10, bannerTop + this.banner.height + 8);
+    place(this.storyPanelFrame, width / 2, height / 2 - 12);
+    place(this.storyPanelAccent, width / 2 - 322, height / 2 - 12);
+    place(this.storyPortraitBackdrop, width / 2 - 224, height / 2 - 12);
+    place(this.storyPortraitFrame, width / 2 - 224, height / 2 - 12);
+    place(this.storyPortraitBadge, width / 2 - 224, height / 2 - 74);
+    place(this.storyPortraitMonogram, width / 2 - 224, height / 2 - 74);
+    place(this.storyPortraitKicker, width / 2 - 224, height / 2 - 138);
+    place(this.storyPortraitName, width / 2 - 224, height / 2 + 6);
+    place(this.storyPortraitRole, width / 2 - 224, height / 2 + 42);
     place(this.storyPanel, width / 2, height / 2 - 12);
     place(this.bustedText, width / 2, height / 2);
     place(this.pauseTouchButton, width / 2, height / 2 + 306);
@@ -2358,6 +2412,94 @@ export class CityScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(2502)
       .setVisible(false);
+
+    this.storyPanelFrame = this.add
+      .graphics()
+      .setScrollFactor(0)
+      .setDepth(2500)
+      .setVisible(false);
+
+    this.storyPanelAccent = this.add
+      .rectangle(this.scale.width / 2 - 322, this.scale.height / 2 - 12, 12, 308, 0x67e8f9, 0.95)
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(2501)
+      .setVisible(false);
+
+    this.storyPortraitBackdrop = this.add
+      .graphics()
+      .setScrollFactor(0)
+      .setDepth(2501)
+      .setVisible(false);
+
+    this.storyPortraitFrame = this.add
+      .graphics()
+      .setScrollFactor(0)
+      .setDepth(2502)
+      .setVisible(false);
+
+    this.storyPortraitBadge = this.add
+      .circle(this.scale.width / 2 - 224, this.scale.height / 2 - 74, 34, 0x67e8f9, 0.95)
+      .setScrollFactor(0)
+      .setDepth(2504)
+      .setVisible(false);
+
+    this.storyPortraitMonogram = this.add
+      .text(this.scale.width / 2 - 224, this.scale.height / 2 - 74, '', {
+        fontFamily: 'monospace',
+        fontSize: '22px',
+        color: '#f8fafc',
+        align: 'center',
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(2505)
+      .setVisible(false);
+
+    this.storyPortraitKicker = this.add
+      .text(this.scale.width / 2 - 224, this.scale.height / 2 - 138, '', {
+        fontFamily: 'monospace',
+        fontSize: '12px',
+        color: '#e2e8f0',
+        align: 'center',
+        backgroundColor: '#082f49d0',
+        padding: { x: 10, y: 6 },
+        wordWrap: { width: 152, useAdvancedWrap: true },
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(2505)
+      .setVisible(false);
+
+    this.storyPortraitName = this.add
+      .text(this.scale.width / 2 - 224, this.scale.height / 2 + 6, '', {
+        fontFamily: 'monospace',
+        fontSize: '18px',
+        color: '#f8fafc',
+        align: 'center',
+        wordWrap: { width: 168, useAdvancedWrap: true },
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(2505)
+      .setVisible(false);
+
+    this.storyPortraitRole = this.add
+      .text(this.scale.width / 2 - 224, this.scale.height / 2 + 42, '', {
+        fontFamily: 'monospace',
+        fontSize: '14px',
+        color: '#cbd5e1',
+        align: 'center',
+        backgroundColor: '#020617d0',
+        padding: { x: 10, y: 6 },
+        wordWrap: { width: 168, useAdvancedWrap: true },
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(2505)
+      .setVisible(false);
+
+    this.syncStoryPanelFrame();
 
     this.storyStateText = this.add
       .text(this.scale.width / 2, 140, '', {
@@ -2671,11 +2813,15 @@ export class CityScene extends Phaser.Scene {
         this.storyPanelRemaining -= deltaMs / 1000;
       }
       if (this.storyPanelRemaining <= 0) {
+        if (this.advanceStoryPanelQueue()) {
+          this.prevTouchConfirm = !!touchSnapshot?.confirmPressed;
+          return;
+        }
         const progress = this.pendingStoryRestart;
         const resume = this.pendingStoryRestartResume;
         this.pendingStoryRestart = null;
         this.pendingStoryRestartResume = false;
-        this.storyPanel.setVisible(false);
+        this.hideStoryPanel();
         this.skipPersistOnShutdown = true;
         if (!resume) clearGameState(this.store);
         this.scene.restart({
@@ -2736,7 +2882,9 @@ export class CityScene extends Phaser.Scene {
     }
     if (!this.storyPanelRequiresAcknowledge && this.storyPanelRemaining > 0) {
       this.storyPanelRemaining -= dt;
-      if (this.storyPanelRemaining <= 0) this.storyPanel.setVisible(false);
+      if (this.storyPanelRemaining <= 0) {
+        if (!this.advanceStoryPanelQueue()) this.hideStoryPanel();
+      }
     }
 
     this.prevTouchConfirm = !!touchSnapshot?.confirmPressed;
@@ -2867,9 +3015,8 @@ export class CityScene extends Phaser.Scene {
         this.clearActiveStoryActors();
         this.persistGameState(GAME_STATE_KEY, { pruneStoryActors: true });
         if (nextMission?.prototypeRuntime && nextChapter) {
-          this.showStoryPanel(
-            `CHAPTER COMPLETE\n${previousStoryChapter?.title ?? 'Story Chapter'}\n\n${previousStoryChapter?.combinedGoal ?? ''}\n\nNext: ${nextChapter.title}`,
-            2.4,
+          this.queueStoryPanelSequence(
+            this.chapterCompleteSequence(previousStoryChapter ?? nextChapter, nextChapter, nextMission),
           );
           this.pendingStoryRestart = this.storyProgress;
           this.pendingStoryRestartResume = true;
@@ -2880,6 +3027,7 @@ export class CityScene extends Phaser.Scene {
             ? 'STORY PROTOTYPE COMPLETE\n\nThe next authored chapter has not been wired into runtime play yet.'
             : 'STORY COMPLETE\n\nRook and Nia have broken the current live slice of the Switchboard.',
           3.2,
+          'complete',
         );
       } else {
         this.showBanner('ALL MISSIONS COMPLETE!');
@@ -2891,7 +3039,7 @@ export class CityScene extends Phaser.Scene {
         if (this.mode === 'story') {
           if (this.prevMissionId !== null) this.clearActiveStoryActors();
           if (this.prevMissionId !== null) this.showMissionTransitionPanel(this.prevMissionId);
-          else this.showMissionBriefingPanel();
+          else if (!this.storyPanel.visible) this.showMissionBriefingPanel();
         }
         this.showBanner(`NEW MISSION\n${w.mission.title}\n${objective}`, { stageBound: true });
       }
@@ -2988,17 +3136,306 @@ export class CityScene extends Phaser.Scene {
     this.layoutHud();
   }
 
-  private showStoryPanel(text: string, seconds: number): void {
-    this.storyPanel.setText(text).setVisible(true);
-    this.storyPanelRemaining = seconds;
-    this.storyPanelRequiresAcknowledge = false;
-    this.storyPanelPauseGame = false;
+  private storyPanelToneStyle(tone: StoryPanelTone): {
+    backgroundColor: string;
+    accentColor: number;
+    lineColor: number;
+    shadowAlpha: number;
+    width: number;
+  } {
+    if (tone === 'chapter') {
+      return {
+        backgroundColor: '#130d04f0',
+        accentColor: 0xfbbf24,
+        lineColor: 0xf59e0b,
+        shadowAlpha: 0.44,
+        width: 648,
+      };
+    }
+    if (tone === 'summary') {
+      return {
+        backgroundColor: '#04130ef0',
+        accentColor: 0x34d399,
+        lineColor: 0x10b981,
+        shadowAlpha: 0.44,
+        width: 648,
+      };
+    }
+    if (tone === 'complete') {
+      return {
+        backgroundColor: '#071221f0',
+        accentColor: 0x60a5fa,
+        lineColor: 0x38bdf8,
+        shadowAlpha: 0.44,
+        width: 648,
+      };
+    }
+    if (tone === 'danger') {
+      return {
+        backgroundColor: '#190708f0',
+        accentColor: 0xf87171,
+        lineColor: 0xef4444,
+        shadowAlpha: 0.5,
+        width: 648,
+      };
+    }
+    return {
+      backgroundColor: '#06131af0',
+      accentColor: 0x67e8f9,
+      lineColor: 0x22d3ee,
+      shadowAlpha: 0.44,
+      width: 648,
+    };
   }
 
-  private showPersistentStoryPanel(text: string, pauseGame = true): void {
-    this.storyPanel.setText(`${text}\n\nPress Enter or tap to continue`).setVisible(true);
-    this.storyPanelRemaining = 0;
-    this.storyPanelRequiresAcknowledge = true;
+  private storyPanelTargetZoom(tone: StoryPanelTone): number {
+    const multiplier =
+      tone === 'chapter' || tone === 'complete'
+        ? 1.12
+        : tone === 'summary'
+          ? 1.08
+          : tone === 'danger'
+            ? 1.1
+            : 1.05;
+    return Phaser.Math.Clamp(this.storyPanelBaseZoom * multiplier, MIN_ZOOM, MAX_ZOOM);
+  }
+
+  private beginStoryPanelCinematic(tone: StoryPanelTone, pauseGame: boolean): void {
+    this.storyPanelCinematicActive = true;
+    this.storyPanelBaseZoom = this.viewportBaseZoom();
+    const focus = this.storyPanelFocusTarget ?? this.world.focus;
+    this.tweens.killTweensOf(this.storyPanel);
+    this.tweens.killTweensOf(this.storyPanelFrame);
+    this.tweens.killTweensOf(this.storyPanelAccent);
+    this.tweens.killTweensOf(this.storyPortraitBackdrop);
+    this.tweens.killTweensOf(this.storyPortraitFrame);
+    this.tweens.killTweensOf(this.storyPortraitBadge);
+    this.tweens.killTweensOf(this.storyPortraitMonogram);
+    this.tweens.killTweensOf(this.storyPortraitName);
+    this.tweens.killTweensOf(this.storyPortraitRole);
+    this.tweens.killTweensOf(this.storyPortraitKicker);
+    this.tweens.killTweensOf(this.cameras.main);
+    this.cameras.main.stopFollow();
+    this.storyPanel.setAlpha(0);
+    this.storyPanelFrame.setAlpha(0);
+    this.storyPanelAccent.setAlpha(0);
+    this.storyPortraitBackdrop.setAlpha(0);
+    this.storyPortraitFrame.setAlpha(0);
+    this.storyPortraitBadge.setAlpha(0);
+    this.storyPortraitMonogram.setAlpha(0);
+    this.storyPortraitName.setAlpha(0);
+    this.storyPortraitRole.setAlpha(0);
+    this.storyPortraitKicker.setAlpha(0);
+    this.tweens.add({
+      targets: [
+        this.storyPanelFrame,
+        this.storyPanelAccent,
+        this.storyPanel,
+        this.storyPortraitBackdrop,
+        this.storyPortraitFrame,
+        this.storyPortraitBadge,
+        this.storyPortraitMonogram,
+        this.storyPortraitName,
+        this.storyPortraitRole,
+        this.storyPortraitKicker,
+      ],
+      alpha: 1,
+      duration: pauseGame ? 220 : 160,
+      ease: 'Quad.easeOut',
+    });
+    this.cameras.main.pan(focus.x, focus.y, pauseGame ? 260 : 200, 'Quad.easeOut', true);
+    this.tweens.add({
+      targets: this.cameras.main,
+      zoom: this.storyPanelTargetZoom(tone),
+      duration: pauseGame ? 260 : 200,
+      ease: 'Quad.easeOut',
+    });
+  }
+
+  private endStoryPanelCinematic(): void {
+    this.storyPanelCinematicActive = false;
+    this.storyPanelFocusTarget = null;
+    this.tweens.killTweensOf(this.storyPanel);
+    this.tweens.killTweensOf(this.storyPanelFrame);
+    this.tweens.killTweensOf(this.storyPanelAccent);
+    this.tweens.killTweensOf(this.storyPortraitBackdrop);
+    this.tweens.killTweensOf(this.storyPortraitFrame);
+    this.tweens.killTweensOf(this.storyPortraitBadge);
+    this.tweens.killTweensOf(this.storyPortraitMonogram);
+    this.tweens.killTweensOf(this.storyPortraitName);
+    this.tweens.killTweensOf(this.storyPortraitRole);
+    this.tweens.killTweensOf(this.storyPortraitKicker);
+    this.tweens.killTweensOf(this.cameras.main);
+    this.storyPanel.setAlpha(1);
+    this.storyPanelFrame.setAlpha(1);
+    this.storyPanelAccent.setAlpha(1);
+    this.storyPortraitBackdrop.setAlpha(1);
+    this.storyPortraitFrame.setAlpha(1);
+    this.storyPortraitBadge.setAlpha(1);
+    this.storyPortraitMonogram.setAlpha(1);
+    this.storyPortraitName.setAlpha(1);
+    this.storyPortraitRole.setAlpha(1);
+    this.storyPortraitKicker.setAlpha(1);
+    this.cameras.main.startFollow(this.focusPoint, true, 0.15, 0.15);
+    this.tweens.add({
+      targets: this.cameras.main,
+      zoom: this.viewportBaseZoom(),
+      duration: 180,
+      ease: 'Quad.easeInOut',
+    });
+  }
+
+  private applyStoryPanelTone(tone: StoryPanelTone): void {
+    this.storyPanelTone = tone;
+    const style = this.storyPanelToneStyle(tone);
+    this.storyPanel.setStyle({
+      backgroundColor: style.backgroundColor,
+      wordWrap: { width: 560, useAdvancedWrap: true },
+      padding: { x: 22, y: 16 },
+    });
+    this.storyPanelAccent.setFillStyle(style.accentColor, 0.95);
+    this.storyPortraitBadge.setFillStyle(style.accentColor, 0.95);
+    this.storyPortraitKicker.setStyle({ backgroundColor: `${style.backgroundColor.slice(0, -2)}ff` });
+    this.storyPortraitRole.setStyle({ backgroundColor: `${style.backgroundColor.slice(0, -2)}d8` });
+  }
+
+  private syncStoryPanelFrame(): void {
+    const style = this.storyPanelToneStyle(this.storyPanelTone);
+    const width = style.width;
+    const height = Math.max(228, this.storyPanel.height + 34);
+    this.storyPanelFrame.clear();
+    this.storyPanelFrame.fillStyle(0x000000, style.shadowAlpha);
+    this.storyPanelFrame.fillRoundedRect(-width / 2 + 12, -height / 2 + 12, width, height, 18);
+    this.storyPanelFrame.fillStyle(0x020617, 0.9);
+    this.storyPanelFrame.fillRoundedRect(-width / 2, -height / 2, width, height, 18);
+    this.storyPanelFrame.lineStyle(3, style.lineColor, 0.95);
+    this.storyPanelFrame.strokeRoundedRect(-width / 2, -height / 2, width, height, 18);
+    this.storyPanelAccent.setDisplaySize(12, Math.max(188, height - 36));
+
+    this.storyPortraitBackdrop.clear();
+    this.storyPortraitBackdrop.fillStyle(style.accentColor, 0.16);
+    this.storyPortraitBackdrop.fillRoundedRect(-84, -100, 168, 200, 18);
+    this.storyPortraitBackdrop.fillStyle(style.lineColor, 0.12);
+    this.storyPortraitBackdrop.fillTriangle(-84, 42, 84, -54, 84, 100);
+    this.storyPortraitBackdrop.fillStyle(0xf8fafc, 0.08);
+    this.storyPortraitBackdrop.fillRect(-72, -90, 144, 8);
+    this.storyPortraitBackdrop.fillRect(-72, 68, 144, 8);
+
+    this.storyPortraitFrame.clear();
+    this.storyPortraitFrame.fillStyle(0x020617, 0.92);
+    this.storyPortraitFrame.fillRoundedRect(-88, -104, 176, 208, 18);
+    this.storyPortraitFrame.lineStyle(3, style.lineColor, 0.95);
+    this.storyPortraitFrame.strokeRoundedRect(-88, -104, 176, 208, 18);
+  }
+
+  private storyPortraitSeed(beat: StoryBeatPresentation): number {
+    return `${beat.speaker}|${beat.role ?? ''}|${beat.kicker ?? ''}`
+      .split('')
+      .reduce((hash, char) => (hash * 33 + char.charCodeAt(0)) >>> 0, 5381);
+  }
+
+  private syncStoryPortraitArt(beat: StoryBeatPresentation): void {
+    const style = this.storyPanelToneStyle(this.storyPanelTone);
+    const seed = this.storyPortraitSeed(beat);
+    const profileShift = (seed % 24) - 12;
+    const shoulderWidth = 104 + (seed % 28);
+    const shoulderHeight = 44 + ((seed >> 3) % 16);
+    const auraRadius = 42 + ((seed >> 5) % 12);
+    const stripeHeight = 18 + ((seed >> 7) % 16);
+
+    this.storyPortraitBackdrop.clear();
+    this.storyPortraitBackdrop.fillStyle(style.accentColor, 0.14);
+    this.storyPortraitBackdrop.fillRoundedRect(-84, -100, 168, 200, 18);
+    this.storyPortraitBackdrop.fillStyle(style.lineColor, 0.18);
+    this.storyPortraitBackdrop.fillTriangle(-84, 54, 84, -38, 84, 100);
+    this.storyPortraitBackdrop.fillStyle(0xf8fafc, 0.08);
+    this.storyPortraitBackdrop.fillRect(-68, -86, 136, 7);
+    this.storyPortraitBackdrop.fillRect(-68, 72, 136, 7);
+    this.storyPortraitBackdrop.fillStyle(style.accentColor, 0.18);
+    this.storyPortraitBackdrop.fillRect(-84, -100, 168, stripeHeight);
+    this.storyPortraitBackdrop.fillCircle(profileShift - 4, -12, auraRadius);
+    this.storyPortraitBackdrop.fillStyle(0x020617, 0.78);
+    this.storyPortraitBackdrop.fillCircle(profileShift + 8, -20, 30);
+    this.storyPortraitBackdrop.fillRoundedRect(
+      -shoulderWidth / 2 + profileShift,
+      10,
+      shoulderWidth,
+      shoulderHeight,
+      22,
+    );
+    this.storyPortraitBackdrop.fillRoundedRect(profileShift - 12, -16, 46, 84, 20);
+    this.storyPortraitBackdrop.fillStyle(style.lineColor, 0.22);
+    this.storyPortraitBackdrop.fillRect(-84, 84, 168, 4);
+  }
+
+  private storyPortraitMonogramText(beat: StoryBeatPresentation | undefined): string {
+    if (!beat) return '';
+    const letters = beat.speaker
+      .split(/\s+/)
+      .map((part) => part[0] ?? '')
+      .join('')
+      .slice(0, 2)
+      .toUpperCase();
+    return letters || '?';
+  }
+
+  private syncStoryPortrait(beat: StoryBeatPresentation | undefined): void {
+    const visible = !!beat;
+    this.storyPortraitBackdrop.setVisible(visible);
+    this.storyPortraitFrame.setVisible(visible);
+    this.storyPortraitBadge.setVisible(visible);
+    this.storyPortraitMonogram.setVisible(visible);
+    this.storyPortraitName.setVisible(visible);
+    this.storyPortraitRole.setVisible(visible);
+    this.storyPortraitKicker.setVisible(visible && !!beat?.kicker);
+    if (!beat) {
+      this.storyPortraitBackdrop.clear();
+      this.storyPortraitMonogram.setText('');
+      this.storyPortraitName.setText('');
+      this.storyPortraitRole.setText('');
+      this.storyPortraitKicker.setText('');
+      return;
+    }
+    this.syncStoryPortraitArt(beat);
+    this.storyPortraitMonogram.setText(this.storyPortraitMonogramText(beat));
+    this.storyPortraitName.setText(beat.speaker);
+    this.storyPortraitRole.setText(beat.role ?? beat.kicker ?? 'City contact');
+    this.storyPortraitKicker.setText(beat.kicker?.toUpperCase() ?? '');
+  }
+
+  private storyMissionFocus(plan: Pick<StoryMissionPlan, 'prototypeRuntime' | 'prototypeScript'>): Vec2 | null {
+    const focus = storyMissionStartPosition(plan);
+    return focus ? { x: focus.x, y: focus.y } : null;
+  }
+
+  private chapterOpenerFocus(chapter: StoryChapter): Vec2 | null {
+    const firstMission = chapter.missions[0];
+    return firstMission ? this.storyMissionFocus(firstMission) : null;
+  }
+
+  private missionBriefingFocus(mission: StoryMissionPlan): Vec2 | null {
+    return this.storyMissionFocus(mission);
+  }
+
+  private missionSummaryFocus(mission: StoryMissionPlan): Vec2 | null {
+    return this.storyMissionFocus(mission);
+  }
+
+  private presentStoryPanelBeat(beat: StoryPanelBeat): void {
+    const requiresAcknowledge = beat.requiresAcknowledge ?? false;
+    const pauseGame = beat.pauseGame ?? requiresAcknowledge;
+    this.applyStoryPanelTone(beat.tone);
+    this.storyPanelFocusTarget = beat.focusTarget ?? null;
+    this.syncStoryPortrait(beat.beat);
+    this.storyPanel
+      .setText(requiresAcknowledge ? `${beat.text}\n\nPress Enter or tap to continue` : beat.text)
+      .setVisible(true);
+    this.storyPanelFrame.setVisible(true);
+    this.storyPanelAccent.setVisible(true);
+    this.syncStoryPanelFrame();
+    this.beginStoryPanelCinematic(beat.tone, pauseGame);
+    this.storyPanelRemaining = requiresAcknowledge ? 0 : Math.max(0, beat.seconds ?? 0);
+    this.storyPanelRequiresAcknowledge = requiresAcknowledge;
     this.storyPanelPauseGame = pauseGame;
     if (pauseGame && !this.paused) {
       this.paused = true;
@@ -3008,9 +3445,69 @@ export class CityScene extends Phaser.Scene {
     }
   }
 
-  private acknowledgeStoryPanel(): void {
-    const shouldResume = this.storyPanelPauseGame && this.paused;
+  private queueStoryPanelSequence(beats: readonly StoryPanelBeat[]): void {
+    if (beats.length === 0) return;
+    this.storyPanelQueue = beats.slice(1);
+    this.presentStoryPanelBeat(beats[0]!);
+  }
+
+  private advanceStoryPanelQueue(): boolean {
+    const nextBeat = this.storyPanelQueue.shift();
+    if (!nextBeat) return false;
+    this.presentStoryPanelBeat(nextBeat);
+    return true;
+  }
+
+  private hideStoryPanel(): void {
+    this.endStoryPanelCinematic();
     this.storyPanel.setVisible(false);
+    this.storyPanelFrame.setVisible(false);
+    this.storyPanelAccent.setVisible(false);
+    this.syncStoryPortrait(undefined);
+    this.storyPanelQueue = [];
+  }
+
+  private showStoryPanel(
+    text: string,
+    seconds: number,
+    tone: StoryPanelTone = 'brief',
+    beat?: StoryBeatPresentation,
+    focusTarget: Vec2 | null = null,
+  ): void {
+    this.storyPanelQueue = [];
+    this.presentStoryPanelBeat({
+      text,
+      tone,
+      beat,
+      focusTarget,
+      seconds,
+      requiresAcknowledge: false,
+      pauseGame: false,
+    });
+  }
+
+  private showPersistentStoryPanel(
+    text: string,
+    pauseGame = true,
+    tone: StoryPanelTone = 'brief',
+    beat?: StoryBeatPresentation,
+    focusTarget: Vec2 | null = null,
+  ): void {
+    this.storyPanelQueue = [];
+    this.presentStoryPanelBeat({
+      text,
+      tone,
+      beat,
+      focusTarget,
+      requiresAcknowledge: true,
+      pauseGame,
+    });
+  }
+
+  private acknowledgeStoryPanel(): void {
+    if (this.advanceStoryPanelQueue()) return;
+    const shouldResume = this.storyPanelPauseGame && this.paused;
+    this.hideStoryPanel();
     this.storyPanelRemaining = 0;
     this.storyPanelRequiresAcknowledge = false;
     this.storyPanelPauseGame = false;
@@ -3035,6 +3532,168 @@ export class CityScene extends Phaser.Scene {
     ].join(':');
   }
 
+  private currentStoryActTitle(chapter: { actId: string }): string {
+    return STORY_MODE_PROTOTYPE.acts.find((act) => act.id === chapter.actId)?.title ?? chapter.actId;
+  }
+
+  private currentStoryCityStandingText(): string {
+    if (this.mode !== 'story' || !this.storyProgress) {
+      return 'City steady - no lasting shifts yet';
+    }
+    return formatStoryCityState(
+      summarizeStoryCityState(STORY_MODE_PROTOTYPE, this.storyProgress.branchOutcomes),
+    );
+  }
+
+  private storyChapterById(chapterId: string): StoryChapter | null {
+    return STORY_MODE_PROTOTYPE.acts
+      .flatMap((act) => act.chapters)
+      .find((chapter) => chapter.id === chapterId) ?? null;
+  }
+
+  private storyVoiceLine(beat: StoryBeatPresentation | undefined): string | null {
+    if (!beat) return null;
+    return beat.role ? `Voice: ${beat.speaker} (${beat.role})` : `Voice: ${beat.speaker}`;
+  }
+
+  private storyBeatLine(beat: StoryBeatPresentation | undefined): string | null {
+    return beat?.kicker ? `Beat: ${beat.kicker}` : null;
+  }
+
+  private chapterOpenerBeat(chapter: StoryChapter): StoryBeatPresentation | undefined {
+    return chapter.presentation?.opener;
+  }
+
+  private missionBriefingBeat(
+    chapter: StoryChapter,
+    mission: StoryMissionPlan,
+  ): StoryBeatPresentation | undefined {
+    return mission.presentation?.briefing ?? chapter.presentation?.briefing ?? chapter.presentation?.opener;
+  }
+
+  private missionSummaryBeat(
+    chapter: StoryChapter,
+    mission: StoryMissionPlan,
+  ): StoryBeatPresentation | undefined {
+    return (
+      mission.presentation?.summary ??
+      chapter.presentation?.summary ??
+      mission.presentation?.briefing ??
+      chapter.presentation?.briefing ??
+      chapter.presentation?.opener
+    );
+  }
+
+  private missionBriefingText(
+    chapter: StoryChapter,
+    mission: StoryMissionPlan,
+  ): string {
+    const beat = this.missionBriefingBeat(chapter, mission);
+    return [
+      'MISSION BRIEF',
+      mission.title,
+      '',
+      `Chapter ${chapter.order} • ${chapter.title}`,
+      `Act: ${this.currentStoryActTitle(chapter)}`,
+      this.storyVoiceLine(beat),
+      this.storyBeatLine(beat),
+      `Beat: ${chapter.storyRole}`,
+      '',
+      mission.hook,
+      '',
+      `Goal: ${mission.primaryGoal}`,
+      `Pressure: ${mission.secondaryPressure}`,
+      `Failure: ${mission.failureState}`,
+      `City Standing: ${this.currentStoryCityStandingText()}`,
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join('\n');
+  }
+
+  private chapterBriefingText(chapter: StoryChapter): string {
+    const beat = this.chapterOpenerBeat(chapter);
+    return [
+      `CHAPTER ${chapter.order}`,
+      chapter.title,
+      '',
+      `Act: ${this.currentStoryActTitle(chapter)}`,
+      this.storyVoiceLine(beat),
+      this.storyBeatLine(beat),
+      `Role: ${chapter.storyRole}`,
+      '',
+      `Goal: ${chapter.combinedGoal}`,
+      `City Standing: ${this.currentStoryCityStandingText()}`,
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join('\n');
+  }
+
+  private chapterOpenerSequence(chapter: StoryChapter, mission: StoryMissionPlan): StoryPanelBeat[] {
+    return [
+      {
+        text: this.chapterBriefingText(chapter),
+        tone: 'chapter',
+        beat: this.chapterOpenerBeat(chapter),
+        focusTarget: this.chapterOpenerFocus(chapter),
+        requiresAcknowledge: true,
+        pauseGame: true,
+      },
+      {
+        text: this.missionBriefingText(chapter, mission),
+        tone: 'brief',
+        beat: this.missionBriefingBeat(chapter, mission),
+        focusTarget: this.missionBriefingFocus(mission),
+        requiresAcknowledge: true,
+        pauseGame: true,
+      },
+    ];
+  }
+
+  private chapterCompleteSequence(
+    previousChapter: StoryChapter,
+    nextChapter: StoryChapter,
+    nextMission: StoryMissionPlan,
+  ): StoryPanelBeat[] {
+    return [
+      {
+        text: [
+          'CHAPTER COMPLETE',
+          previousChapter.title,
+          '',
+          previousChapter.combinedGoal,
+          '',
+          `City Standing: ${this.currentStoryCityStandingText()}`,
+        ].join('\n'),
+        tone: 'complete',
+        beat: this.chapterOpenerBeat(previousChapter),
+        focusTarget: this.chapterOpenerFocus(previousChapter),
+        seconds: 1.8,
+        pauseGame: false,
+      },
+      {
+        text: [
+          `NEXT CHAPTER • ${nextChapter.order}`,
+          nextChapter.title,
+          '',
+          `Act: ${this.currentStoryActTitle(nextChapter)}`,
+          this.storyVoiceLine(this.chapterOpenerBeat(nextChapter)),
+          this.storyBeatLine(this.chapterOpenerBeat(nextChapter)),
+          `Role: ${nextChapter.storyRole}`,
+          '',
+          `Opening lead: ${nextMission.title}`,
+          nextMission.primaryGoal,
+        ]
+          .filter((line): line is string => Boolean(line))
+          .join('\n'),
+        tone: 'chapter',
+        beat: this.chapterOpenerBeat(nextChapter),
+        focusTarget: this.chapterOpenerFocus(nextChapter),
+        seconds: 2.2,
+        pauseGame: false,
+      },
+    ];
+  }
+
   private showMissionBriefingPanel(): void {
     if (this.mode !== 'story' || !this.storyProgress) return;
     if (this.selectingStoryMission()) {
@@ -3045,7 +3704,11 @@ export class CityScene extends Phaser.Scene {
     const mission = currentStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress);
     if (!chapter || !mission) return;
     this.showPersistentStoryPanel(
-      `MISSION BRIEF\n${mission.title}\n\n${mission.hook}\n\nGoal: ${mission.primaryGoal}`,
+      this.missionBriefingText(chapter, mission),
+      true,
+      'brief',
+      this.missionBriefingBeat(chapter, mission),
+      this.missionBriefingFocus(mission),
     );
   }
 
@@ -3085,7 +3748,13 @@ export class CityScene extends Phaser.Scene {
         systemsText: summary.systemsText,
         recordedAt: Date.now(),
       });
-      this.showPersistentStoryPanel(this.storyMissionSummaryText(summary));
+      this.showPersistentStoryPanel(
+        this.storyMissionSummaryText(summary),
+        true,
+        'summary',
+        chapter ? this.missionSummaryBeat(chapter, resolvedPreviousMission) : undefined,
+        this.missionSummaryFocus(resolvedPreviousMission),
+      );
       return;
     }
     if (!mission) return;
@@ -3093,6 +3762,9 @@ export class CityScene extends Phaser.Scene {
     this.showStoryPanel(
       `MISSION COMPLETE\n${resolvedPreviousMission.title}\nReward: $${reward}\n\n${resolvedPreviousMission.payoff}\n\nNext: ${mission.title}\n${mission.primaryGoal}`,
       4.8,
+      'complete',
+      chapter ? this.missionSummaryBeat(chapter, resolvedPreviousMission) : undefined,
+      this.missionSummaryFocus(resolvedPreviousMission),
     );
   }
 
@@ -3115,11 +3787,29 @@ export class CityScene extends Phaser.Scene {
       .map((mission, index) => `${index + 1}. ${mission.title}\n${mission.primaryGoal}`)
       .join('\n\n');
     const header = resolvedPreviousMission
-      ? `MISSION COMPLETE\n${resolvedPreviousMission.title}\n\n${resolvedPreviousMission.payoff}`
-      : `CHAPTER ${chapter.order}\n${chapter.title}`;
+      ? [
+          'MISSION COMPLETE',
+          resolvedPreviousMission.title,
+          '',
+          resolvedPreviousMission.payoff,
+          '',
+          `City Standing: ${this.currentStoryCityStandingText()}`,
+        ].join('\n')
+      : [
+          `CHAPTER ${chapter.order}`,
+          chapter.title,
+          '',
+          `Role: ${chapter.storyRole}`,
+          `City Standing: ${this.currentStoryCityStandingText()}`,
+        ].join('\n');
     this.showStoryPanel(
       `${header}\n\nChoose the next lead by driving into a mission marker.\n\n${leads}`,
       6.2,
+      'chapter',
+      chapter.presentation?.opener,
+      resolvedPreviousMission
+        ? this.missionSummaryFocus(resolvedPreviousMission)
+        : this.chapterOpenerFocus(chapter),
     );
   }
 
@@ -3134,10 +3824,7 @@ export class CityScene extends Phaser.Scene {
     if (!chapter || !mission) return;
     if (this.storyProgress.current.objectiveIndex >= 0) return;
     if (mission.id !== chapter.missions[0]?.id) return;
-    this.showStoryPanel(
-      `CHAPTER ${chapter.order}\n${chapter.title}\n\n${chapter.storyRole}\n\nGoal: ${chapter.combinedGoal}`,
-      4.8,
-    );
+    this.queueStoryPanelSequence(this.chapterOpenerSequence(chapter, mission));
     this.syncStoryStateText();
   }
 
@@ -3271,7 +3958,13 @@ export class CityScene extends Phaser.Scene {
         ? `Choose next lead: ${nextChoices.map((mission) => mission.title).join(' / ')}`
         : `Next: ${nextMission?.title ?? 'Continue story'}`
       : 'Story complete';
-    const startHealth = baseline.playerVehicleHealth;
+    const chapterId =
+      baseline.chapterId ?? nextProgress?.current?.chapterId ?? this.storyProgress?.current?.chapterId;
+    const chapter = chapterId ? this.storyChapterById(chapterId) : null;
+    const startHealth =
+      typeof baseline.playerVehicleHealth === 'number' || baseline.playerVehicleHealth === null
+        ? baseline.playerVehicleHealth
+        : null;
     const endHealth = this.currentPlayerVehicleHealth();
     const vehicleConditionText =
       startHealth === null && endHealth === null
@@ -3281,9 +3974,12 @@ export class CityScene extends Phaser.Scene {
           : endHealth === null
             ? `Vehicle lost • started at ${Math.round(startHealth)}%`
             : `${Math.round(startHealth)}% → ${Math.round(endHealth)}%`;
+    const beat = chapter ? this.missionSummaryBeat(chapter, previousMission) : undefined;
     return {
-      chapterTitle: this.storyChapterTitle(baseline.chapterId),
+      chapterTitle: chapter?.title ?? chapterId ?? 'Current chapter',
       title: previousMission.title,
+      voiceText: this.storyVoiceLine(beat),
+      beatText: this.storyBeatLine(beat),
       reward,
       outcome: previousMission.payoff,
       durationSeconds,
@@ -3314,18 +4010,23 @@ export class CityScene extends Phaser.Scene {
       card.title,
       '',
       `Chapter: ${card.chapterTitle}`,
-      `Reward: $${card.reward}`,
+      card.voiceText,
+      card.beatText,
       `Objective Outcome: ${card.outcome}`,
+      `Story Changes: ${card.unlockText}`,
+      `City Standing: ${card.cityStateText}`,
+      card.nextText,
+      '',
+      `Reward: $${card.reward}`,
       `Duration: ${card.durationSeconds}s`,
       `Damage / Collateral: ${collateralText}`,
       `Vehicle Condition: ${card.vehicleConditionText}`,
       `Service Lanes: ${card.serviceLaneText}`,
       `Faction Effects: ${card.factionEffectText}`,
-      `City Standing: ${card.cityStateText}`,
       `Systems: ${card.systemsText}`,
-      `Story Changes: ${card.unlockText}`,
-      card.nextText,
-    ].join('\n');
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join('\n');
   }
 
   private carTexture(index: number): string {
@@ -3514,7 +4215,10 @@ export class CityScene extends Phaser.Scene {
     this.focusPoint.setPosition(focus.x, focus.y);
     // On a wrap the focus leaps the width/height of the map; recentre the camera
     // instantly so it doesn't sweep across everything in between.
-    if (jump > WRAP_SNAP_DISTANCE) this.cameras.main.centerOn(focus.x, focus.y);
+    if (jump > WRAP_SNAP_DISTANCE) {
+      const cameraFocus = this.storyPanelCinematicActive ? this.storyPanelFocusTarget ?? focus : focus;
+      this.cameras.main.centerOn(cameraFocus.x, cameraFocus.y);
+    }
 
     this.syncHudText();
     this.syncBustedText();

@@ -160,73 +160,43 @@ test('collected ammo respawns later at a different live location and refreshes t
 test('ammo pickups do not add dots to the minimap', async ({ page }) => {
   await boot(page);
 
-  const changedPixels = await page.evaluate(async () => {
+  const markerDiff = await page.evaluate(() => {
     const g = (window as unknown as { __game: GameProbe }).__game;
     const scene = g.scene.getScene('City');
     const w = scene.world;
-    const canvas = g.canvas;
-    const gl = g.renderer.gl;
-    const frame = (): Promise<void> =>
-      new Promise((resolve) => requestAnimationFrame(() => resolve()));
-    const grab = (): Promise<Uint8Array> =>
-      new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-          g.events.off('postrender', onPost);
-          reject(new Error('readback timeout'));
-        }, 8000);
-        const onPost = (): void => {
-          g.events.off('postrender', onPost);
-          try {
-            const buf = new Uint8Array(canvas.width * canvas.height * 4);
-            gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, buf);
-            clearTimeout(timer);
-            resolve(buf);
-          } catch (error) {
-            clearTimeout(timer);
-            reject(error as Error);
-          }
-        };
-        g.events.on('postrender', onPost);
-      });
-    const diffCount = (before: Uint8Array, after: Uint8Array): number => {
-      let count = 0;
-      for (let i = 0; i < before.length; i += 4) {
-        const d =
-          Math.abs(before[i] - after[i]) +
-          Math.abs(before[i + 1] - after[i + 1]) +
-          Math.abs(before[i + 2] - after[i + 2]);
-        if (d > 24) count += 1;
-      }
-      return count;
-    };
+    const minimapMarkers = () =>
+      JSON.stringify(
+        (scene as unknown as {
+          debugMinimapMarkers(): Array<{
+            kind: string;
+            x: number;
+            y: number;
+            color: number;
+            style: 'stroke' | 'fill';
+            radius?: number;
+          }>;
+        }).debugMinimapMarkers(),
+      );
 
     const originalAmmo = w.ammoPickups.map((pickup) => ({
       pos: { ...pickup.pos },
       amount: pickup.amount,
     }));
     const sample = originalAmmo[0]?.pos ?? { x: w.focus.x + 160, y: w.focus.y };
-    const wasPaused = scene.paused;
 
-    scene.paused = true;
     w.ammoPickups = [];
     scene.syncMinimap();
-    await frame();
-    await frame();
-    const base = await grab();
+    const base = minimapMarkers();
 
     w.ammoPickups = [{ pos: sample, amount: 18 }];
     scene.syncMinimap();
-    await frame();
-    await frame();
-    const withAmmo = await grab();
+    const withAmmo = minimapMarkers();
 
     w.ammoPickups = originalAmmo;
     scene.syncMinimap();
-    scene.paused = wasPaused;
-    await frame();
 
-    return diffCount(base, withAmmo);
+    return base === withAmmo ? 0 : 1;
   });
 
-  expect(changedPixels).toBe(0);
+  expect(markerDiff).toBe(0);
 });

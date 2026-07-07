@@ -127,6 +127,44 @@ async function acknowledgeStoryPanel(page: import('@playwright/test').Page): Pro
   });
 }
 
+async function acknowledgeVisibleStoryPanels(
+  page: import('@playwright/test').Page,
+  maxSteps = 4,
+): Promise<void> {
+  for (let step = 0; step < maxSteps; step += 1) {
+    const visible = await page.evaluate(() => {
+      const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+        .__game;
+      const scene = game?.scene.getScene('City') as {
+        storyPanel?: { visible: boolean };
+        acknowledgeStoryPanel?: () => void;
+      };
+      if (!scene?.storyPanel?.visible) return false;
+      scene.acknowledgeStoryPanel?.();
+      return true;
+    });
+    if (!visible) return;
+    await page.waitForFunction(() => {
+      const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+        .__game;
+      const scene = game?.scene.getScene('City') as {
+        storyPanel?: { visible: boolean };
+      };
+      return scene !== undefined && scene.storyPanel !== undefined;
+    });
+  }
+
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      paused: boolean;
+      storyPanel?: { visible: boolean };
+    };
+    return scene?.paused === false && !scene?.storyPanel?.visible;
+  });
+}
+
 interface StoryRestartMetric {
   durationMs: number;
   pointerdownListeners: number;
@@ -206,7 +244,7 @@ async function launchStoryModeWithOptions(
   await page.getByRole('button', { name: /Start Story|Continue Story|Resume Current Run/ }).click();
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
   await page.locator('#game canvas').click();
-  if (options.acknowledgeBrief) await acknowledgeStoryPanel(page);
+  if (options.acknowledgeBrief) await acknowledgeVisibleStoryPanels(page);
 }
 
 test.afterEach(async ({ page }) => {
@@ -415,27 +453,103 @@ test('story mode boots and restores saved story progress after refresh', async (
   expect(afterRefresh.objectiveIndex).toBe(beforeRefresh.objectiveIndex);
 });
 
-test('story mission briefing stays visible until Enter acknowledges it', async ({ page }) => {
+test('story chapter opener stages into a mission briefing that stays visible until Enter acknowledges it', async ({
+  page,
+}) => {
   await launchStoryModeWithOptions(page, { acknowledgeBrief: false });
 
-  const before = await page.evaluate(() => {
+  const opener = await page.evaluate(() => {
     const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
       .__game;
     const scene = game?.scene.getScene('City') as {
       paused: boolean;
       storyPanel?: { visible: boolean; text: string };
+      storyPanelCinematicActive?: boolean;
+      storyPanelBaseZoom?: number;
+      storyPanelFocusTarget?: { x: number; y: number } | null;
+      storyPortraitName?: { visible: boolean; text: string };
+      storyPortraitRole?: { visible: boolean; text: string };
+      storyPortraitMonogram?: { visible: boolean; text: string };
+      cameras?: { main?: { zoom: number } };
     };
     return {
       paused: !!scene?.paused,
       visible: !!scene?.storyPanel?.visible,
       text: scene?.storyPanel?.text ?? '',
+      cinematicActive: !!scene?.storyPanelCinematicActive,
+      baseZoom: scene?.storyPanelBaseZoom ?? 0,
+      zoom: scene?.cameras?.main?.zoom ?? 0,
+      focusTarget: scene?.storyPanelFocusTarget ?? null,
+      portraitName: scene?.storyPortraitName?.text ?? '',
+      portraitRole: scene?.storyPortraitRole?.text ?? '',
+      portraitMonogram: scene?.storyPortraitMonogram?.text ?? '',
+      portraitVisible: !!scene?.storyPortraitName?.visible,
     };
   });
 
-  expect(before.paused).toBe(true);
-  expect(before.visible).toBe(true);
-  expect(before.text).toContain('MISSION BRIEF');
-  expect(before.text).toContain('Press Enter or tap to continue');
+  expect(opener.paused).toBe(true);
+  expect(opener.visible).toBe(true);
+  expect(opener.cinematicActive).toBe(true);
+  expect(opener.zoom).toBeGreaterThan(opener.baseZoom);
+  expect(opener.focusTarget).toEqual({ x: 640, y: 1088 });
+  expect(opener.portraitVisible).toBe(true);
+  expect(opener.portraitName).toBe('Rook Vance');
+  expect(opener.portraitRole).toContain('Returning wheelman');
+  expect(opener.portraitMonogram).toBe('RV');
+  expect(opener.text).toContain('CHAPTER 1');
+  expect(opener.text).toContain('Dead Drop District');
+  expect(opener.text).toContain('City Standing:');
+  expect(opener.text).toContain('Press Enter or tap to continue');
+
+  await page.keyboard.press('Enter');
+
+  const before = await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      paused: boolean;
+      storyPanel?: { visible: boolean; text: string };
+      storyPanelCinematicActive?: boolean;
+      storyPanelBaseZoom?: number;
+      storyPanelFocusTarget?: { x: number; y: number } | null;
+      storyPortraitName?: { visible: boolean; text: string };
+      storyPortraitRole?: { visible: boolean; text: string };
+      storyPortraitMonogram?: { visible: boolean; text: string };
+      cameras?: { main?: { zoom: number } };
+    };
+    if (!scene?.storyPanel?.visible || !scene.storyPanel.text.includes('MISSION BRIEF')) return null;
+    return {
+      paused: !!scene.paused,
+      visible: !!scene.storyPanel.visible,
+      text: scene.storyPanel.text,
+      cinematicActive: !!scene.storyPanelCinematicActive,
+      baseZoom: scene.storyPanelBaseZoom ?? 0,
+      zoom: scene.cameras?.main?.zoom ?? 0,
+      focusTarget: scene.storyPanelFocusTarget ?? null,
+      portraitName: scene.storyPortraitName?.text ?? '',
+      portraitRole: scene.storyPortraitRole?.text ?? '',
+      portraitMonogram: scene.storyPortraitMonogram?.text ?? '',
+      portraitVisible: !!scene.storyPortraitName?.visible,
+    };
+  });
+  const briefing = await before.jsonValue();
+
+  expect(briefing.paused).toBe(true);
+  expect(briefing.visible).toBe(true);
+  expect(briefing.cinematicActive).toBe(true);
+  expect(briefing.zoom).toBeGreaterThan(briefing.baseZoom);
+  expect(briefing.focusTarget).toEqual({ x: 640, y: 1088 });
+  expect(briefing.portraitVisible).toBe(true);
+  expect(briefing.portraitName).toBe('Rook Vance');
+  expect(briefing.portraitRole).toContain('Returning wheelman');
+  expect(briefing.portraitMonogram).toBe('RV');
+  expect(briefing.text).toContain('MISSION BRIEF');
+  expect(briefing.text).toContain('Voice: Rook Vance');
+  expect(briefing.text).toContain('Beat: Back At The Waterfront');
+  expect(briefing.text).toContain('Pressure:');
+  expect(briefing.text).toContain('Failure:');
+  expect(briefing.text).toContain('City Standing:');
+  expect(briefing.text).toContain('Press Enter or tap to continue');
 
   await page.keyboard.press('Enter');
 
@@ -1216,6 +1330,8 @@ test('scripted encounter mission summaries keep their authored objective outcome
   expect(result.visible).toBe(true);
   expect(result.text).toContain('MISSION SUMMARY');
   expect(result.text).toContain('False Ambulance');
+  expect(result.text).toContain('Voice: Rook Vance');
+  expect(result.text).toContain('Beat: Back At The Waterfront');
   expect(result.text).toContain(
     "Objective Outcome: The rescued contact confirms the cleaners are storing Nia's badge and paper trail in the Pier 9 office.",
   );

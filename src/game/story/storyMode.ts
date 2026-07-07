@@ -80,6 +80,7 @@ export interface StoryMissionVariantOverride {
   secondaryPressure?: string;
   failureState?: string;
   payoff?: string;
+  presentation?: StoryMissionPresentation;
   requiredSystems?: readonly StorySystem[];
   prototypeRuntime?: MissionSpec;
   prototypeScript?: StoryRuntimeScript;
@@ -101,6 +102,23 @@ export interface StoryMissionBranchOutcome {
   effects?: readonly StoryCityEffect[];
 }
 
+export interface StoryBeatPresentation {
+  speaker: string;
+  role?: string;
+  kicker?: string;
+}
+
+export interface StoryMissionPresentation {
+  briefing?: StoryBeatPresentation;
+  summary?: StoryBeatPresentation;
+}
+
+export interface StoryChapterPresentation {
+  opener?: StoryBeatPresentation;
+  briefing?: StoryBeatPresentation;
+  summary?: StoryBeatPresentation;
+}
+
 export interface StoryMissionPlan {
   id: string;
   title: string;
@@ -109,6 +127,7 @@ export interface StoryMissionPlan {
   secondaryPressure: string;
   failureState: string;
   payoff: string;
+  presentation?: StoryMissionPresentation;
   branchOutcome?: StoryMissionBranchOutcome;
   requiredSystems?: readonly StorySystem[];
   prototypeRuntime?: MissionSpec;
@@ -484,6 +503,7 @@ export interface StoryChapter {
   title: string;
   storyRole: string;
   combinedGoal: string;
+  presentation?: StoryChapterPresentation;
   missions: readonly StoryMissionPlan[];
   missionGroups?: readonly (readonly string[])[];
 }
@@ -672,6 +692,7 @@ export function resolveStoryMissionPlan(
   if (variant.secondaryPressure !== undefined) overrides.secondaryPressure = variant.secondaryPressure;
   if (variant.failureState !== undefined) overrides.failureState = variant.failureState;
   if (variant.payoff !== undefined) overrides.payoff = variant.payoff;
+  if (variant.presentation !== undefined) overrides.presentation = variant.presentation;
   if (variant.requiredSystems !== undefined) overrides.requiredSystems = variant.requiredSystems;
   if (variant.prototypeRuntime !== undefined) overrides.prototypeRuntime = variant.prototypeRuntime;
   if (variant.prototypeScript !== undefined) overrides.prototypeScript = variant.prototypeScript;

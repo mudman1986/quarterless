@@ -14,6 +14,13 @@ export const THE_MISSING_SHIFT: StoryChapter = {
     "Rook follows the vanished dispatchers who worked Nia's last night, turning a rumor of disappearances into a paper trail that proves she was moved under an official lie.",
   combinedGoal:
     'Recover the missing dispatchers\' hidden clues, bait out the cleaners shadowing them, and break into the central roster office before the false-death paperwork disappears for good.',
+  presentation: {
+    opener: {
+      speaker: 'Rook Vance',
+      role: 'Following the missing voices',
+      kicker: 'Dispatchers Gone Missing',
+    },
+  },
   missions: [
     {
       id: 'clock-in-ghosts',

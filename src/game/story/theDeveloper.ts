@@ -13,6 +13,13 @@ export const THE_DEVELOPER: StoryChapter = {
     'Rook hits the pillar that turned blight, fire, and displacement into redevelopment margins, forcing a property empire to answer for the ruins it engineered.',
   combinedGoal:
     'Steal the maps, stop the demolitions, rescue the trapped civilians, and crack the flagship tower until the third pillar falls under the weight of its own spectacle.',
+  presentation: {
+    opener: {
+      speaker: 'Rook Vance',
+      role: 'Cracking the model city',
+      kicker: 'Crash The Model City',
+    },
+  },
   missions: [
     {
       id: 'model-unit',

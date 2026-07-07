@@ -13,6 +13,13 @@ export const THE_MINISTER_OF_CARE: StoryChapter = {
     'Rook tears into the health-services pillar that weaponized ambulance scarcity, dead beds, and hidden casualties as tools of power.',
   combinedGoal:
     'Recover the missing medicine, keep the whistleblower alive, force the emergency doors open, and drag the hidden casualty records into daylight before the morgue locks down.',
+  presentation: {
+    opener: {
+      speaker: 'Rook Vance',
+      role: 'Naming the hidden dead',
+      kicker: 'Count The Hidden Bodies',
+    },
+  },
   missions: [
     {
       id: 'short-supply',

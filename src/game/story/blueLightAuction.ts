@@ -14,6 +14,13 @@ export const BLUE_LIGHT_AUCTION: StoryChapter = {
     'Rook uncovers the market where police response priority is sold in person, turning a secret economy of selective law into something that can be named, stolen, and shattered.',
   combinedGoal:
     'Get inside the response auction, strip it of cover, and force its buyers into the open until the ledger becomes public proof instead of a private guarantee.',
+  presentation: {
+    opener: {
+      speaker: 'Rook Vance',
+      role: 'Reading the buyers\' room',
+      kicker: 'The Price Of Priority',
+    },
+  },
   missions: [
     {
       id: 'bid-card',

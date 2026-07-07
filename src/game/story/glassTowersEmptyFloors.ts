@@ -19,6 +19,13 @@ export const GLASS_TOWERS_EMPTY_FLOORS: StoryChapter = {
     ['fire-sale-run'],
     ['vacancy-notice'],
   ],
+  presentation: {
+    opener: {
+      speaker: 'Rook Vance',
+      role: 'Pulling panic into daylight',
+      kicker: 'Towers Built On Panic',
+    },
+  },
   missions: [
     {
       id: 'tenant-warning',

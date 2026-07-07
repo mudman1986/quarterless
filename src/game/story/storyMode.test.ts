@@ -555,6 +555,41 @@ describe('citywide reactivity (Stage 13)', () => {
       .find((mission) => mission.id === 'open-channel');
     expect(resolveStoryMissionPlan(commissioner!, {})).toBe(commissioner);
   });
+
+  it('lets mission variants override presentation metadata without dropping runtime fields', () => {
+    const mission: StoryMissionPlan = {
+      ...minimalMission('chapter-1-m1'),
+      presentation: {
+        briefing: { speaker: 'Rook Vance', kicker: 'Base beat' },
+      },
+      prototypeRuntime: {
+        id: 'chapter-1-m1',
+        title: 'Runtime title',
+        objectives: [
+          { kind: 'reach', description: 'Reach', target: { x: 0, y: 0 }, radius: 24 },
+        ],
+        reward: 2500,
+      },
+      variants: [
+        {
+          branchId: 'briefing-voice',
+          outcomeId: 'nia',
+          presentation: {
+            briefing: { speaker: 'Nia Vance', role: 'Dispatcher', kicker: 'Live relay' },
+          },
+        },
+      ],
+    };
+
+    const resolved = resolveStoryMissionPlan(mission, { 'briefing-voice': 'nia' });
+
+    expect(resolved.presentation?.briefing).toEqual({
+      speaker: 'Nia Vance',
+      role: 'Dispatcher',
+      kicker: 'Live relay',
+    });
+    expect(resolved.prototypeRuntime).toBe(mission.prototypeRuntime);
+  });
 });
 
 describe('compileStoryChapterRuntimeCampaign', () => {

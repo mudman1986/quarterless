@@ -18,6 +18,13 @@ export const METER_RUNNING: StoryChapter = {
     ['meter-burn'],
     ['farewell-signal'],
   ],
+  presentation: {
+    opener: {
+      speaker: 'Rook Vance',
+      role: 'Riding under borrowed names',
+      kicker: 'Fares After Midnight',
+    },
+  },
   missions: [
     {
       id: 'ghost-fare',

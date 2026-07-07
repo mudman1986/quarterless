@@ -13,6 +13,13 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
     'Rook returns to the waterfront, learns Nia was moving evidence, and discovers someone is already cleaning up her trail.',
   combinedGoal:
     "Trace Nia's evidence trail from the waterfront lockers to the Pier 9 cleaners' office before the last physical proof is erased.",
+  presentation: {
+    opener: {
+      speaker: 'Rook Vance',
+      role: 'Returning wheelman',
+      kicker: 'Back At The Waterfront',
+    },
+  },
   missions: [
     {
       id: 'night-ferry-run',

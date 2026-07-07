@@ -10,6 +10,13 @@ export const DAWN_THROUGH_CONCRETE: StoryChapter = {
     'Rook reaches Nia at last, tears into the Switchboard core, and forces the city to decide what survives after the machine that monetized movement is broken open.',
   combinedGoal:
     'Breach the hidden facility, bring Nia out alive, stop the failsafe destruction routes, and survive the collapse long enough to leave the city with its truth intact.',
+  presentation: {
+    opener: {
+      speaker: 'Rook Vance',
+      role: 'Driving toward first light',
+      kicker: 'Dawn After The Switchboard',
+    },
+  },
   missions: [
     {
       id: 'breach-window',

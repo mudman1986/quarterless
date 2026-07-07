@@ -14,6 +14,13 @@ export const THE_COMMISSIONER: StoryChapter = {
     'Rook turns on the police commissioner who sold selective law, aiming not just to kill a corrupt office but to force loyal cops and defectors to see the same proof at once.',
   combinedGoal:
     'Get inside the commissioner\'s protected routes, fracture the command chain from within, and force a confession over open radio while the last loyal response collapses.',
+  presentation: {
+    opener: {
+      speaker: 'Rook Vance',
+      role: 'Forcing the confession',
+      kicker: 'Force The Confession',
+    },
+  },
   missions: [
     {
       id: 'honor-guard',

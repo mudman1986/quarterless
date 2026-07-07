@@ -15,6 +15,13 @@ export const THE_SWITCHBOARD_NAME: StoryChapter = {
     ['four-minute-silence'],
     ['name-in-the-static'],
   ],
+  presentation: {
+    opener: {
+      speaker: 'Rook Vance',
+      role: 'Naming the machine',
+      kicker: 'The Network Has A Name',
+    },
+  },
   missions: [
     {
       id: 'dead-letter-branch',

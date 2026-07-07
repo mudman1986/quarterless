@@ -23,6 +23,20 @@ At a glance:
 - **Front end:** a dedicated story launcher owns continue/new-story/chapter-select,
   resume, checkpoint restart, manual save/load slots, current-objective display,
   chapter replay, mission scorecards, and a "City Standing" consequence archive.
+- **Presentation:** chapter and mission panels now surface authored beat/stakes
+  context instead of only bare mission titles: act/chapter framing, mission pressure,
+  failure stakes, and current city standing all show in the live in-scene story cards.
+  Those cards now also use distinct presentation tones for chapter openers, mission
+  briefs, summaries, failure beats, and completion beats instead of one generic box.
+  Every authored chapter now also carries opener voice/beat metadata, and the live
+  story cards use that authored voice plus lightweight cinematic zoom/reveal timing.
+  The story-card layer now also includes a portrait-style speaker card and camera
+  framing that pans toward authored mission points of interest instead of only zooming
+  around the player, so briefings and chapter openers land more like staged beats than
+  debug overlays. Chapter starts now stage through a dedicated opener card before the
+  live mission brief, chapter finales stage through a chapter-complete handoff into the
+  next chapter card, and the portrait layer uses a stronger speaker-specific treatment
+  instead of a plain monogram box.
 - **Persistence:** autosave and manual slots share one source of truth, with
   version-walking migration on load.
 - **Quality gates (all green):**
@@ -96,12 +110,24 @@ blockers for "the planned story mode is done".
   prototype-grade. A dedicated writing pass for voice, consistency, and payoff across
   all 24 chapters would raise the story from "functional" to "engaging".
 - **Cutscene / beat presentation.** City-state consequences and branch outcomes are
-  surfaced as text lines today. Consider lightweight staged beats (camera moves,
-  character portraits) for act openers and finales.
+  no longer limited to bare title/goal text in the live scene: chapter and mission
+  cards now surface act framing, authored pressure/failure stakes, and current city
+  standing, and the panel system now gives the major beat types distinct visual tones.
+  The new story-card layer also uses authored voice/beat metadata from the chapter
+  files plus lightweight cinematic zoom/reveal timing, portrait-style speaker cards,
+  and camera moves that frame authored mission points of interest. Multi-step opener /
+  finale handoffs and a stronger procedural portrait treatment are now in place. The
+  remaining gap is the true art pass: bespoke portrait assets, finale-specific layouts,
+  and more authored camera choreography than the current reusable staged-beat system.
+
+- **Ship-quality validation.** The engineering ship gate is now strong enough to run as
+  a real pre-release sweep: full Vitest coverage, full Playwright coverage, build,
+  typecheck, and lint. What still remains manual is the human side of shipping: balance
+  feel, writing polish, audio mix, and device-specific playtesting.
 
 ### Tier 3 — Depth, replayability, and reach
 
-- **Endgame / replayability.** New Game+, chapter time-attack or challenge modifiers,
+- **Endgame / replayability.** New Game+,
   a per-chapter score/medal system, and a story-wide completion summary give reasons
   to replay beyond branch exploration.
 - **Mobile / touch quality pass.** Touch menu and controls exist and are tested, but a
@@ -109,8 +135,6 @@ blockers for "the planned story mode is done".
   is needed before calling mobile "supported".
 - **Cloud / cross-device saves.** Saves are localStorage-only. Optional export/import
   or account-backed sync would protect long story runs.
-- **Localization (i18n).** All strings are inline English. Extract user-facing text to
-  a resource layer if non-English reach matters.
 - **Telemetry (opt-in).** Lightweight, privacy-respecting completion/drop-off metrics
   would turn future balance passes from guesswork into data.
 

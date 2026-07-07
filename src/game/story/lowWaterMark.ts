@@ -13,6 +13,13 @@ export const LOW_WATER_MARK: StoryChapter = {
     'Rook exposes the utility board\'s role in steering panic, proving that flood gates, outages, and blocked rescue lanes are being sold as another Switchboard product.',
   combinedGoal:
     'Beat the flood-control sabotage, hold the pump grid online, and pull the foreman who knows where Nia was sent before the district is washed into another managed emergency.',
+  presentation: {
+    opener: {
+      speaker: 'Rook Vance',
+      role: 'Chasing panic through floodgates',
+      kicker: 'Panic By Floodgate',
+    },
+  },
   missions: [
     {
       id: 'valve-street',
