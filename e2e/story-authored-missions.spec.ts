@@ -796,7 +796,7 @@ test('completing an eliminate chapter finale does not leak its transient squad i
     chapterId: 'spare-parts-gospel',
     completedMissionId: 'last-call-at-pier-9',
   });
-  await acknowledgeStoryPanel(page);
+  await acknowledgeStoryPanelsUntilGameplay(page);
 
   expect(await storyPedActorState(page, 'pier-9-cleaners')).toEqual({
     missionId: 'yard-talk',

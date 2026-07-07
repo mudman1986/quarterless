@@ -127,6 +127,17 @@ async function acknowledgeStoryPanel(page: import('@playwright/test').Page): Pro
   });
 }
 
+async function advanceStoryPanelOnce(page: import('@playwright/test').Page): Promise<void> {
+  await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      acknowledgeStoryPanel?: () => void;
+    };
+    scene?.acknowledgeStoryPanel?.();
+  });
+}
+
 async function acknowledgeVisibleStoryPanels(
   page: import('@playwright/test').Page,
   maxSteps = 4,
@@ -2173,7 +2184,20 @@ test('story mode can complete a longer multi-objective encounter and roll into t
 
   expect(completionText).toContain('CHAPTER COMPLETE');
   expect(completionText).toContain('Static On The Hospital Band');
-  expect(completionText).toContain('Next: Meter Running');
+
+  const nextChapterBeat = await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      pendingStoryRestart?: unknown;
+      storyPanel?: { text: string };
+    };
+    if (!scene?.pendingStoryRestart) return null;
+    const text = scene.storyPanel?.text ?? '';
+    return text.includes('NEXT CHAPTER') ? text : null;
+  });
+
+  expect((await nextChapterBeat.jsonValue()) as string).toContain('Opening lead: Ghost Fare');
 
   const result = await page.waitForFunction(
     () => {
@@ -2193,8 +2217,6 @@ test('story mode can complete a longer multi-objective encounter and roll into t
       if (scene?.pendingStoryRestart) return null;
       if (scene?.storyProgress?.current?.chapterId !== 'meter-running') return null;
       if (scene.storyProgress.current.missionId !== 'ghost-fare') return null;
-      if (scene.world.mission?.title !== 'Ghost Fare') return null;
-      if (!scene.storyPanel?.text.startsWith('MISSION BRIEF\nGhost Fare')) return null;
       return {
         missionTitle: scene.world.mission?.title ?? '',
         panel: scene.storyPanel?.text ?? '',
@@ -2214,7 +2236,6 @@ test('story mode can complete a longer multi-objective encounter and roll into t
   };
 
   expect(longEncounterValue).toMatchObject({
-    missionTitle: 'Ghost Fare',
     unlocked: [
       'dead-drop-district',
       'spare-parts-gospel',
@@ -2223,8 +2244,26 @@ test('story mode can complete a longer multi-objective encounter and roll into t
     ],
     completed: ['dead-drop-district', 'spare-parts-gospel', 'static-on-the-hospital-band'],
   });
-  expect(longEncounterValue.panel).toContain('MISSION BRIEF');
-  expect(longEncounterValue.panel).toContain('Ghost Fare');
+  expect(longEncounterValue.panel).toContain('NEXT CHAPTER • 4');
+  expect(longEncounterValue.panel).toContain('Opening lead: Ghost Fare');
+
+  await advanceStoryPanelOnce(page);
+
+  const missionBrief = await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      world: { mission?: { title: string } | null };
+      storyPanel?: { text: string };
+    };
+    if (scene?.world.mission?.title !== 'Ghost Fare') return null;
+    const text = scene.storyPanel?.text ?? '';
+    return text.startsWith('MISSION BRIEF\nGhost Fare') ? text : null;
+  });
+
+  const missionBriefText = (await missionBrief.jsonValue()) as string;
+  expect(missionBriefText).toContain('MISSION BRIEF');
+  expect(missionBriefText).toContain('Ghost Fare');
 });
 
 test('chapter completion preserves money, ammo, and health instead of resetting the run', async ({
