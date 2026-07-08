@@ -330,6 +330,100 @@ for (const { entry, expectedProgress, startProgress } of missionCompletionCases)
   });
 }
 
+test('despawning a story actor the player is currently driving ejects them instead of stranding them off-map', async ({
+  page,
+}) => {
+  // Regression: despawnStoryActor() used to teleport an actor's car to the
+  // off-map despawn point without checking whether the player happened to be
+  // driving it (e.g. shortly before a stage transition or mission end). Since
+  // the camera/player follow whatever car `drivingCarIndex` points at, this
+  // dragged the player off-map right along with the car — "the vehicle
+  // disappeared" from the player's perspective.
+  await launchSindicate(page);
+  const target = scriptedRouteVehicleCases[0];
+  await restartIntoStoryMission(page, { ...target, objectiveIndex: 0 });
+  await acknowledgeStoryPanel(page);
+
+  const result = await page.evaluate((actorId) => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      storyScript?: { actorCarIndices: Record<string, number> } | null;
+      despawnStoryActor: (id: string) => void;
+      world: {
+        drivingCarIndex: number | null;
+        player: { pos: { x: number; y: number } };
+        cars: Array<{ pos: { x: number; y: number } }>;
+      };
+    };
+    const carIndex = scene?.storyScript?.actorCarIndices?.[actorId];
+    if (!scene || carIndex === undefined) throw new Error(`Missing actor car for ${actorId}`);
+    const carPosBefore = { ...scene.world.cars[carIndex]!.pos };
+    // Simulate the player driving the actor's own car right when it gets despawned.
+    scene.world.drivingCarIndex = carIndex;
+    scene.despawnStoryActor(actorId);
+    return {
+      carPosBefore,
+      drivingCarIndex: scene.world.drivingCarIndex,
+      playerPos: { ...scene.world.player.pos },
+    };
+  }, target.actorId);
+
+  expect(result.drivingCarIndex).toBeNull(); // player was ejected, not left "driving" a despawned car
+  // The player must be left near where the car actually was, not flung to the
+  // far off-map despawn coordinates.
+  const dx = result.playerPos.x - result.carPosBefore.x;
+  const dy = result.playerPos.y - result.carPosBefore.y;
+  expect(Math.hypot(dx, dy)).toBeLessThan(100);
+});
+
+test('a single frame hitch (e.g. the tab regaining focus) does not instantly fail an active fail-rule mission', async ({
+  page,
+}) => {
+  // Regression: CityScene.update() fed the raw, unclamped Phaser frame delta
+  // straight into syncStoryScript()'s story fail-rule timers. A dropped frame,
+  // a GC pause, or the browser tab losing and regaining focus can hand a
+  // multi-second `deltaMs` to a single update() call; unclamped, that jumps
+  // straight past any fail rule's `maxSeconds` in one shot ("mission failed
+  // two seconds after starting", even though the failing condition — here,
+  // already being at/above the wanted-pressure threshold — never actually
+  // held for that long in real time).
+  await launchSindicate(page);
+  await restartIntoStoryMission(page, {
+    actId: 'court-the-citys-middle-powers',
+    chapterId: 'saints-of-the-side-street',
+    missionId: 'siren-swap',
+    objectiveIndex: 0,
+  });
+  await acknowledgeStoryPanel(page);
+
+  const result = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: { mission?: { id: string } | null; wanted: { heat: number } };
+      pendingStoryRestart: unknown;
+      update: (time: number, deltaMs: number) => void;
+    };
+    if (!scene) throw new Error('Missing City scene');
+    const missionBefore = scene.world.mission?.id ?? null;
+    // Already at the 2-star wanted-pressure threshold this mission fails on.
+    scene.world.wanted = { heat: 210 };
+    // Simulate a single ~10-second frame hitch/tab-refocus.
+    scene.update(0, 10_000);
+    return {
+      missionBefore,
+      missionAfter: scene.world.mission?.id ?? null,
+      pendingRestart: scene.pendingStoryRestart !== null,
+    };
+  });
+
+  expect(result.missionBefore).toBe('siren-swap');
+  // One hitch, however large, must not by itself exceed the fail rule's real
+  // (small) grace window — the clamp caps how much timer progress one frame
+  // can contribute, matching what could actually have elapsed moment-to-moment.
+  expect(result.pendingRestart).toBe(false);
+  expect(result.missionAfter).toBe('siren-swap');
+});
+
 test('scripted route vehicles advance instead of snapping back to their spawn point', async ({ page }) => {
   await launchSindicate(page);
 

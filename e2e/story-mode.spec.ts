@@ -543,7 +543,7 @@ test('story chapter opener stages into a mission briefing that stays visible unt
       portraitVisible: !!scene.storyPortraitName?.visible,
     };
   });
-  const briefing = await before.jsonValue();
+  const briefing = (await before.jsonValue())!;
 
   expect(briefing.paused).toBe(true);
   expect(briefing.visible).toBe(true);

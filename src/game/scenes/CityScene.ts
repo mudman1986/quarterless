@@ -169,6 +169,12 @@ function safeStorage(): KeyValueStore {
 
 const FIXED_STEP = 1 / 60;
 const MAX_SUBSTEPS = 5;
+/** Largest per-frame delta (seconds) ever fed into the simulation/story timers. A dropped
+ * frame, a GC pause, or the browser tab losing focus and later resuming can otherwise hand a
+ * multi-second `deltaMs` to a single `update()` call; unclamped, that jumps straight past any
+ * story fail-rule's `maxSeconds` in one shot (a mission could fail the instant the tab regains
+ * focus, well before the player could ever have actually held the failing condition that long). */
+const MAX_FRAME_DT = 0.25;
 const PLAYER_SIZE = 14;
 const PED_SIZE = 10;
 /** Every Nth sidewalk strip gets a starting pedestrian. Lower means denser crowds. */
@@ -1001,6 +1007,7 @@ export class CityScene extends Phaser.Scene {
     if (!script) return;
     const carIndex = script.actorCarIndices[actorId];
     if (carIndex !== undefined && this.world.cars[carIndex]) {
+      if (this.world.drivingCarIndex === carIndex) this.world.exitVehicle();
       const carDrivers = (this.world as unknown as { carDrivers: (TrafficAI | null)[] }).carDrivers;
       this.world.cars[carIndex] = {
         ...this.world.cars[carIndex]!,
@@ -2838,7 +2845,7 @@ export class CityScene extends Phaser.Scene {
     const keyboard = this.input_.read();
     const touch = this.touchEnabled && touchSnapshot ? touchSnapshot.controls : NO_CONTROLS;
     const controls = mergeControls(keyboard, touch);
-    const dt = deltaMs / 1000;
+    const dt = Math.min(deltaMs / 1000, MAX_FRAME_DT);
 
     this.syncStoryScript(dt);
 
