@@ -2240,9 +2240,18 @@ export class World {
             prev,
             dt,
             (loaded) => {
-              this.towedCars[prev.targetCar] = true; // hooked up; removed from play
-              const slot = Math.max(0, this.tows.indexOf(prev));
-              this.respawnCarAtTowYard(prev.targetCar, slot);
+              // The wreck may already have been claimed and towed by someone
+              // else (e.g. the player completed their own tow side-mission on
+              // this exact car) while this crew was mid-animation walking out
+              // to it. Only hook up and respawn a car that is still actually
+              // a live wreck — otherwise this would re-run the full respawn
+              // on whatever now occupies that slot (a car already back in
+              // normal play), yanking it to the tow yard out of nowhere.
+              if (this.wreckedCars[prev.targetCar]) {
+                this.towedCars[prev.targetCar] = true; // hooked up; removed from play
+                const slot = Math.max(0, this.tows.indexOf(prev));
+                this.respawnCarAtTowYard(prev.targetCar, slot);
+              }
               return { ...loaded, completedWrecks: loaded.completedWrecks + 1 };
             },
             (boarded) => this.nextTowTruckJob(boarded),

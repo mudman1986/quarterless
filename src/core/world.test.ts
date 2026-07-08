@@ -6,6 +6,7 @@ import {
   SCORE_PER_POLICE,
   PLAYER_MAX_HEALTH,
   SERVICE_TIMEOUT,
+  SERVICE_PICKUP_DWELL,
   TRAFFIC_CAR_KINDS,
   VEHICLE_BURN_DURATION,
   carTuningForKind,
@@ -3902,6 +3903,56 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     const startDistance = distance(w.pedestrians[0].pos, towYard.spawn);
     for (let i = 0; i < 120; i++) w.tick(controls(), 1 / 60);
     expect(distance(w.pedestrians[0].pos, towYard.spawn)).toBeLessThan(startDistance);
+  });
+
+  it('does not re-respawn a wreck the player already resolved while an auto-dispatched tow crew was mid-animation', () => {
+    // Regression: an auto-dispatched tow truck's crew, once it finishes its own
+    // walk-out-and-hook animation, unconditionally set towedCars[targetCar] and
+    // called respawnCarAtTowYard(targetCar) — even if the player had already
+    // completed their own tow side-mission on that exact wreck in the meantime
+    // (setting towedCars true and respawning it themselves). That re-ran the
+    // full respawn on whatever now legitimately occupies that car slot (back in
+    // normal play), yanking it to a tow-yard spawn point out of nowhere.
+    const city = miniCity();
+    const wreck: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 20, radius: 12 };
+    const w = new World({
+      player: player(),
+      cars: [wreck],
+      city,
+      carDrivers: [{ dir: vec2(1, 0) }],
+      viewRadius: 4000,
+      bounds: { width: city.width, height: city.height },
+    });
+    // Simulate: the player's own tow mission already resolved this wreck (it is
+    // back in normal play, no longer a wreck) while an auto-dispatched truck's
+    // crew was still mid-animation walking out to hook it.
+    w.wreckedCars[0] = false;
+    w.towedCars[0] = true;
+    const beforePos = { ...w.cars[0].pos };
+    w.tows = [
+      {
+        pos: tileCenter(city.spec, 3, 4),
+        heading: 0,
+        radius: 14,
+        dir: vec2(1, 0),
+        target: wreck.pos,
+        targetCar: 0,
+        depot: tileCenter(city.spec, 3, 4),
+        completedWrecks: 0,
+        phase: 'collect',
+        crew: wreck.pos,
+        pickupElapsed: SERVICE_PICKUP_DWELL - 0.01,
+        age: 0,
+        speed: 0,
+        blocked: 0,
+        health: 60,
+      },
+    ];
+
+    w.tick(controls(), 1 / 60); // crosses the SERVICE_PICKUP_DWELL threshold this tick
+
+    // The already-resolved car must not be yanked back to a tow-yard spawn.
+    expect(w.cars[0].pos).toEqual(beforePos);
   });
 
   it('leaves a corpse when the tow operator is shot on foot', () => {
