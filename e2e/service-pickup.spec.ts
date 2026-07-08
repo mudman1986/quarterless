@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { TEX } from '../src/game/art/textures';
+import { SHEET } from '../src/game/art/textures';
 import { buildCity, tileCenter } from '../src/core/city';
 import { CITY_SPEC } from '../src/game/citySpec';
 import { launchSindicate } from './helpers';
@@ -109,7 +109,7 @@ interface GameProbe {
       hud: { text: string; visible: boolean };
       serviceMarker: { visible: boolean };
       world: RuntimeWorld;
-      pedSprites: Array<{ texture: { key: string } }>;
+      pedSprites: Array<{ texture: { key: string }; frame: { name: string | number } }>;
       syncSprites(): void;
       syncMinimap(): void;
     };
@@ -679,6 +679,7 @@ test('the player can steal the parked ambulance during the loading window', asyn
       crewHeadingHome: w.pedestrians[0]?.returningTo !== undefined,
       crewUniform: w.pedestrians[0]?.uniform ?? null,
       crewTexture: scene.pedSprites[0]?.texture.key ?? null,
+      crewFrame: Number(scene.pedSprites[0]?.frame.name ?? -1),
     };
   });
 
@@ -690,7 +691,8 @@ test('the player can steal the parked ambulance during the loading window', asyn
   expect(state.returningCrew).toBe(1);
   expect(state.crewHeadingHome).toBe(true);
   expect(state.crewUniform).toBe('medic');
-  expect(state.crewTexture).toBe(TEX.medic);
+  expect(state.crewTexture).toBe(SHEET.people);
+  expect([12, 13]).toContain(state.crewFrame);
 });
 
 test('the player can steal the parked tow truck during the loading window', async ({ page }) => {
@@ -725,6 +727,7 @@ test('the player can steal the parked tow truck during the loading window', asyn
       crewHeadingHome: w.pedestrians[0]?.returningTo !== undefined,
       crewUniform: w.pedestrians[0]?.uniform ?? null,
       crewTexture: scene.pedSprites[0]?.texture.key ?? null,
+      crewFrame: Number(scene.pedSprites[0]?.frame.name ?? -1),
     };
   });
 
@@ -736,7 +739,8 @@ test('the player can steal the parked tow truck during the loading window', asyn
   expect(state.returningCrew).toBe(1);
   expect(state.crewHeadingHome).toBe(true);
   expect(state.crewUniform).toBe('towWorker');
-  expect(state.crewTexture).toBe(TEX.towWorker);
+  expect(state.crewTexture).toBe(SHEET.people);
+  expect([14, 15]).toContain(state.crewFrame);
 });
 
 test('stealing a patrol car starts and completes a live suspect bust side mission', async ({

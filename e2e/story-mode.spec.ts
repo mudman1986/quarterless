@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { waitForCitySceneReady } from './helpers';
 
 const MANUAL_SAVE_KEY = 'sindicate.manualSave';
 const UNLOCKED_THROUGH_STATIC_ON_THE_HOSPITAL_BAND = [
@@ -253,7 +254,9 @@ async function launchStoryModeWithOptions(
   await page.getByRole('button', { name: 'Play Sindicate' }).click();
   await expect(page.getByRole('heading', { name: 'Story Mode' })).toBeVisible({ timeout: 10_000 });
   await page.getByRole('button', { name: /Start Story|Continue Story|Resume Current Run/ }).click();
+  await page.waitForURL(/\/quarterless\/\?mode=story&story=1$/, { timeout: 15_000 });
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
+  await waitForCitySceneReady(page);
   await page.locator('#game canvas').click();
   if (options.acknowledgeBrief) await acknowledgeVisibleStoryPanels(page);
 }
@@ -2772,6 +2775,7 @@ test('story mode persists manual save slots alongside story progress', async ({ 
 
   await page.getByRole('button', { name: /Resume Current Run|Continue Story|Start Story/ }).click();
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
+  await waitForCitySceneReady(page, { requireCampaign: true });
   await page.evaluate(() => {
     const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
       .__game;

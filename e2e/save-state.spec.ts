@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { launchSindicate } from './helpers';
+import { launchSindicate, waitForCitySceneReady } from './helpers';
 
 interface GameProbe {
   scene: {
@@ -19,7 +19,6 @@ interface GameProbe {
   };
 }
 
-const GAME = '() => window.__game';
 const SAVE_KEY = 'sindicate.gameState';
 const MANUAL_SAVE_KEY = 'sindicate.manualSave';
 
@@ -50,7 +49,7 @@ type StoredSave = {
 async function boot(page: Page): Promise<void> {
   await launchSindicate(page);
   await page.keyboard.press('Space');
-  await page.waitForFunction(GAME);
+  await waitForCitySceneReady(page);
   await page.waitForTimeout(300);
 }
 
@@ -175,6 +174,7 @@ test('Sindicate can manually save a run and load it later from pause', async ({ 
 
   await page.getByRole('button', { name: /Resume Current Run|Continue Story|Start Story/ }).click();
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
+  await waitForCitySceneReady(page);
 
   await page.evaluate(() => {
     const game = (window as unknown as { __game: GameProbe }).__game;
@@ -206,7 +206,7 @@ test('Sindicate can manually save a run and load it later from pause', async ({ 
     const scene = game.scene.getScene('City') as { scene: { restart(data: unknown): void } };
     scene.scene.restart({ loadSaveKey: key });
   }, manualSaveKey(1));
-  await page.waitForFunction(() => Boolean((window as unknown as { __game?: GameProbe }).__game));
+  await waitForCitySceneReady(page);
 
   const loadedState = await readState(page);
   expect(loadedState.pos).toEqual(manualBaseline.pos);
@@ -251,6 +251,7 @@ test('Sindicate keeps multiple manual save slots independent', async ({ page }) 
 
   await page.getByRole('button', { name: /Resume Current Run|Continue Story|Start Story/ }).click();
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
+  await waitForCitySceneReady(page);
   await page.evaluate(() => {
     const game = (window as unknown as { __game: GameProbe }).__game;
     const scene = game.scene.getScene('City');
@@ -283,7 +284,7 @@ test('Sindicate keeps multiple manual save slots independent', async ({ page }) 
     const scene = game.scene.getScene('City') as { scene: { restart(data: unknown): void } };
     scene.scene.restart({ loadSaveKey: key });
   }, manualSaveKey(1));
-  await page.waitForFunction(() => Boolean((window as unknown as { __game?: GameProbe }).__game));
+  await waitForCitySceneReady(page);
 
   const loadedSlotOneState = await readState(page);
   expect(loadedSlotOneState.pos).toEqual(slotOneState.pos);
@@ -297,7 +298,7 @@ test('Sindicate keeps multiple manual save slots independent', async ({ page }) 
     const scene = game.scene.getScene('City') as { scene: { restart(data: unknown): void } };
     scene.scene.restart({ loadSaveKey: key });
   }, manualSaveKey(2));
-  await page.waitForFunction(() => Boolean((window as unknown as { __game?: GameProbe }).__game));
+  await waitForCitySceneReady(page);
 
   const loadedSlotTwoState = await readState(page);
   expect(loadedSlotTwoState.pos).toEqual(slotTwoState.pos);
@@ -331,6 +332,7 @@ test('clicking the real Load-slot button in the story menu restores that slot', 
 
   await page.getByRole('button', { name: /Resume Current Run|Continue Story|Start Story/ }).click();
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
+  await waitForCitySceneReady(page);
 
   // Drift away from the saved slot so we can tell whether Load actually restores it.
   await page.evaluate(() => {
@@ -347,10 +349,11 @@ test('clicking the real Load-slot button in the story menu restores that slot', 
   await expect(page.getByRole('heading', { name: 'Story Mode' })).toBeVisible({ timeout: 10_000 });
   await page.locator('[data-story-slot-load="1"]').click();
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
+  await waitForCitySceneReady(page);
   await page.waitForFunction(() => {
     const game = (window as unknown as { __game?: GameProbe }).__game;
-    if (!game) return false;
-    const world = game.scene.getScene('City').world;
+    const world = game?.scene.getScene('City').world;
+    if (!world) return false;
     return world.player.pos.x === 501 && world.player.pos.y === 502;
   });
 
