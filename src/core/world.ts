@@ -1171,6 +1171,23 @@ export class World {
     };
   }
 
+  /** Keep non-player scripted vehicles out of the river even when their
+   * movement is authored directly instead of going through the lane planner. */
+  keepNpcCarOutOfWater(currentPos: Vec2, nextPos: Vec2): Vec2 {
+    if (!this.city) return nextPos;
+    const dist = distance(currentPos, nextPos);
+    const steps = Math.max(1, Math.ceil(dist / Math.max(8, this.city.spec.tile / 2)));
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const sample = vec2(
+        currentPos.x + (nextPos.x - currentPos.x) * t,
+        currentPos.y + (nextPos.y - currentPos.y) * t,
+      );
+      if (this.isWaterAt(sample)) return currentPos;
+    }
+    return nextPos;
+  }
+
   setStoryDistrictStateEffects(
     effects: {
       serviceLaneBlocks?: readonly ServiceObjectiveKind[];

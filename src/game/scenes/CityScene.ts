@@ -1009,12 +1009,26 @@ export class CityScene extends Phaser.Scene {
     if (carIndex !== undefined && this.world.cars[carIndex]) {
       if (this.world.drivingCarIndex === carIndex) this.world.exitVehicle();
       const carDrivers = (this.world as unknown as { carDrivers: (TrafficAI | null)[] }).carDrivers;
+      const carHealth = (this.world as unknown as { carHealth: number[] }).carHealth;
+      const carBurnTimers = (this.world as unknown as { carBurnTimers: number[] }).carBurnTimers;
+      const carBurnByPlayer = (this.world as unknown as { carBurnByPlayer: boolean[] })
+        .carBurnByPlayer;
+      const towDispatchCooldowns = (this.world as unknown as { towDispatchCooldowns: number[] })
+        .towDispatchCooldowns;
+      const wreckedCars = (this.world as unknown as { wreckedCars: boolean[] }).wreckedCars;
+      const towedCars = (this.world as unknown as { towedCars: boolean[] }).towedCars;
       this.world.cars[carIndex] = {
         ...this.world.cars[carIndex]!,
         pos: STORY_ACTOR_DESPAWN_POS,
         speed: 0,
       };
       carDrivers[carIndex] = null;
+      carHealth[carIndex] = 100;
+      carBurnTimers[carIndex] = 0;
+      carBurnByPlayer[carIndex] = false;
+      towDispatchCooldowns[carIndex] = 0;
+      wreckedCars[carIndex] = false;
+      towedCars[carIndex] = false;
       this.despawnedStoryCarIndices.add(carIndex);
       if (!this.storyReusableCarIndices.includes(carIndex)) this.storyReusableCarIndices.push(carIndex);
     }
@@ -1071,14 +1085,23 @@ export class CityScene extends Phaser.Scene {
       return { carIndex, routeIndex, disabled };
     }
     const step = advanceVehicleRouteActor(actor, car.pos, routeIndex, dt, car.heading);
+    const nextPos = this.world.keepNpcCarOutOfWater(car.pos, step.pos);
+    const blockedByWater =
+      nextPos.x === car.pos.x &&
+      nextPos.y === car.pos.y &&
+      (step.pos.x !== car.pos.x || step.pos.y !== car.pos.y);
     this.world.cars[carIndex] = {
       ...car,
       heading: step.heading,
-      speed: step.speed,
-      pos: step.pos,
+      speed: blockedByWater ? 0 : step.speed,
+      pos: nextPos,
     };
-    script.actorRouteIndices[actor.actorId] = step.routeIndex;
-    return { carIndex, routeIndex: step.routeIndex, disabled };
+    script.actorRouteIndices[actor.actorId] = blockedByWater ? routeIndex : step.routeIndex;
+    return {
+      carIndex,
+      routeIndex: blockedByWater ? routeIndex : step.routeIndex,
+      disabled,
+    };
   }
 
   private runPedestrianRouteActor(

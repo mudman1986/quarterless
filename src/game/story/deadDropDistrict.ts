@@ -1,4 +1,5 @@
 import {
+  actorVehicleConditionFailRule,
   missionTargetSquadActor,
   vehicleRouteActor,
 } from './storyMode';
@@ -296,7 +297,7 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
       title: 'False Ambulance',
       hook: 'Someone is using emergency livery to move witnesses without scrutiny.',
       primaryGoal:
-        'Stop the fake ambulance before it reaches the chop garage: pin it, force it to stop, or blow it up.',
+        'Stop the fake ambulance before it reaches the chop garage: pin it and force the crew to surrender the witness alive.',
       secondaryPressure:
         'The ambulance keeps moving unless Rook gets close enough to shut the lane down, so the chase still needs a real interception.',
       failureState:
@@ -319,6 +320,14 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
       prototypeScript: {
         primaryActorId: 'false-ambulance-van',
         actors: [],
+        failRules: [
+          actorVehicleConditionFailRule(
+            'false-ambulance-van',
+            1,
+            'The witness died in the fake ambulance wreck.',
+            0.25,
+          ),
+        ],
         stages: [
           {
             id: 'false-ambulance-stop',
@@ -327,7 +336,7 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
             districtState: {
               label: 'Stop the fake ambulance before it reaches the chop garage',
               summary:
-                'Box it in anywhere on the route or blow it up before the crew reaches the garage.',
+                'Box it in anywhere on the route and hold the crew there before they reach the garage.',
               serviceLaneBlocks: ['ambulance'],
             },
             actors: [
@@ -350,6 +359,7 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
                   captureMaxSpeed: 65,
                   tailDrainPerSecond: 2,
                   loseGraceSeconds: 2.5,
+                  captureOnDisable: false,
                 },
               ),
             ],
@@ -386,6 +396,7 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
                   captureMaxSpeed: 65,
                   tailDrainPerSecond: 2,
                   loseGraceSeconds: 2.5,
+                  captureOnDisable: false,
                 },
               ),
             ],

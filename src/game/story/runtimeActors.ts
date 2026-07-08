@@ -309,7 +309,7 @@ export function updateTailCaptureProgress(
   const loseGrace = actor.loseGraceSeconds ?? 2.5;
   if (tailLostSeconds > loseGrace) tailSeconds = Math.max(0, tailSeconds - ctx.dt * tailDrain);
 
-  if (targetDisabled) {
+  if (targetDisabled && actor.captureOnDisable !== false) {
     captureSeconds = Number.MAX_SAFE_INTEGER;
   } else if (
     actor.captureRadius !== undefined &&

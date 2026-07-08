@@ -470,6 +470,59 @@ test('scripted route vehicles advance instead of snapping back to their spawn po
   }
 });
 
+test('Bed Count keeps its scripted ambulance out of the river during the live tail route', async ({
+  page,
+}) => {
+  await launchSindicate(page);
+  await restartIntoStoryMission(page, {
+    actId: 'break-the-four-pillars',
+    chapterId: 'the-minister-of-care',
+    missionId: 'bed-count',
+    objectiveIndex: 0,
+  });
+  await acknowledgeStoryPanel(page);
+
+  await page.evaluate(() => {
+    (window as unknown as { __bedCountRiverStart?: number; __bedCountRiverHit?: boolean })
+      .__bedCountRiverStart = performance.now();
+    (window as unknown as { __bedCountRiverHit?: boolean }).__bedCountRiverHit = false;
+  });
+
+  const result = await page.waitForFunction(
+    () => {
+      const bag = window as unknown as {
+        __bedCountRiverStart?: number;
+        __bedCountRiverHit?: boolean;
+        __game?: { scene: { getScene(name: string): unknown } };
+      };
+      const scene = bag.__game?.scene.getScene('City') as {
+        storyScript?: { actorCarIndices: Record<string, number> } | null;
+        world: {
+          cars: Array<{ pos: { x: number; y: number } }>;
+          isWaterAt?: (pos: { x: number; y: number }) => boolean;
+        };
+      };
+      const carIndex = scene?.storyScript?.actorCarIndices?.['bed-count-ambulance'];
+      if (carIndex === undefined) return null;
+      const car = scene.world.cars[carIndex];
+      if (!car) return null;
+      if (scene.world.isWaterAt?.(car.pos)) bag.__bedCountRiverHit = true;
+      if ((performance.now() - (bag.__bedCountRiverStart ?? 0)) < 15_000) return null;
+      return {
+        waterHit: !!bag.__bedCountRiverHit,
+        pos: { x: car.pos.x, y: car.pos.y },
+      };
+    },
+    undefined,
+    { timeout: 18_000 },
+  );
+
+  expect(await result.jsonValue()).toEqual({
+    waterHit: false,
+    pos: expect.any(Object),
+  });
+});
+
 test('dead drop district missions expose scripted stage shifts for route and objective progress', async ({
   page,
 }) => {

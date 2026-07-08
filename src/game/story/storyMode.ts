@@ -146,6 +146,7 @@ export interface VehicleRouteActorScript {
   captureMaxSpeed?: number;
   tailDrainPerSecond?: number;
   loseGraceSeconds?: number;
+  captureOnDisable?: boolean;
 }
 
 export interface PedestrianRouteActorScript {
@@ -178,6 +179,7 @@ export interface VehicleRouteActorOptions {
   captureMaxSpeed?: number;
   tailDrainPerSecond?: number;
   loseGraceSeconds?: number;
+  captureOnDisable?: boolean;
 }
 
 /** A road lane reserved by a scripted district state: NPC traffic near any of
@@ -320,6 +322,7 @@ export function vehicleRouteActor(
     captureMaxSpeed: options.captureMaxSpeed,
     tailDrainPerSecond: options.tailDrainPerSecond,
     loseGraceSeconds: options.loseGraceSeconds,
+    captureOnDisable: options.captureOnDisable,
   };
 }
 

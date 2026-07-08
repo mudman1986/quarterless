@@ -259,6 +259,44 @@ describe('updateTailCaptureProgress', () => {
 
     expect(next.captureSeconds).toBe(Number.MAX_SAFE_INTEGER);
   });
+
+  it('does not auto-capture a disabled target when the actor opts out', () => {
+    const actor = {
+      kind: 'vehicleRoute' as const,
+      actorId: 'a',
+      vehicleKind: 'ambulance' as const,
+      route: [vec2(0, 0), vec2(10, 0)],
+      speed: 100,
+      followRadius: 40,
+      captureRadius: 20,
+      captureMaxSpeed: 10,
+      captureOnDisable: false,
+    };
+    const progress: StoryProgressState = {
+      tailSeconds: 0,
+      captureSeconds: 0,
+      tailLostSeconds: 0,
+      failCounters: {},
+    };
+
+    const next = updateTailCaptureProgress(
+      actor,
+      progress,
+      {
+        playerPos: vec2(100, 0),
+        playerSpeed: 25,
+        wantedStars: 0,
+        dt: 1,
+        actorPositions: {},
+        actorVehicleHealth: {},
+        actorVehicleDisabled: {},
+      },
+      vec2(10, 0),
+      true,
+    );
+
+    expect(next.captureSeconds).toBe(0);
+  });
 });
 
 describe('applyStoryFailRules', () => {

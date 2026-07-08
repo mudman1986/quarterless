@@ -2545,6 +2545,199 @@ test('False Ambulance can be completed from the start with its stop objective an
   expect(result.panel).toContain('Reward: $4200');
 });
 
+test('False Ambulance can be pinned from its live start state and advances into the boxed-in stage', async ({
+  page,
+}) => {
+  await launchStoryMode(page);
+
+  await restartIntoStoryProgress(page, {
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'dead-drop-district',
+      missionId: 'false-ambulance',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: ['dead-drop-district'],
+    completedChapterIds: [],
+    completedMissionIds: ['night-ferry-run', 'burned-locker', 'wreck-before-dawn'],
+    branchOutcomes: {},
+  });
+  await acknowledgeStoryPanel(page);
+
+  const result = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      storyScript?: {
+        actorCarIndices: Record<string, number>;
+        captureSeconds: number;
+        stageIndex: number;
+      } | null;
+      world: {
+        player: { pos: { x: number; y: number } };
+        cars: Array<{ pos: { x: number; y: number } }>;
+      };
+      update: (time: number, deltaMs: number) => void;
+    };
+    if (!scene?.storyScript) throw new Error('Missing story script');
+    const carIndex = scene.storyScript.actorCarIndices['false-ambulance-van'];
+    if (carIndex === undefined) throw new Error('Missing false ambulance actor');
+    const ambulance = scene.world.cars[carIndex];
+    if (!ambulance) throw new Error('Missing false ambulance car');
+
+    // Recreate the live interception condition directly from the real mission
+    // start state: player on foot, close enough to the ambulance, standing still.
+    scene.world.player = {
+      ...scene.world.player,
+      pos: { x: ambulance.pos.x - 40, y: ambulance.pos.y },
+    };
+
+    const before = {
+      captureSeconds: scene.storyScript.captureSeconds,
+      stageIndex: scene.storyScript.stageIndex,
+    };
+
+    for (let i = 0; i < 5; i += 1) {
+      scene.update(i * 1000, 1000);
+    }
+
+    return {
+      before,
+      after: {
+        captureSeconds: scene.storyScript.captureSeconds,
+        stageIndex: scene.storyScript.stageIndex,
+      },
+    };
+  });
+
+  expect(result.before.captureSeconds).toBe(0);
+  expect(result.after.captureSeconds).toBeGreaterThan(0);
+  expect(result.after.stageIndex).toBeGreaterThanOrEqual(1);
+});
+
+test('destroying False Ambulance fails the mission instead of counting as a capture', async ({
+  page,
+}) => {
+  await launchStoryMode(page);
+
+  await restartIntoStoryProgress(page, {
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'dead-drop-district',
+      missionId: 'false-ambulance',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: ['dead-drop-district'],
+    completedChapterIds: [],
+    completedMissionIds: ['night-ferry-run', 'burned-locker', 'wreck-before-dawn'],
+    branchOutcomes: {},
+  });
+  await acknowledgeStoryPanel(page);
+
+  const result = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      storyScript?: { actorCarIndices: Record<string, number> } | null;
+      world: {
+        mission?: { id: string } | null;
+        explodeCar?: (index: number, byPlayer: boolean) => void;
+      };
+      storyProgress?: { current: { missionId: string } | null } | null;
+      storyPanel?: { text: string };
+      pendingStoryRestart?: unknown;
+      syncStoryScript?: (dt?: number) => void;
+    };
+    const carIndex = scene?.storyScript?.actorCarIndices?.['false-ambulance-van'];
+    if (carIndex === undefined || typeof scene?.world.explodeCar !== 'function') {
+      throw new Error('Missing false ambulance actor hooks');
+    }
+    scene.world.explodeCar(carIndex, true);
+    scene.syncStoryScript?.(0.3);
+    return {
+      missionId: scene.storyProgress?.current?.missionId ?? null,
+      liveMissionId: scene.world.mission?.id ?? null,
+      pendingRestart: scene.pendingStoryRestart !== null,
+      panel: scene.storyPanel?.text ?? '',
+    };
+  });
+
+  expect(result.missionId).toBe('false-ambulance');
+  expect(result.liveMissionId).toBe('false-ambulance');
+  expect(result.pendingRestart).toBe(true);
+  expect(result.panel).toContain('MISSION FAILED');
+  expect(result.panel).toContain('The witness died in the fake ambulance wreck.');
+});
+
+test('clearing a destroyed story car drops its wreck state instead of leaving an off-map tow target', async ({
+  page,
+}) => {
+  await launchStoryMode(page);
+
+  await restartIntoStoryProgress(page, {
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'dead-drop-district',
+      missionId: 'false-ambulance',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: ['dead-drop-district'],
+    completedChapterIds: [],
+    completedMissionIds: ['night-ferry-run', 'burned-locker', 'wreck-before-dawn'],
+    branchOutcomes: {},
+  });
+  await acknowledgeStoryPanel(page);
+
+  const result = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      storyScript?: { actorCarIndices: Record<string, number> } | null;
+      world: {
+        cars: Array<{ pos: { x: number; y: number } }>;
+        explodeCar?: (index: number, byPlayer: boolean) => void;
+        wreckedCars?: boolean[];
+        towedCars?: boolean[];
+        carBurnTimers?: number[];
+        carHealth?: number[];
+      };
+      clearActiveStoryActors?: () => void;
+    };
+    const carIndex = scene?.storyScript?.actorCarIndices?.['false-ambulance-van'];
+    if (
+      carIndex === undefined ||
+      typeof scene?.world.explodeCar !== 'function' ||
+      typeof scene.clearActiveStoryActors !== 'function'
+    ) {
+      throw new Error('Missing story cleanup hooks');
+    }
+    scene.world.explodeCar(carIndex, true);
+    scene.clearActiveStoryActors();
+    const car = scene.world.cars[carIndex];
+    return {
+      pos: car?.pos ?? null,
+      wrecked: scene.world.wreckedCars?.[carIndex] ?? null,
+      towed: scene.world.towedCars?.[carIndex] ?? null,
+      burnTimer: scene.world.carBurnTimers?.[carIndex] ?? null,
+      health: scene.world.carHealth?.[carIndex] ?? null,
+    };
+  });
+
+  expect(result).toEqual({
+    pos: { x: -100000, y: -100000 },
+    wrecked: false,
+    towed: false,
+    burnTimer: 0,
+    health: 100,
+  });
+});
+
 test('pause routes into the integrated Sindicate launch page with the current objective visible', async ({
   page,
 }) => {
