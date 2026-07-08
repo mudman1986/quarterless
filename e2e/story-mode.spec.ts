@@ -1143,6 +1143,87 @@ test('scripted district-state missions still announce stage shifts without showi
   expect(shift.decoyCarPos).toEqual({ x: -100000, y: -100000 });
 });
 
+test('an actor that persists across a stage transition starts the new stage route fresh instead of a stale index', async ({
+  page,
+}) => {
+  // Regression: an actor that stays alive across a stage boundary (e.g.
+  // "empty-shell-sedan" continuing from "shell-breakaway" into
+  // "shell-yard-handoff") kept its OLD stage's route index, which could point
+  // past the end of (or partway into) the NEW stage's differently-authored
+  // route array, silently skipping its earlier waypoints. This went unnoticed
+  // in the empty-shell-sedan case only because that mission's stage-2 route
+  // happens to be collinear with where stage 1 left off, so skipping its
+  // middle waypoint produced an identical straight path by coincidence.
+  await launchStoryMode(page);
+
+  await restartIntoStoryProgress(page, {
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'spare-parts-gospel',
+      missionId: 'the-empty-shell',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: ['dead-drop-district', 'spare-parts-gospel'],
+    completedChapterIds: ['dead-drop-district'],
+    completedMissionIds: [
+      'night-ferry-run',
+      'burned-locker',
+      'wreck-before-dawn',
+      'false-ambulance',
+      'last-call-at-pier-9',
+      'yard-talk',
+    ],
+    branchOutcomes: {},
+  });
+
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      storyScript?: { actorCarIndices: Record<string, number> } | null;
+    };
+    return scene?.storyScript?.actorCarIndices?.['empty-shell-sedan'] !== undefined;
+  });
+
+  const result = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      storyScript?: {
+        actorCarIndices: Record<string, number>;
+        actorRouteIndices: Record<string, number>;
+        stageLabel: string;
+      } | null;
+      world: { cars: Array<{ pos: { x: number; y: number } }> };
+      syncStoryScript?: (dt?: number) => void;
+    };
+    const storyScript = scene?.storyScript;
+    const carIndex = storyScript?.actorCarIndices?.['empty-shell-sedan'];
+    if (!storyScript || carIndex === undefined || typeof scene?.syncStoryScript !== 'function') {
+      throw new Error('Missing scripted actor stage hooks');
+    }
+    // Simulate the sedan having just finished stage 1's route (as the
+    // "stage shift" test above does), triggering the transition into stage 2.
+    const car = scene.world.cars[carIndex];
+    scene.world.cars[carIndex] = { ...car, pos: { x: 2496, y: 2112 } };
+    storyScript.actorRouteIndices['empty-shell-sedan'] = 2;
+    scene.syncStoryScript(0);
+    scene.syncStoryScript(0);
+    return {
+      stageLabel: storyScript.stageLabel,
+      routeIndexAfterTransition: storyScript.actorRouteIndices['empty-shell-sedan'],
+    };
+  });
+
+  expect(result.stageLabel).toContain('The real shell is slipping through the salvage gate');
+  // The sedan must start stage 2's own route from its first waypoint, not
+  // carry over stage 1's leftover index into the new (differently authored)
+  // route array.
+  expect(result.routeIndexAfterTransition).toBe(0);
+});
+
 test('despawning then respawning the same story actor reuses a clean slot with no leaked state', async ({
   page,
 }) => {

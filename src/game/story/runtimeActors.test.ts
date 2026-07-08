@@ -83,6 +83,55 @@ describe('advanceVehicleRouteActor', () => {
     expect(step.pos.x).toBeGreaterThan(0);
     expect(step.routeIndex).toBe(1);
   });
+
+  it('arcs into a sharp waypoint turn along its own heading instead of snapping straight at the next point', () => {
+    // Regression: movement used to follow the raw straight-line direction to
+    // the target regardless of the turn-rate-limited heading, so a sharp
+    // corner made the car visibly slide sideways (its sprite still facing the
+    // old direction while its position beelined toward the new one) for a
+    // stretch of frames until the heading caught up.
+    const actor = {
+      kind: 'vehicleRoute' as const,
+      actorId: 'a',
+      vehicleKind: 'sedan' as const,
+      route: [vec2(0, 0), vec2(100, 0), vec2(100, 100)],
+      speed: 100,
+      followRadius: 300,
+    };
+    // Positioned exactly at the sharp turn (route[1]), heading 0 (east) from
+    // having just driven the first leg, about to turn south (+y).
+    const step = advanceVehicleRouteActor(actor, vec2(100, 0), 1, 1 / 60, 0);
+    const displacement = { x: step.pos.x - 100, y: step.pos.y - 0 };
+    const displacementAngle = Math.atan2(displacement.y, displacement.x);
+    // Actual movement direction must match the reported (turn-limited)
+    // heading, not the desired end direction (south, ~PI/2).
+    expect(displacementAngle).toBeCloseTo(step.heading, 5);
+    expect(Math.abs(step.heading)).toBeLessThan(Math.PI / 4);
+  });
+
+  it('keeps driving in its current heading instead of freezing once the route is fully driven', () => {
+    // Regression: once a vehicle actor reached its route's last waypoint, it
+    // froze there forever (speed reported as 0, position never changing)
+    // regardless of whether whatever gates the mission along (a stage
+    // transition, a tail/capture timer) had actually finished yet — looking
+    // like the target car abruptly, unnaturally stopping dead mid-mission.
+    const actor = {
+      kind: 'vehicleRoute' as const,
+      actorId: 'a',
+      vehicleKind: 'sedan' as const,
+      route: [vec2(0, 0), vec2(100, 0)],
+      speed: 100,
+      followRadius: 300,
+    };
+    // routeIndex already reports "fully arrived" (lastIndex), as it would on
+    // any tick after the one that first reached the end.
+    const step = advanceVehicleRouteActor(actor, vec2(100, 0), 1, 1 / 60, 0);
+    expect(step.pos.x).toBeGreaterThan(100); // keeps moving, not frozen
+    // Still reports "fully driven" so a routeComplete stage transition
+    // watching for it keeps seeing it correctly (must never regress back to
+    // an earlier-looking index once it has reached the end).
+    expect(step.routeIndex).toBe(1);
+  });
 });
 
 describe('advancePedestrianRouteActor', () => {

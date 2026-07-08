@@ -112,6 +112,11 @@ export function placeStorySquadMember(
 }
 
 
+/** How close a vehicle route actor must get to a waypoint to count as arrived,
+ * when moving along its (turn-rate-limited) heading rather than a raw beeline
+ * to the target — see `moveAlongRoute`'s `moveAlongHeading` option. */
+const ROUTE_ARRIVE_RADIUS = 16;
+
 function moveAlongRoute(
   pos: Vec2,
   route: readonly Vec2[],
@@ -119,14 +124,32 @@ function moveAlongRoute(
   speed: number,
   dt: number,
   prevHeading = 0,
+  options: { moveAlongHeading?: boolean; keepDrivingAtRouteEnd?: boolean } = {},
 ): RouteActorStep {
   if (route.length <= 1) {
     return { pos, heading: prevHeading, speed: 0, routeIndex: 0 };
   }
+  const lastIndex = route.length - 1;
 
-  const safeIndex = Math.max(0, Math.min(route.length - 2, routeIndex));
-  const current = route[safeIndex] ?? pos;
-  const target = route[safeIndex + 1] ?? current;
+  if (options.keepDrivingAtRouteEnd && routeIndex >= lastIndex) {
+    // The authored route is fully driven — `routeIndex` is reported back
+    // exactly as `lastIndex`, unchanged, so a `routeComplete` stage
+    // transition watching for it still sees it correctly (this must NEVER
+    // stop reporting "done" once it has, or a transition that hasn't fired
+    // yet on this exact tick would never fire at all). But whatever gates the
+    // mission along from here (a stage transition, a tail/capture timer)
+    // might not have finished yet, and a scripted vehicle should still look
+    // and act like it's actually driving instead of instantly freezing dead
+    // in the street, so it keeps driving straight ahead in its last heading.
+    const nextPos = vec2(
+      pos.x + Math.cos(prevHeading) * dt * speed,
+      pos.y + Math.sin(prevHeading) * dt * speed,
+    );
+    return { pos: nextPos, heading: prevHeading, speed, routeIndex: lastIndex };
+  }
+
+  const safeIndex = Math.max(0, Math.min(lastIndex - 1, routeIndex));
+  const target = route[safeIndex + 1] ?? route[safeIndex] ?? pos;
   const dx = target.x - pos.x;
   const dy = target.y - pos.y;
   const dist = Math.hypot(dx, dy);
@@ -135,14 +158,23 @@ function moveAlongRoute(
   const maxTurn = Math.PI * 1.35 * dt;
   const heading = prevHeading + clamp(turnDelta, -maxTurn, maxTurn);
   const step = Math.min(dist, dt * speed);
-  const nextPos = dist > 0 ? vec2(pos.x + (dx / dist) * step, pos.y + (dy / dist) * step) : pos;
-  const reachedTarget = step >= dist - 1e-6;
-  const nextRouteIndex = reachedTarget ? Math.min(route.length - 1, safeIndex + 1) : safeIndex;
+  // Moving straight at the target regardless of the turn-limited heading made
+  // a sharp waypoint turn look like the car sliding sideways (crab-walking)
+  // while its sprite slowly caught up to face the way it was actually going.
+  // Moving along the same turn-limited heading instead makes it arc into the
+  // turn like a real car, so its facing always matches its actual travel.
+  const moveHeading = options.moveAlongHeading ? heading : desiredHeading;
+  const nextPos =
+    dist > 0 ? vec2(pos.x + Math.cos(moveHeading) * step, pos.y + Math.sin(moveHeading) * step) : pos;
+  const reachedTarget = options.moveAlongHeading
+    ? distance(nextPos, target) <= ROUTE_ARRIVE_RADIUS || step >= dist - 1e-6
+    : step >= dist - 1e-6;
+  const nextRouteIndex = reachedTarget ? Math.min(lastIndex, safeIndex + 1) : safeIndex;
 
   return {
     pos: nextPos,
     heading,
-    speed: reachedTarget ? 0 : speed,
+    speed: reachedTarget && !options.moveAlongHeading ? 0 : speed,
     routeIndex: nextRouteIndex,
   };
 }
@@ -154,7 +186,10 @@ export function advanceVehicleRouteActor(
   dt: number,
   prevHeading = 0,
 ): RouteActorStep {
-  return moveAlongRoute(pos, actor.route, routeIndex, actor.speed, dt, prevHeading);
+  return moveAlongRoute(pos, actor.route, routeIndex, actor.speed, dt, prevHeading, {
+    moveAlongHeading: true,
+    keepDrivingAtRouteEnd: true,
+  });
 }
 
 export function advancePedestrianRouteActor(

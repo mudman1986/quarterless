@@ -1309,6 +1309,16 @@ export class CityScene extends Phaser.Scene {
         for (const actor of stage.actors) {
           if (!nextActorIds.has(actor.actorId)) this.despawnStoryActor(actor.actorId);
         }
+        // An actor that persists into the next stage starts that stage's route
+        // fresh: the new stage's `route` array is a separately authored path,
+        // not a continuation of the old one's waypoint indices. Without this,
+        // a leftover index from the previous stage's (often differently-sized)
+        // route can land past the end of, or partway into, the new route,
+        // silently skipping its earlier waypoints (or freezing immediately if
+        // the leftover index already reads as "at the end").
+        for (const actorId of nextActorIds) {
+          script.actorRouteIndices[actorId] = 0;
+        }
         script.stageIndex += 1;
         script.failCounters = {};
         if (!this.shouldSuppressStageShiftBanner(mission.id, nextStage.id)) {
