@@ -29,6 +29,8 @@ export interface Pedestrian {
   storyActorId?: string;
   /** Stable position within a multi-pedestrian scripted actor squad. */
   storyActorOrder?: number;
+  /** Stable cosmetic seed so visual variants do not change as runtime nav state changes. */
+  visualSeed?: number;
 }
 
 export interface PedestrianContext {

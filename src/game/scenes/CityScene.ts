@@ -25,7 +25,7 @@ import type { Car } from '../../core/vehicle';
 import type { Pedestrian } from '../../core/pedestrianAI';
 import { type TrafficAI, openDirections, tileCoord } from '../../core/trafficAI';
 import type { AmmoPickup } from '../../core/weapon';
-import { distance, vec2, type Vec2 } from '../../core/vector';
+import { distance, fromAngle, vec2, type Vec2 } from '../../core/vector';
 import { uiScreenToWorld, uiCounterScale, uiAnchorOnScreen } from '../../core/hudLayout';
 import { greenAxis } from '../../core/trafficLight';
 import { KeyboardInput } from '../input/KeyboardInput';
@@ -38,7 +38,19 @@ import {
   type TouchSnapshot,
 } from '../input/touchControls';
 import { Sound } from '../audio/Sound';
-import { createGameTextures, TEX } from '../art/textures';
+import {
+  CIVILIAN_VEHICLE_TEXTURES,
+  cycleFrame,
+  effectFrame,
+  FX,
+  PEDESTRIAN_VARIANT_TEXTURES,
+  pickVariantTexture,
+  preloadGameTextures,
+  TILE,
+  TEX,
+  textureRef,
+  type TextureRef,
+} from '../art/textures';
 import { NO_CONTROLS } from '../../core/types';
 import { buildSandboxCampaigns } from '../story/sandboxCampaigns';
 import { STORY_MODE_PROTOTYPE } from '../story/storyCampaign';
@@ -90,11 +102,12 @@ import {
 } from '../story/runtimeActors';
 
 const COLORS = {
-  road: 0x2b2b30,
-  roadLine: 0x52525b,
+  road: 0x1f2430,
+  roadLine: 0x6b7280,
+  roadShadow: 0x121720,
   building: 0x4b5563,
-  buildingEdge: 0x111827,
-  buildingRoof: 0x596577,
+  buildingEdge: 0x0f172a,
+  buildingRoof: 0x6a7688,
   policeBuilding: 0x1d4ed8,
   hospitalBuilding: 0xf8fafc,
   towBuilding: 0xf59e0b,
@@ -116,17 +129,25 @@ const COLORS = {
   garageStripe: 0xf8fafc,
   ammo: 0xfacc15,
   // Water & bridges.
-  water: 0x1d4e6f,
-  waterEdge: 0x123a52,
+  water: 0x155e75,
+  waterEdge: 0x0f3f54,
+  waterFoam: 0x67e8f9,
   bridge: 0x3a3a42,
   bridgeEdge: 0x18181b,
   fence: 0xa8a29e,
   // Streets.
-  sidewalk: 0x6b7280,
-  crosswalk: 0xd1d5db,
+  sidewalk: 0x7b8592,
+  sidewalkShade: 0x5f6977,
+  curbLine: 0xa8b2c0,
+  crosswalk: 0xe2e8f0,
   lightGreen: 0x22c55e,
   lightRed: 0xef4444,
-  parkingLine: 0xca8a04,
+  parkingLine: 0xf59e0b,
+  spark: 0xfb923c,
+  sparkCore: 0xfef08a,
+  pickupSpark: 0x22d3ee,
+  pickupCore: 0xfacc15,
+  skid: 0x0f172a,
   fireGlow: 0xf97316,
   fireCore: 0xfacc15,
   smoke: 0x111827,
@@ -148,6 +169,51 @@ const COLORS = {
   mmTowTarget: 0xf59e0b,
   mmAmmo: 0xfacc15,
 };
+
+type VisualParticle = {
+  pos: Vec2;
+  vel: Vec2;
+  age: number;
+  life: number;
+  radius: number;
+  color: number;
+  alpha: number;
+  stretch: number;
+};
+
+function blendColor(a: number, b: number, amount: number): number {
+  const mix = (x: number, y: number) => Math.round(x + (y - x) * amount);
+  const ar = (a >> 16) & 0xff;
+  const ag = (a >> 8) & 0xff;
+  const ab = a & 0xff;
+  const br = (b >> 16) & 0xff;
+  const bg = (b >> 8) & 0xff;
+  const bb = b & 0xff;
+  return (mix(ar, br) << 16) | (mix(ag, bg) << 8) | mix(ab, bb);
+}
+
+function stableVisualSeed(...values: number[]): number {
+  let seed = 17;
+  for (const value of values) {
+    seed = Math.imul(seed, 31) + Math.trunc(value);
+    seed |= 0;
+  }
+  return Math.abs(seed);
+}
+
+function stringSeed(value: string | undefined): number {
+  if (!value) return 0;
+  let seed = 0;
+  for (let i = 0; i < value.length; i++) {
+    seed = Math.imul(seed, 33) + value.charCodeAt(i);
+    seed |= 0;
+  }
+  return Math.abs(seed);
+}
+
+function pickupVisualKey(pickup: AmmoPickup): string {
+  return `${Math.round(pickup.pos.x)}:${Math.round(pickup.pos.y)}:${pickup.amount}`;
+}
 
 /**
  * The browser's `localStorage`, or an in-memory fallback when it is unavailable
@@ -351,6 +417,11 @@ export class CityScene extends Phaser.Scene {
   private carSprites: Phaser.GameObjects.Image[] = [];
   private pedSprites: Phaser.GameObjects.Image[] = [];
   private policeSprites: Phaser.GameObjects.Image[] = [];
+  private waterTiles: Phaser.GameObjects.TileSprite[] = [];
+  private shimmerSprites: Phaser.GameObjects.Image[] = [];
+  private explosionSprites: Phaser.GameObjects.Image[] = [];
+  private fireSprites: Phaser.GameObjects.Image[] = [];
+  private damageSprites: Phaser.GameObjects.Image[] = [];
   private bulletSprites: Phaser.GameObjects.Rectangle[] = [];
   private policeBulletSprites: Phaser.GameObjects.Rectangle[] = [];
   private ammoSprites: { sprite: Phaser.GameObjects.Image; pickup: AmmoPickup }[] = [];
@@ -358,8 +429,7 @@ export class CityScene extends Phaser.Scene {
   private storyChoiceMarkersGfx!: Phaser.GameObjects.Graphics;
   private taxiMarker!: Phaser.GameObjects.Arc;
   private serviceMarker!: Phaser.GameObjects.Arc;
-  private explosionGfx!: Phaser.GameObjects.Graphics;
-  private burningGfx!: Phaser.GameObjects.Graphics;
+  private feedbackGfx!: Phaser.GameObjects.Graphics;
   private lightsGfx!: Phaser.GameObjects.Graphics;
   private corpseGfx!: Phaser.GameObjects.Graphics;
   private ambulanceSprite!: Phaser.GameObjects.Image;
@@ -428,6 +498,10 @@ export class CityScene extends Phaser.Scene {
   private prevKills = 0;
   private prevStatus: 'playing' | 'busted' | 'wasted' = 'playing';
   private prevMissionComplete = false;
+  private prevCarHeadings: number[] = [];
+  private prevCarHealth: number[] = [];
+  private prevAmmoPickups = new Map<string, AmmoPickup>();
+  private visualParticles: VisualParticle[] = [];
   private prevMissionId: string | null = null;
   private prevObjective = '';
   private prevTaxiMissionId: number | null = null;
@@ -484,6 +558,10 @@ export class CityScene extends Phaser.Scene {
     super('City');
   }
 
+  preload(): void {
+    preloadGameTextures(this);
+  }
+
   init(data: CitySceneStartData = {}): void {
     const launchStore = (() => {
       try {
@@ -520,6 +598,11 @@ export class CityScene extends Phaser.Scene {
     this.carSprites = [];
     this.pedSprites = [];
     this.policeSprites = [];
+    this.waterTiles = [];
+    this.shimmerSprites = [];
+    this.explosionSprites = [];
+    this.fireSprites = [];
+    this.damageSprites = [];
     this.bulletSprites = [];
     this.policeBulletSprites = [];
     this.ammoSprites = [];
@@ -527,6 +610,10 @@ export class CityScene extends Phaser.Scene {
     this.accumulator = 0;
     this.minimapAccumulator = MINIMAP_REFRESH_INTERVAL;
     this.saveAccumulator = 0;
+    this.visualParticles = [];
+    this.prevCarHeadings = [];
+    this.prevCarHealth = [];
+    this.prevAmmoPickups = new Map();
     this.sirenTimer = 0;
     this.timeOfDay = 0;
     this.skipPersistOnShutdown = false;
@@ -563,7 +650,6 @@ export class CityScene extends Phaser.Scene {
     this.despawnedStoryPedIndices.clear();
 
     this.city = buildCity(CITY_SPEC);
-    createGameTextures(this);
     this.intersectionCenters = this.computeIntersectionCenters();
     const spawn = tileCenter(this.city.spec, this.city.spec.block, this.city.spec.block);
 
@@ -950,6 +1036,7 @@ export class CityScene extends Phaser.Scene {
           uniform: opts.uniform,
           storyActorId: actorId,
           storyActorOrder: i,
+          visualSeed: ped.visualSeed ?? stableVisualSeed(stringSeed(actorId), i + 1),
         };
         this.despawnedStoryPedIndices.delete(index);
       });
@@ -969,6 +1056,7 @@ export class CityScene extends Phaser.Scene {
         uniform: opts.uniform,
         storyActorId: actorId,
         storyActorOrder: i,
+        visualSeed: stableVisualSeed(stringSeed(actorId), i + 1),
       };
       const index = this.storyReusablePedIndices.pop() ?? this.world.pedestrians.length;
       this.despawnedStoryPedIndices.delete(index);
@@ -1639,7 +1727,14 @@ export class CityScene extends Phaser.Scene {
     this.city.sidewalks.forEach((s, i) => {
       if (i % PEDESTRIAN_SIDEWALK_STRIDE !== 0) return; // a denser but still manageable scattering across the city
       const pos = vec2(s.x + s.w / 2, s.y + s.h / 2);
-      peds.push({ pos, heading: 0, radius: PED_SIZE / 2, state: 'wander', target: pos });
+          peds.push({
+            pos,
+            heading: 0,
+            radius: PED_SIZE / 2,
+            state: 'wander',
+            target: pos,
+            visualSeed: stableVisualSeed(i + 1, Math.round(pos.x), Math.round(pos.y)),
+          });
     });
     return peds;
   }
@@ -1682,7 +1777,13 @@ export class CityScene extends Phaser.Scene {
   private drawCity(): void {
     const { width, height, spec } = this.city;
     const roadWidth = Math.max(1, Math.min(spec.block, spec.roadWidth ?? 1));
-    this.cameras.main.setBackgroundColor(COLORS.road);
+    this.cameras.main.setBackgroundColor(COLORS.roadShadow);
+
+    this.add
+      .tileSprite(0, 0, width, height, TILE.road.texture, TILE.road.frame)
+      .setOrigin(0)
+      .setDepth(-0.2)
+      .setTint(COLORS.road);
 
     // Lane markings between every lane, with a stronger divider between the two directions.
     const lines = this.add.graphics();
@@ -1732,22 +1833,42 @@ export class CityScene extends Phaser.Scene {
               : facility?.kind === 'taxiDepot'
                 ? COLORS.taxiRoof
                 : COLORS.buildingRoof;
-      g.fillStyle(bodyColor, 1);
-      g.fillRect(b.x, b.y, b.w, b.h);
-      g.fillStyle(roofColor, 1);
-      g.fillRect(b.x + 5, b.y + 5, b.w - 10, b.h - 10);
+
+      this.add
+        .rectangle(b.x + 8 + b.w / 2, b.y + 10 + b.h / 2, b.w, b.h, COLORS.roadShadow, 0.22)
+        .setDepth(0.6)
+        .setOrigin(0.5);
+      this.add
+        .tileSprite(b.x, b.y, b.w, b.h, TILE.building.texture, TILE.building.frame)
+        .setOrigin(0)
+        .setDepth(0.8)
+        .setTint(bodyColor);
+      this.add
+        .tileSprite(b.x + 5, b.y + 5, b.w - 10, b.h - 10, TILE.roof.texture, TILE.roof.frame)
+        .setOrigin(0)
+        .setDepth(0.9)
+        .setTint(roofColor);
       g.lineStyle(2, COLORS.buildingEdge, 1);
       g.strokeRect(b.x, b.y, b.w, b.h);
 
-      // A grid of windows; a deterministic few are "lit".
-      const pad = 12;
-      const cell = 18;
-      for (let wx = b.x + pad; wx <= b.x + b.w - pad - 8; wx += cell) {
-        for (let wy = b.y + pad; wy <= b.y + b.h - pad - 8; wy += cell) {
-          const lit = (Math.floor(wx) + Math.floor(wy)) % 3 === 0;
-          g.fillStyle(lit ? COLORS.window : COLORS.windowDark, lit ? 0.85 : 1);
-          g.fillRect(wx, wy, 8, 8);
-        }
+      const sparkle = this.add
+        .image(b.x + b.w - 18, b.y + 18, TILE.sparkle.texture, TILE.sparkle.frame)
+        .setDepth(1.1)
+        .setScale(0.34)
+        .setTint(facility ? COLORS.window : roofColor);
+      this.shimmerSprites.push(sparkle);
+
+      if (b.w >= 70 && b.h >= 70) {
+        this.add
+          .image(b.x + b.w - 21, b.y + 19, TILE.roof.texture, TILE.roof.frame)
+          .setDepth(1.05)
+          .setScale(0.28)
+          .setTint(blendColor(roofColor, COLORS.buildingEdge, 0.35));
+        this.add
+          .image(b.x + 24, b.y + b.h - 22, TILE.roof.texture, TILE.roof.frame)
+          .setDepth(1.05)
+          .setScale(0.33)
+          .setTint(blendColor(roofColor, COLORS.buildingEdge, 0.42));
       }
 
       if (facility?.kind === 'hospital') {
@@ -1849,24 +1970,26 @@ export class CityScene extends Phaser.Scene {
     if (this.city.water.length === 0) return;
     const { tile } = this.city.spec;
 
-    // Water bodies.
-    const w = this.add.graphics().setDepth(1);
     for (const body of this.city.water) {
-      w.fillStyle(COLORS.water, 1);
-      w.fillRect(body.x, body.y, body.w, body.h);
-      w.lineStyle(2, COLORS.waterEdge, 1);
-      w.strokeRect(body.x, body.y, body.w, body.h);
+      const water = this.add
+        .tileSprite(body.x, body.y, body.w, body.h, TILE.water.texture, TILE.water.frame)
+        .setOrigin(0)
+        .setDepth(1)
+        .setTint(COLORS.water);
+      this.waterTiles.push(water);
     }
 
     // Bridge decks: a solid plank covering each bridge tile so it reads as a
     // crossing over the water rather than part of the river.
-    const decks = this.add.graphics().setDepth(2);
     const { cols, rows } = this.city.spec;
-    decks.fillStyle(COLORS.bridge, 1);
     for (let tx = 0; tx < cols; tx++) {
       for (let ty = 0; ty < rows; ty++) {
         if (this.city.isBridge(tx, ty)) {
-          decks.fillRect(tx * tile, ty * tile, tile, tile);
+          this.add
+            .image(tx * tile + tile / 2, ty * tile + tile / 2, TILE.bridge.texture, TILE.bridge.frame)
+            .setDisplaySize(tile, tile)
+            .setDepth(2)
+            .setTint(COLORS.bridge);
         }
       }
     }
@@ -1899,18 +2022,34 @@ export class CityScene extends Phaser.Scene {
   }
 
   private drawStreets(): void {
-    const g = this.add.graphics().setDepth(0);
+    const g = this.add.graphics().setDepth(0.4);
 
-    // Sidewalks: pale strips hugging the buildings.
-    g.fillStyle(COLORS.sidewalk, 1);
-    for (const s of this.city.sidewalks) g.fillRect(s.x, s.y, s.w, s.h);
+    for (const s of this.city.sidewalks) {
+      this.add
+        .tileSprite(s.x, s.y, s.w, s.h, TILE.sidewalk.texture, TILE.sidewalk.frame)
+        .setOrigin(0)
+        .setDepth(0)
+        .setTint(COLORS.sidewalk);
+      g.lineStyle(1, COLORS.sidewalkShade, 0.35);
+      g.strokeRect(s.x + 1, s.y + 1, Math.max(0, s.w - 2), Math.max(0, s.h - 2));
+    }
 
-    // Crosswalks: zebra stripes laid across the full crossing from kerb to kerb.
-    g.fillStyle(COLORS.crosswalk, 0.9);
+    g.lineStyle(1, COLORS.curbLine, 0.18);
+    for (const s of this.city.sidewalks) {
+      g.strokeRect(s.x, s.y, s.w, s.h);
+    }
+
     for (const cw of this.city.crosswalks) {
-      for (const stripe of crosswalkStripeRects(cw)) {
-        g.fillRect(stripe.x, stripe.y, stripe.w, stripe.h);
-      }
+      const stripes = crosswalkStripeRects(cw);
+      const minX = Math.min(...stripes.map((stripe) => stripe.x));
+      const minY = Math.min(...stripes.map((stripe) => stripe.y));
+      const maxX = Math.max(...stripes.map((stripe) => stripe.x + stripe.w));
+      const maxY = Math.max(...stripes.map((stripe) => stripe.y + stripe.h));
+      this.add
+        .tileSprite(minX, minY, maxX - minX, maxY - minY, TILE.crosswalk.texture, TILE.crosswalk.frame)
+        .setOrigin(0)
+        .setDepth(0.25)
+        .setTint(COLORS.crosswalk);
     }
 
     // Parking bays: a thin outline under each parked car, oriented to its kerb.
@@ -1919,8 +2058,24 @@ export class CityScene extends Phaser.Scene {
       const along = Math.abs(Math.cos(spot.heading)) > 0.5; // pointing along x?
       const halfW = along ? 17 : 9;
       const halfH = along ? 9 : 17;
+      g.fillStyle(COLORS.roadShadow, 0.1);
+      g.fillRect(spot.pos.x - halfW, spot.pos.y - halfH, halfW * 2, halfH * 2);
       g.strokeRect(spot.pos.x - halfW, spot.pos.y - halfH, halfW * 2, halfH * 2);
     }
+  }
+
+  private syncEnvironmentArt(dt: number): void {
+    for (const water of this.waterTiles) {
+      water.tilePositionX += dt * 18;
+      water.tilePositionY += dt * 6;
+    }
+
+    const pulse = this.time.now / 420;
+    this.shimmerSprites.forEach((sprite, index) => {
+      const strength = 0.5 + 0.5 * Math.sin(pulse + index * 0.9);
+      sprite.setAlpha(0.18 + strength * 0.36);
+      sprite.setScale(0.28 + strength * 0.08);
+    });
   }
 
   private createEntitySprites(): void {
@@ -1943,11 +2098,11 @@ export class CityScene extends Phaser.Scene {
       .setVisible(false);
 
     this.carSprites = this.world.cars.map((car, i) =>
-      this.add.image(car.pos.x, car.pos.y, this.carTexture(i)).setDepth(4).setRotation(car.heading),
+      this.spawnImage(car.pos.x, car.pos.y, this.carTexture(i)).setDepth(4).setRotation(car.heading),
     );
 
-    this.pedSprites = this.world.pedestrians.map((ped) =>
-      this.add.image(ped.pos.x, ped.pos.y, this.pedTexture(ped)).setDepth(5),
+    this.pedSprites = this.world.pedestrians.map((ped, index) =>
+      this.spawnImage(ped.pos.x, ped.pos.y, this.pedTexture(ped, index)).setDepth(5),
     );
 
     this.ammoSprites = this.world.ammoPickups.map((pickup) => ({
@@ -1956,21 +2111,20 @@ export class CityScene extends Phaser.Scene {
     }));
 
     const p = this.world.player;
+    const playerTexture = textureRef(TEX.player);
     this.playerSprite = this.add
-      .image(p.pos.x, p.pos.y, TEX.player)
+      .image(p.pos.x, p.pos.y, playerTexture.texture, playerTexture.frame)
       .setDepth(10)
       .setRotation(p.angle);
 
-    // A graphics layer for drawing explosion blasts above everything else.
-    this.explosionGfx = this.add.graphics().setDepth(11);
-    // Burning vehicles need a persistent flame/smoke treatment before they explode.
-    this.burningGfx = this.add.graphics().setDepth(5.5);
+    // Quick transient trails and impact bursts keep motion readable.
+    this.feedbackGfx = this.add.graphics().setDepth(6.4);
     // Traffic-light indicators sit above the road but below entities.
     this.lightsGfx = this.add.graphics().setDepth(7);
     // Corpses and their blood puddles sit just above the road, below the living.
     this.corpseGfx = this.add.graphics().setDepth(4);
     // The ambulance: a white emergency vehicle, hidden until dispatched.
-    this.ambulanceSprite = this.add.image(0, 0, TEX.ambulance).setDepth(6).setVisible(false);
+    this.ambulanceSprite = this.spawnImage(0, 0, textureRef(TEX.ambulance)).setDepth(6).setVisible(false);
     // Tow trucks: amber service vehicles, created on demand into a pool.
     this.towSprites = [];
 
@@ -2050,52 +2204,52 @@ export class CityScene extends Phaser.Scene {
 
   /** Draw each active explosion as an expanding, fading blast. */
   private syncExplosions(): void {
-    const g = this.explosionGfx;
-    g.clear();
-    for (const e of this.world.explosions) {
-      const t = e.age / e.life; // 0 -> 1 over the blast's life
-      const r = e.radius * (0.4 + 0.6 * t);
-      g.fillStyle(0xfacc15, (1 - t) * 0.5); // yellow flash
-      g.fillCircle(e.pos.x, e.pos.y, r);
-      g.fillStyle(0xf97316, (1 - t) * 0.6); // orange core
-      g.fillCircle(e.pos.x, e.pos.y, r * 0.6);
+    this.world.explosions.forEach((e, i) => {
+      let sprite = this.explosionSprites[i];
+      if (!sprite) {
+        sprite = this.add.image(e.pos.x, e.pos.y, FX.explosion.texture, FX.explosion.frames[0]).setDepth(11);
+        this.explosionSprites[i] = sprite;
+      }
+      const t = e.age / e.life;
+      this.applyTextureFrame(
+        sprite,
+        { texture: FX.explosion.texture },
+        effectFrame(FX.explosion.frames, Math.floor(t * FX.explosion.frames.length)),
+      )
+        .setVisible(true)
+        .setPosition(e.pos.x, e.pos.y)
+        .setScale((e.radius / 18) * (0.85 + t * 0.55))
+        .setAlpha(0.95 - t * 0.55);
+    });
+    for (let i = this.world.explosions.length; i < this.explosionSprites.length; i++) {
+      this.explosionSprites[i].setVisible(false);
     }
   }
 
   /** Draw a flickering fire + smoke overlay on cars that are currently burning. */
   private syncBurningCars(): void {
-    const g = this.burningGfx;
-    g.clear();
-    const t = this.time.now / 120;
     this.world.cars.forEach((car, i) => {
-      if (!this.world.carIsBurning(i)) return;
+      let sprite = this.fireSprites[i];
+      if (!sprite) {
+        sprite = this.add.image(car.pos.x, car.pos.y, FX.fire.texture, FX.fire.frames[0]).setDepth(5.5);
+        this.fireSprites[i] = sprite;
+      }
+      if (!this.world.carIsBurning(i)) {
+        sprite.setVisible(false);
+        return;
+      }
 
-      const pulse = 0.55 + 0.45 * Math.sin(t + i * 1.1);
-      const jitterX = Math.sin(t * 0.8 + i) * 2.5;
-      const jitterY = Math.cos(t * 0.65 + i * 0.7) * 1.5;
-      const rearX = car.pos.x - Math.cos(car.heading) * (car.radius * 0.45);
-      const rearY = car.pos.y - Math.sin(car.heading) * (car.radius * 0.45);
-
-      g.fillStyle(COLORS.smoke, 0.14 + pulse * 0.08);
-      g.fillCircle(rearX - 3 + jitterX, rearY - 8 + jitterY, car.radius * (0.9 + pulse * 0.15));
-      g.fillCircle(rearX + 4 - jitterX * 0.4, rearY - 13 - jitterY, car.radius * 0.7);
-
-      g.fillStyle(COLORS.fireGlow, 0.24 + pulse * 0.12);
-      g.fillCircle(car.pos.x, car.pos.y, car.radius * (1.05 + pulse * 0.18));
-
-      g.fillStyle(COLORS.fireGlow, 0.75);
-      g.fillCircle(
-        car.pos.x + jitterX * 0.35,
-        car.pos.y + jitterY * 0.35,
-        car.radius * (0.55 + pulse * 0.12),
-      );
-
-      g.fillStyle(COLORS.fireCore, 0.85);
-      g.fillCircle(
-        car.pos.x - jitterX * 0.2,
-        car.pos.y - jitterY * 0.15,
-        car.radius * (0.26 + pulse * 0.08),
-      );
+      const pulse = 0.55 + 0.45 * Math.sin(this.time.now / 120 + i * 1.1);
+      this.applyTextureFrame(
+        sprite,
+        { texture: FX.fire.texture },
+        effectFrame(FX.fire.frames, Math.floor(this.time.now / 120 + i)),
+      )
+        .setVisible(true)
+        .setPosition(car.pos.x, car.pos.y - car.radius * 0.1)
+        .setRotation(car.heading)
+        .setScale((car.radius / 12) * (0.9 + pulse * 0.22))
+        .setAlpha(0.5 + pulse * 0.35);
     });
   }
 
@@ -2163,9 +2317,18 @@ export class CityScene extends Phaser.Scene {
 
     // The medic on foot, while the ambulance is parked fetching the body.
     if (amb.crew) {
-      this.medicSprite ??= this.add.image(0, 0, TEX.medic).setDepth(6);
+      this.medicSprite ??= this.spawnImage(0, 0, textureRef(TEX.medic)).setDepth(6);
       const goal = amb.phase === 'collect' ? amb.target : amb.pos;
-      this.medicSprite
+      const medicTexture = textureRef(TEX.medic);
+      this.applyTextureFrame(
+        this.medicSprite,
+        medicTexture,
+        this.animatedFrame(
+          medicTexture,
+          Math.hypot(amb.crew.x - this.medicSprite.x, amb.crew.y - this.medicSprite.y) > 0.12,
+          165,
+        ),
+      )
         .setVisible(true)
         .setPosition(amb.crew.x, amb.crew.y)
         .setRotation(Math.atan2(goal.y - amb.crew.y, goal.x - amb.crew.x));
@@ -2212,7 +2375,7 @@ export class CityScene extends Phaser.Scene {
     this.world.tows.forEach((tow, i) => {
       let sprite = this.towSprites[i];
       if (!sprite) {
-        sprite = this.add.image(0, 0, TEX.tow).setDepth(6);
+        sprite = this.spawnImage(0, 0, textureRef(TEX.tow)).setDepth(6);
         this.towSprites[i] = sprite;
       }
       sprite.setVisible(true).setPosition(tow.pos.x, tow.pos.y).setRotation(tow.heading);
@@ -2221,11 +2384,20 @@ export class CityScene extends Phaser.Scene {
       let worker = this.towWorkerSprites[i];
       if (tow.crew) {
         if (!worker) {
-          worker = this.add.image(0, 0, TEX.towWorker).setDepth(6);
+          worker = this.spawnImage(0, 0, textureRef(TEX.towWorker)).setDepth(6);
           this.towWorkerSprites[i] = worker;
         }
         const goal = tow.phase === 'collect' ? tow.target : tow.pos;
-        worker
+        const workerTexture = textureRef(TEX.towWorker);
+        this.applyTextureFrame(
+          worker,
+          workerTexture,
+          this.animatedFrame(
+            workerTexture,
+            Math.hypot(tow.crew.x - worker.x, tow.crew.y - worker.y) > 0.12,
+            165,
+          ),
+        )
           .setVisible(true)
           .setPosition(tow.crew.x, tow.crew.y)
           .setRotation(Math.atan2(goal.y - tow.crew.y, goal.x - tow.crew.x));
@@ -2260,10 +2432,36 @@ export class CityScene extends Phaser.Scene {
     }
   }
 
-  private pedTexture(ped: Pedestrian): string {
-    if (ped.uniform === 'medic') return TEX.medic;
-    if (ped.uniform === 'towWorker') return TEX.towWorker;
-    return TEX.pedestrian;
+  private spawnImage(x: number, y: number, ref: TextureRef): Phaser.GameObjects.Image {
+    return this.add.image(x, y, ref.texture, ref.frame);
+  }
+
+  private animatedFrame(ref: TextureRef, moving: boolean, rateMs = 180): string | number | undefined {
+    if (!moving || !ref.frames || ref.frames.length === 0) return ref.frame;
+    return cycleFrame(ref, Math.floor(this.time.now / rateMs));
+  }
+
+  private applyTextureFrame(
+    sprite: Phaser.GameObjects.Image,
+    ref: TextureRef,
+    frame: string | number | undefined,
+  ): Phaser.GameObjects.Image {
+    return sprite.setTexture(ref.texture, frame);
+  }
+
+  private pedTexture(ped: Pedestrian, index: number): TextureRef {
+    if (ped.uniform === 'medic') return textureRef(TEX.medic);
+    if (ped.uniform === 'towWorker') return textureRef(TEX.towWorker);
+    const seed =
+      ped.visualSeed ??
+      stableVisualSeed(
+        index + 1,
+        ped.taxiPassengerId ?? 0,
+        ped.policeSuspectId ?? 0,
+        ped.storyActorOrder ?? 0,
+        stringSeed(ped.storyActorId),
+      );
+    return pickVariantTexture(PEDESTRIAN_VARIANT_TEXTURES, seed);
   }
 
   private setupCamera(): void {
@@ -2896,6 +3094,8 @@ export class CityScene extends Phaser.Scene {
     }
 
     this.syncSprites();
+  this.syncEnvironmentArt(dt);
+    this.syncVisualFeedback(dt);
     this.minimapAccumulator += dt;
     if (this.minimapAccumulator >= MINIMAP_REFRESH_INTERVAL) {
       this.syncMinimap();
@@ -4069,31 +4269,40 @@ export class CityScene extends Phaser.Scene {
       .join('\n');
   }
 
-  private carTexture(index: number): string {
+  private carTexture(index: number): TextureRef {
     const kind = this.world.carKind(index);
-    if (kind === 'ambulance') return TEX.ambulance;
-    if (kind === 'tow') return TEX.tow;
-    if (kind === 'police') return TEX.policeCar;
-    if (kind === 'taxi') return TEX.taxi;
-    if (kind === 'sedan') return TEX.sedan;
-    if (kind === 'coupe') return TEX.coupe;
-    if (kind === 'muscle') return TEX.muscle;
-    if (kind === 'sports') return TEX.sports;
-    if (kind === 'pickup') return TEX.pickup;
-    if (kind === 'van') return TEX.van;
-    if (kind === 'limo') return TEX.limo;
-    return index === this.world.drivingCarIndex ? TEX.playerCar : TEX.npcCar;
+    if (kind === 'ambulance') return textureRef(TEX.ambulance);
+    if (kind === 'tow') return textureRef(TEX.tow);
+    if (kind === 'police') return textureRef(TEX.policeCar);
+    if (kind === 'taxi') return textureRef(TEX.taxi);
+    const seed = stableVisualSeed(index + 1, kind.length * 13);
+    if (kind === 'sedan') return pickVariantTexture(CIVILIAN_VEHICLE_TEXTURES.sedan, seed);
+    if (kind === 'coupe') return pickVariantTexture(CIVILIAN_VEHICLE_TEXTURES.coupe, seed);
+    if (kind === 'muscle') return pickVariantTexture(CIVILIAN_VEHICLE_TEXTURES.muscle, seed);
+    if (kind === 'sports') return pickVariantTexture(CIVILIAN_VEHICLE_TEXTURES.sports, seed);
+    if (kind === 'pickup') return pickVariantTexture(CIVILIAN_VEHICLE_TEXTURES.pickup, seed);
+    if (kind === 'van') return pickVariantTexture(CIVILIAN_VEHICLE_TEXTURES.van, seed);
+    if (kind === 'limo') return pickVariantTexture(CIVILIAN_VEHICLE_TEXTURES.limo, seed);
+    return index === this.world.drivingCarIndex
+      ? textureRef(TEX.playerCar)
+      : pickVariantTexture(CIVILIAN_VEHICLE_TEXTURES.car, seed);
+  }
+
+  private carDamageTint(healthRatio: number): number | null {
+    const severity = 1 - healthRatio;
+    if (severity < 0.2) return null;
+    const target = severity > 0.55 ? 0x8b5a3c : 0x94a3b8;
+    return blendColor(0xffffff, target, Math.min(0.6, severity * 0.8));
   }
 
   private syncSprites(): void {
     this.world.cars.forEach((car, i) => {
       const size = vehicleBodySpecForKind(this.world.carKind(i));
+      const healthRatio = this.world.carHealthRatio(i);
+      const liveTexture = this.carTexture(i);
       let sprite = this.carSprites[i];
       if (!sprite) {
-        sprite = this.add
-          .image(car.pos.x, car.pos.y, this.carTexture(i))
-          .setDisplaySize(size.spriteWidth, size.spriteHeight)
-          .setDepth(4);
+        sprite = this.spawnImage(car.pos.x, car.pos.y, liveTexture).setDisplaySize(size.spriteWidth, size.spriteHeight).setDepth(4);
         this.carSprites[i] = sprite;
       }
       if (this.world.towedCars[i] && this.world.wreckedCars[i]) {
@@ -4102,11 +4311,12 @@ export class CityScene extends Phaser.Scene {
       }
       if (this.world.wreckedCars[i]) {
         // A destroyed car is a charred, static wreck.
+        const wreckFrame = effectFrame(FX.wreck.frames, Math.floor(this.time.now / 260 + i));
         sprite
           .setVisible(true)
-          .setTexture(TEX.npcCar)
-          .setDisplaySize(size.spriteWidth, size.spriteHeight)
-          .setTint(0x3a3a3a)
+          .setTexture(FX.wreck.texture, wreckFrame)
+          .setDisplaySize(size.spriteWidth + 6, size.spriteHeight + 4)
+          .setTint(0xffffff)
           .setPosition(car.pos.x, car.pos.y)
           .setRotation(car.heading);
         return;
@@ -4114,30 +4324,37 @@ export class CityScene extends Phaser.Scene {
       if (this.world.carIsBurning(i)) {
         sprite
           .setVisible(true)
-          .setTexture(this.carTexture(i))
+          .setTexture(liveTexture.texture, liveTexture.frame)
           .setDisplaySize(size.spriteWidth, size.spriteHeight)
           .setTint(this.burningCarTint(i))
           .setPosition(car.pos.x, car.pos.y)
           .setRotation(car.heading);
         return;
       }
+      const damageTint = this.carDamageTint(healthRatio);
       sprite
-        .clearTint()
         .setVisible(true)
-        .setTexture(this.carTexture(i))
+        .setTexture(liveTexture.texture, liveTexture.frame)
         .setDisplaySize(size.spriteWidth, size.spriteHeight)
         .setPosition(car.pos.x, car.pos.y)
         .setRotation(car.heading);
+      if (damageTint === null) sprite.clearTint();
+      else sprite.setTint(damageTint);
     });
 
     // Pedestrians can be removed (run over): hide any surplus sprites.
     this.world.pedestrians.forEach((ped, i) => {
+      const pedTexture = this.pedTexture(ped, i);
       let sprite = this.pedSprites[i];
       if (!sprite) {
-        sprite = this.add.image(ped.pos.x, ped.pos.y, this.pedTexture(ped)).setDepth(5);
+        sprite = this.spawnImage(ped.pos.x, ped.pos.y, pedTexture).setDepth(5);
         this.pedSprites[i] = sprite;
       }
-      sprite.setTexture(this.pedTexture(ped)).setVisible(true).setPosition(ped.pos.x, ped.pos.y);
+      const moving = Math.hypot(ped.pos.x - sprite.x, ped.pos.y - sprite.y) > 0.12 && ped.state !== 'wait';
+      this.applyTextureFrame(sprite, pedTexture, this.animatedFrame(pedTexture, moving, 170))
+        .setVisible(true)
+        .setPosition(ped.pos.x, ped.pos.y)
+        .setRotation(ped.heading);
       if (ped.missionTarget) {
         sprite.setTint(COLORS.marker);
       } else if (ped.taxiPassengerRole === 'playerFare') {
@@ -4173,13 +4390,18 @@ export class CityScene extends Phaser.Scene {
     const flashBlue = Math.floor(this.time.now / 200) % 2 === 0;
     const lightTint = flashBlue ? 0x60a5fa : 0xf87171;
     this.world.police.forEach((cop, i) => {
+      const copTexture = cop.kind === 'car' ? textureRef(TEX.policeCar) : textureRef(TEX.policeFoot);
       let sprite = this.policeSprites[i];
       if (!sprite) {
-        sprite = this.add.image(cop.pos.x, cop.pos.y, TEX.policeFoot).setDepth(6);
+        sprite = this.spawnImage(cop.pos.x, cop.pos.y, textureRef(TEX.policeFoot)).setDepth(6);
         this.policeSprites[i] = sprite;
       }
-      sprite
-        .setTexture(cop.kind === 'car' ? TEX.policeCar : TEX.policeFoot)
+      const moving = Math.hypot(cop.pos.x - sprite.x, cop.pos.y - sprite.y) > 0.12;
+      this.applyTextureFrame(
+        sprite,
+        copTexture,
+        cop.kind === 'car' ? copTexture.frame : this.animatedFrame(copTexture, moving, 155),
+      )
         .setVisible(true)
         .setTint(lightTint)
         .setPosition(cop.pos.x, cop.pos.y)
@@ -4246,6 +4468,9 @@ export class CityScene extends Phaser.Scene {
     }
 
     const p = this.world.player;
+    const playerTexture = textureRef(TEX.player);
+    const playerMoving = Math.hypot(p.pos.x - this.playerSprite.x, p.pos.y - this.playerSprite.y) > 0.15;
+    this.applyTextureFrame(this.playerSprite, playerTexture, this.animatedFrame(playerTexture, playerMoving, 145));
     this.playerSprite.setPosition(p.pos.x, p.pos.y);
     this.playerSprite.setRotation(p.angle);
     this.playerSprite.setVisible(!this.world.isDriving);
@@ -4262,6 +4487,163 @@ export class CityScene extends Phaser.Scene {
 
     this.syncHudText();
     this.syncBustedText();
+  }
+
+
+  private syncVisualFeedback(dt: number): void {
+    const currentPickups = new Map<string, AmmoPickup>();
+    for (const pickup of this.world.ammoPickups) {
+      currentPickups.set(pickupVisualKey(pickup), pickup);
+    }
+    for (const [key, pickup] of this.prevAmmoPickups) {
+      if (!currentPickups.has(key)) this.emitPickupParticles(pickup.pos);
+    }
+
+    const nextCarHealth: number[] = [];
+    const nextCarHeadings: number[] = [];
+    this.world.cars.forEach((car, i) => {
+      const healthRatio = this.world.carHealthRatio(i);
+      const prevHealthRatio = this.prevCarHealth[i];
+      if (prevHealthRatio !== undefined && healthRatio < prevHealthRatio - 0.015 && !this.world.wreckedCars[i]) {
+        this.emitHitParticles(car.pos, car.heading, prevHealthRatio - healthRatio);
+      }
+
+      const prevHeading = this.prevCarHeadings[i];
+      if (
+        prevHeading !== undefined &&
+        Math.abs(Phaser.Math.Angle.Wrap(car.heading - prevHeading)) > 0.11 &&
+        Math.abs(car.speed) > 110 &&
+        !this.world.wreckedCars[i] &&
+        !this.world.carIsBurning(i)
+      ) {
+        this.emitSkidParticles(car);
+      }
+
+      nextCarHealth[i] = healthRatio;
+      nextCarHeadings[i] = car.heading;
+    });
+
+    this.prevAmmoPickups = currentPickups;
+    this.prevCarHealth = nextCarHealth;
+    this.prevCarHeadings = nextCarHeadings;
+
+    this.syncDamageOverlays();
+    this.syncFeedbackParticles(dt);
+  }
+
+  private emitHitParticles(pos: Vec2, heading: number, severity: number): void {
+    const forward = fromAngle(heading, 1);
+    const side = fromAngle(heading + Math.PI / 2, 1);
+    const count = Math.min(9, 4 + Math.round(severity * 20));
+    for (let i = 0; i < count; i++) {
+      const sideOffset = (i - (count - 1) / 2) * 1.8;
+      const drift = 60 + severity * 160 + i * 5;
+      this.visualParticles.push({
+        pos: vec2(pos.x + side.x * sideOffset, pos.y + side.y * sideOffset),
+        vel: vec2(
+          forward.x * (drift * 0.45) + side.x * sideOffset * 12,
+          forward.y * (drift * 0.45) + side.y * sideOffset * 12,
+        ),
+        age: 0,
+        life: 0.28 + severity * 0.18,
+        radius: 1.5 + severity * 1.8,
+        color: i % 3 === 0 ? COLORS.sparkCore : COLORS.spark,
+        alpha: 0.85,
+        stretch: 10 + severity * 8,
+      });
+    }
+  }
+
+  private emitPickupParticles(pos: Vec2): void {
+    for (let i = 0; i < 8; i++) {
+      const heading = (Math.PI * 2 * i) / 8;
+      const burst = fromAngle(heading, 45 + i * 8);
+      this.visualParticles.push({
+        pos: vec2(pos.x, pos.y),
+        vel: burst,
+        age: 0,
+        life: 0.45,
+        radius: i % 2 === 0 ? 2.4 : 1.8,
+        color: i % 2 === 0 ? COLORS.pickupCore : COLORS.pickupSpark,
+        alpha: 0.9,
+        stretch: 6,
+      });
+    }
+  }
+
+  private emitSkidParticles(car: Car): void {
+    const rear = fromAngle(car.heading + Math.PI, car.radius * 0.48);
+    const side = fromAngle(car.heading + Math.PI / 2, car.radius * 0.34);
+    const drift = fromAngle(car.heading + Math.PI, 28 + Math.min(60, Math.abs(car.speed) * 0.18));
+    for (const dir of [-1, 1] as const) {
+      this.visualParticles.push({
+        pos: vec2(car.pos.x + rear.x + side.x * dir, car.pos.y + rear.y + side.y * dir),
+        vel: vec2(drift.x + side.x * dir * 8, drift.y + side.y * dir * 8),
+        age: 0,
+        life: 0.36,
+        radius: 2.2,
+        color: COLORS.skid,
+        alpha: 0.38,
+        stretch: 14,
+      });
+    }
+  }
+
+  private syncFeedbackParticles(dt: number): void {
+    const g = this.feedbackGfx;
+    g.clear();
+    const next: VisualParticle[] = [];
+    for (const particle of this.visualParticles) {
+      const age = particle.age + dt;
+      if (age >= particle.life) continue;
+      const drag = Math.max(0, 1 - dt * 4.5);
+      const vel = vec2(particle.vel.x * drag, particle.vel.y * drag);
+      const pos = vec2(particle.pos.x + vel.x * dt, particle.pos.y + vel.y * dt);
+      const alpha = particle.alpha * (1 - age / particle.life);
+      g.lineStyle(Math.max(1, particle.radius * 0.65), particle.color, alpha * 0.85);
+      g.lineBetween(
+        pos.x,
+        pos.y,
+        pos.x - vel.x * 0.03 * particle.stretch,
+        pos.y - vel.y * 0.03 * particle.stretch,
+      );
+      g.fillStyle(particle.color, alpha);
+      g.fillCircle(pos.x, pos.y, particle.radius);
+      next.push({ ...particle, pos, vel, age });
+    }
+    this.visualParticles = next;
+  }
+
+  private syncDamageOverlays(): void {
+    this.world.cars.forEach((car, i) => {
+      let sprite = this.damageSprites[i];
+      if (!sprite) {
+        sprite = this.add.image(car.pos.x, car.pos.y, FX.damage.texture, FX.damage.frames[0]).setDepth(4.6);
+        this.damageSprites[i] = sprite;
+      }
+
+      if (this.world.wreckedCars[i] || this.world.towedCars[i] || this.world.carIsBurning(i)) {
+        sprite.setVisible(false);
+        return;
+      }
+
+      const severity = 1 - this.world.carHealthRatio(i);
+      if (severity < 0.22) {
+        sprite.setVisible(false);
+        return;
+      }
+
+      this.applyTextureFrame(
+        sprite,
+        { texture: FX.damage.texture },
+        effectFrame(FX.damage.frames, severity > 0.58 ? 1 : 0),
+      )
+        .setVisible(true)
+        .setPosition(car.pos.x, car.pos.y)
+        .setRotation(car.heading)
+        .setScale(car.radius / 14)
+        .setAlpha(0.26 + severity * 0.45);
+    });
   }
 
   /** Build the multi-line HUD: wanted, health, money, weapon, and controls. */

@@ -1062,6 +1062,13 @@ export class World {
     return !this.wreckedCars[index] && (this.carBurnTimers[index] ?? 0) > 0;
   }
 
+  /** Remaining structural integrity of a car slot as a 0..1 ratio. */
+  carHealthRatio(index: number): number {
+    const health = this.carHealth[index];
+    if (health === undefined) return 1;
+    return Math.max(0, Math.min(1, health / CAR_MAX_HEALTH));
+  }
+
   /** Current wanted-level star rating (0..6). */
   get wantedStars(): number {
     return stars(this.wanted);

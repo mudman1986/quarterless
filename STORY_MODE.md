@@ -36,7 +36,11 @@ At a glance:
   debug overlays. Chapter starts now stage through a dedicated opener card before the
   live mission brief, chapter finales stage through a chapter-complete handoff into the
   next chapter card, and the portrait layer uses a stronger speaker-specific treatment
-  instead of a plain monogram box.
+  instead of a plain monogram box. The city/world render also now uses a cohesive
+  authored visual direction rather than the earlier flatter placeholder pass:
+  hand-authored SVG vehicle, pedestrian, tile, and FX sheets now drive the live scene,
+  with animated walk cycles, animated environment shimmer/water, and dedicated wreck /
+  fire / damage frames instead of only procedural placeholder rendering.
 - **Persistence:** autosave and manual slots share one source of truth, with
   version-walking migration on load.
 - **Quality gates (all green):**
@@ -51,8 +55,8 @@ At a glance:
 **Honest caveat:** "engineering plan complete" is not the same as "finished game". The
 balance gate validates numeric *sanity* (no 50-credit missions, no 9-star demands), not
 a hand-tuned *fun* curve, and several whole-product surfaces — audio, onboarding,
-options, art, and writing — are still placeholder-level. Section 2 is the backlog that
-closes that gap.
+options, and writing — are still prototype-level. Section 2 is the backlog that closes
+that gap.
 
 ### Architecture map
 
@@ -67,7 +71,7 @@ closes that gap.
 | Scene runtime (spawns, scripts, summaries) | `src/game/scenes/CityScene.ts` |
 | Launcher / story UI, save-slot overview | `src/bootstrap.ts`, `src/game/story/storyMissionScorecards.ts` |
 | Save state / migration | `src/core/gameState.ts` |
-| Regression coverage | `e2e/story-mode.spec.ts`, `e2e/story-authored-missions.spec.ts`, unit `*.test.ts` |
+| Regression coverage | `e2e/story-mode.spec.ts`, `e2e/story-authored-missions.spec.ts`, `e2e/city-render.spec.ts`, unit `*.test.ts` |
 
 ### Entry points
 
@@ -103,9 +107,11 @@ blockers for "the planned story mode is done".
 
 ### Tier 2 — Presentation and content polish
 
-- **Art and animation pass.** Replace procedural placeholder sprites/tiles with a
-  cohesive style; add vehicle/pedestrian variety, damage states, and simple particle
-  feedback (skids, hits, pickups).
+- **Bespoke asset art pass.** The core city runtime now ships with hand-authored SVG
+  sprites/tiles, richer destruction frames, and more elaborate environmental and
+  character animation. The remaining optional art work is breadth and upscale polish:
+  bespoke portraits, more specialty props, and higher-resolution export sets if the
+  project moves past the current crisp pixel-vector look.
 - **Narrative / writing polish.** The authored hooks, goals, and payoffs are
   prototype-grade. A dedicated writing pass for voice, consistency, and payoff across
   all 24 chapters would raise the story from "functional" to "engaging".
@@ -123,7 +129,9 @@ blockers for "the planned story mode is done".
 - **Ship-quality validation.** The engineering ship gate is now strong enough to run as
   a real pre-release sweep: full Vitest coverage, full Playwright coverage, build,
   typecheck, and lint. What still remains manual is the human side of shipping: balance
-  feel, writing polish, audio mix, and device-specific playtesting.
+  feel, writing polish, audio mix, and device-specific playtesting. The city render now
+  also has a dedicated Playwright smoke check covering authored vehicle/people/tile/FX
+  sheets and live framebuffer variety.
 
 ### Tier 3 — Depth, replayability, and reach
 
