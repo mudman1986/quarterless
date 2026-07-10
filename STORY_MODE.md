@@ -38,7 +38,8 @@ At a glance:
   next chapter card, and the portrait layer uses a stronger speaker-specific treatment
   instead of a plain monogram box. The city/world render also now uses a cohesive
   authored visual direction rather than the earlier flatter placeholder pass:
-  hand-authored SVG vehicle, pedestrian, tile, and FX sheets now drive the live scene,
+  data-driven vehicle, pedestrian, tile, and FX sheets (rasterized from a TypeScript
+  drawing-op table into canvas textures at scene start) now drive the live scene,
   with animated walk cycles, animated environment shimmer/water, and dedicated wreck /
   fire / damage frames instead of only procedural placeholder rendering.
 - **Persistence:** autosave and manual slots share one source of truth, with
@@ -107,8 +108,9 @@ blockers for "the planned story mode is done".
 
 ### Tier 2 — Presentation and content polish
 
-- **Bespoke asset art pass.** The core city runtime now ships with hand-authored SVG
-  sprites/tiles, richer destruction frames, and more elaborate environmental and
+- **Bespoke asset art pass.** The core city runtime now ships with data-driven
+  sprites/tiles (a TypeScript drawing-op table rasterized to canvas textures at
+  runtime), richer destruction frames, and more elaborate environmental and
   character animation. The remaining optional art work is breadth and upscale polish:
   bespoke portraits, more specialty props, and higher-resolution export sets if the
   project moves past the current crisp pixel-vector look.

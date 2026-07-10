@@ -48,27 +48,34 @@ physics-arcade, filters-and-postfx, tweens, etc.).
 - Set `render: { powerPreference: 'high-performance' }` in the game config to request the
   discrete GPU where available.
 
-## Assets & the SVG decision
+## Assets & the art decision
 
-Authored art currently ships as hand-written **SVG spritesheets** loaded via
-`this.load.spritesheet(key, url, { frameWidth, frameHeight })` in
-`src/game/art/textures.ts`.
+Authored art is **procedural / data-driven**: every sprite frame is described as a small table
+of drawing ops (rects, circles, ellipses, SVG-style paths) in
+[src/game/art/spriteArt.ts](src/game/art/spriteArt.ts) and rasterized once into Phaser
+**CanvasTextures** at scene start via `generateGameTextures(scene, keys)`.
+[src/game/art/textures.ts](src/game/art/textures.ts) owns the texture keys/frame maps and
+exposes `preloadGameTextures(scene)`, which just delegates to the generator. There are **no
+binary art assets and no image decode** at launch.
 
-- **SVG textures are rasterized to a bitmap once at load** — they cost the same as PNG at
-  render time. SVGs are *not* a per-frame performance problem.
-- The real cost is **load-time decode** (SVG decodes slower than PNG) and it is re-incurred on
-  every game launch, because navigating out of a game calls `game.destroy(true)`, which wipes
-  the texture cache.
-- For a **pixel-art** game (`shape-rendering="crispEdges"`), SVG offers **no runtime benefit**
-  over PNG — it is rasterized anyway. Prefer **PNG spritesheets** or the v4 **PCT atlas**
-  (typically 90–95% smaller than JSON atlases) for production to cut load time.
-- Keep the SVGs as the *authoring source* if you like them, but rasterize/export to PNG at
-  build time rather than shipping raw SVG to the loader.
+Why this shape (do not regress it):
+
+- **No load-time decode cost.** The previous design shipped hand-written **SVG spritesheets**
+  loaded with `this.load.spritesheet(...)`. SVG rasterizes to a bitmap once at load (so it was
+  never a per-frame problem), but the **decode is slower than PNG and re-incurred on every
+  launch**, because leaving a game calls `game.destroy(true)`, which wipes the texture cache.
+  Generating from a data table is effectively instant and needs no network round-trip.
+- **Art is diff-able TS data** — reviewable in a PR, editable by AI without a build/export step,
+  and free of binary blobs. This suits an AI-managed pixel-art project better than PNG/SVG.
+- Frames are drawn with the Canvas 2D API; `path` ops accept raw SVG path `d` strings via
+  `new Path2D(...)`, so faithful shapes are cheap to author without an SVG image decode.
 - Consolidate frames into as few sheets as possible so sprites batch (fewer texture swaps =
-  fewer draw calls). The current 4-sheet layout (vehicles / people / tiles / effects) is good;
-  keep it that way.
-- `preloadGameTextures()` guards every load with `textures.exists(...)`; keep that guard so a
-  `scene.restart()` never re-decodes assets.
+  fewer draw calls). The current 4-sheet layout (vehicles / people / tiles / effects) plus the
+  single ammo image is good; keep it that way.
+- `buildSheet()`/`buildImage()` guard on `textures.exists(...)`; keep that guard so a
+  `scene.restart()` never regenerates textures.
+- Every generated `CanvasTexture` sets `FilterMode.NEAREST` for crisp pixel-art scaling — keep
+  it in step with `pixelArt: true` in the game config.
 
 ## Testing & verification (required before declaring work done)
 

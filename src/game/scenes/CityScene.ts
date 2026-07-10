@@ -1782,8 +1782,7 @@ export class CityScene extends Phaser.Scene {
     this.add
       .tileSprite(0, 0, width, height, TILE.road.texture, TILE.road.frame)
       .setOrigin(0)
-      .setDepth(-0.2)
-      .setTint(COLORS.road);
+      .setDepth(-0.2);
 
     // Lane markings between every lane, with a stronger divider between the two directions.
     const lines = this.add.graphics();
@@ -1809,6 +1808,7 @@ export class CityScene extends Phaser.Scene {
 
     // Buildings with rooftops and lit windows for a denser city look.
     const g = this.add.graphics();
+    const emblemG = this.add.graphics().setDepth(1.2);
     const shades = [0x3f4654, 0x4b5563, 0x434b59, 0x515b6b, 0x3a4150];
     const facilities = new Map(this.city.facilities.map((f) => [f.buildingIndex, f]));
     this.city.buildings.forEach((b, i) => {
@@ -1871,37 +1871,8 @@ export class CityScene extends Phaser.Scene {
           .setTint(blendColor(roofColor, COLORS.buildingEdge, 0.42));
       }
 
-      if (facility?.kind === 'hospital') {
-        const cx = b.x + b.w / 2;
-        const cy = b.y + b.h / 2;
-        g.fillStyle(0xdc2626, 1);
-        g.fillRect(cx - 6, cy - 18, 12, 36);
-        g.fillRect(cx - 18, cy - 6, 36, 12);
-      } else if (facility?.kind === 'policeStation') {
-        const cx = b.x + b.w / 2;
-        const cy = b.y + b.h / 2;
-        g.fillStyle(0xbfdbfe, 1);
-        g.fillRect(cx - 16, cy - 12, 32, 6);
-        g.fillRect(cx - 12, cy - 4, 24, 6);
-        g.fillRect(cx - 8, cy + 4, 16, 6);
-      } else if (facility?.kind === 'towYard') {
-        g.fillStyle(0x111114, 1);
-        for (let k = 0; k < 5; k++) {
-          g.fillRect(b.x + 16 + k * 18, b.y + b.h / 2 - 4, 10, 8);
-        }
-      } else if (facility?.kind === 'taxiDepot') {
-        const cx = b.x + b.w / 2;
-        const cy = b.y + b.h / 2;
-        g.fillStyle(0x111114, 1);
-        for (let row = 0; row < 2; row++) {
-          for (let col = 0; col < 3; col++) {
-            if ((row + col) % 2 === 0) {
-              g.fillRect(cx - 18 + col * 12, cy - 10 + row * 10, 10, 8);
-            }
-          }
-        }
-        g.fillStyle(0x111114, 1);
-        g.fillRect(cx - 4, cy + 6, 8, 18);
+      if (facility) {
+        this.drawFacilityEmblem(emblemG, facility.kind, b.x + b.w / 2, b.y + b.h / 2, Math.min(b.w, b.h));
       }
     });
 
@@ -1965,6 +1936,103 @@ export class CityScene extends Phaser.Scene {
     g.strokeRect(cx - doorSpan / 2, doorY, doorSpan, doorDepth);
   }
 
+  /** A clear rooftop emblem so each service building's purpose reads at a glance:
+   * red medical cross (hospital), white badge star (police), amber hazard chevrons
+   * (tow yard), black/yellow checker (taxi depot). Drawn on a layer above the roofs. */
+  private drawFacilityEmblem(
+    g: Phaser.GameObjects.Graphics,
+    kind: Facility['kind'],
+    cx: number,
+    cy: number,
+    size: number,
+  ): void {
+    const panel = Math.min(56, Math.max(28, size * 0.5));
+    const half = panel / 2;
+    const drawPanel = (fill: number): void => {
+      g.fillStyle(fill, 0.96);
+      g.fillRoundedRect(cx - half, cy - half, panel, panel, 6);
+      g.lineStyle(2, COLORS.buildingEdge, 0.9);
+      g.strokeRoundedRect(cx - half, cy - half, panel, panel, 6);
+    };
+    if (kind === 'hospital') {
+      drawPanel(0xf8fafc);
+      const arm = panel * 0.16;
+      const len = panel * 0.66;
+      g.fillStyle(0xdc2626, 1);
+      g.fillRect(cx - arm, cy - len / 2, arm * 2, len);
+      g.fillRect(cx - len / 2, cy - arm, len, arm * 2);
+    } else if (kind === 'policeStation') {
+      drawPanel(0x1d4ed8);
+      this.drawStar(g, cx, cy, 5, panel * 0.42, panel * 0.18, 0xffffff);
+    } else if (kind === 'towYard') {
+      drawPanel(0xf59e0b);
+      const hw = panel * 0.3;
+      const hh = panel * 0.16;
+      const t = panel * 0.13;
+      for (let k = 0; k < 3; k++) {
+        this.drawChevron(g, cx, cy - panel * 0.22 + k * (hh + t * 0.5), hw, hh, t, 0x1c1917);
+      }
+    } else if (kind === 'taxiDepot') {
+      drawPanel(0xfacc15);
+      const cell = panel / 6;
+      g.fillStyle(0x111114, 1);
+      for (let row = 0; row < 3; row++) {
+        for (let col = 0; col < 6; col++) {
+          if ((row + col) % 2 === 0) {
+            g.fillRect(cx - half + col * cell, cy - cell * 1.5 + row * cell, cell, cell);
+          }
+        }
+      }
+    }
+  }
+
+  /** Filled N-point star, used for the police badge emblem. */
+  private drawStar(
+    g: Phaser.GameObjects.Graphics,
+    cx: number,
+    cy: number,
+    spikes: number,
+    outer: number,
+    inner: number,
+    color: number,
+  ): void {
+    const points: Phaser.Math.Vector2[] = [];
+    const step = Math.PI / spikes;
+    let rot = -Math.PI / 2;
+    for (let i = 0; i < spikes; i++) {
+      points.push(new Phaser.Math.Vector2(cx + Math.cos(rot) * outer, cy + Math.sin(rot) * outer));
+      rot += step;
+      points.push(new Phaser.Math.Vector2(cx + Math.cos(rot) * inner, cy + Math.sin(rot) * inner));
+      rot += step;
+    }
+    g.fillStyle(color, 1);
+    g.fillPoints(points, true);
+  }
+
+  /** A thick downward chevron, stacked to form the tow-yard hazard emblem. */
+  private drawChevron(
+    g: Phaser.GameObjects.Graphics,
+    cx: number,
+    y: number,
+    hw: number,
+    hh: number,
+    t: number,
+    color: number,
+  ): void {
+    g.fillStyle(color, 1);
+    g.fillPoints(
+      [
+        new Phaser.Math.Vector2(cx - hw, y),
+        new Phaser.Math.Vector2(cx, y + hh),
+        new Phaser.Math.Vector2(cx + hw, y),
+        new Phaser.Math.Vector2(cx + hw, y + t),
+        new Phaser.Math.Vector2(cx, y + hh + t),
+        new Phaser.Math.Vector2(cx - hw, y + t),
+      ],
+      true,
+    );
+  }
+
   /** Draw the river water, the bridge decks crossing it, and the bridge rails. */
   private drawTerrain(): void {
     if (this.city.water.length === 0) return;
@@ -1974,8 +2042,7 @@ export class CityScene extends Phaser.Scene {
       const water = this.add
         .tileSprite(body.x, body.y, body.w, body.h, TILE.water.texture, TILE.water.frame)
         .setOrigin(0)
-        .setDepth(1)
-        .setTint(COLORS.water);
+        .setDepth(1);
       this.waterTiles.push(water);
     }
 
@@ -1988,8 +2055,7 @@ export class CityScene extends Phaser.Scene {
           this.add
             .image(tx * tile + tile / 2, ty * tile + tile / 2, TILE.bridge.texture, TILE.bridge.frame)
             .setDisplaySize(tile, tile)
-            .setDepth(2)
-            .setTint(COLORS.bridge);
+            .setDepth(2);
         }
       }
     }
@@ -2028,8 +2094,7 @@ export class CityScene extends Phaser.Scene {
       this.add
         .tileSprite(s.x, s.y, s.w, s.h, TILE.sidewalk.texture, TILE.sidewalk.frame)
         .setOrigin(0)
-        .setDepth(0)
-        .setTint(COLORS.sidewalk);
+        .setDepth(0);
       g.lineStyle(1, COLORS.sidewalkShade, 0.35);
       g.strokeRect(s.x + 1, s.y + 1, Math.max(0, s.w - 2), Math.max(0, s.h - 2));
     }
@@ -2039,17 +2104,13 @@ export class CityScene extends Phaser.Scene {
       g.strokeRect(s.x, s.y, s.w, s.h);
     }
 
+    // Zebra crossings: draw the authored stripe rects directly so each bar is
+    // oriented per crossing (upright over N-S roads, flat over E-W roads).
+    g.fillStyle(0xeef2f8, 0.72);
     for (const cw of this.city.crosswalks) {
-      const stripes = crosswalkStripeRects(cw);
-      const minX = Math.min(...stripes.map((stripe) => stripe.x));
-      const minY = Math.min(...stripes.map((stripe) => stripe.y));
-      const maxX = Math.max(...stripes.map((stripe) => stripe.x + stripe.w));
-      const maxY = Math.max(...stripes.map((stripe) => stripe.y + stripe.h));
-      this.add
-        .tileSprite(minX, minY, maxX - minX, maxY - minY, TILE.crosswalk.texture, TILE.crosswalk.frame)
-        .setOrigin(0)
-        .setDepth(0.25)
-        .setTint(COLORS.crosswalk);
+      for (const stripe of crosswalkStripeRects(cw)) {
+        g.fillRect(stripe.x, stripe.y, stripe.w, stripe.h);
+      }
     }
 
     // Parking bays: a thin outline under each parked car, oriented to its kerb.
@@ -2271,11 +2332,26 @@ export class CityScene extends Phaser.Scene {
     g.clear();
     const ew = axis === 'horizontal' ? COLORS.lightGreen : COLORS.lightRed;
     const ns = axis === 'vertical' ? COLORS.lightGreen : COLORS.lightRed;
+    const ewAlpha = axis === 'horizontal' ? 1 : 0.78;
+    const nsAlpha = axis === 'vertical' ? 1 : 0.78;
     for (const c of this.intersectionCenters) {
-      g.fillStyle(ew, 1);
-      g.fillRect(c.x - 7, c.y - 1.5, 14, 3); // east-west indicator
-      g.fillStyle(ns, 1);
-      g.fillRect(c.x - 1.5, c.y - 7, 3, 14); // north-south indicator
+      // Dark signal housing behind each lamp bar.
+      g.fillStyle(0x0a0e16, 0.85);
+      g.fillRoundedRect(c.x - 9, c.y - 3.5, 18, 7, 2);
+      g.fillRoundedRect(c.x - 3.5, c.y - 9, 7, 18, 2);
+      // Soft green glow along whichever axis currently has right of way.
+      if (axis === 'horizontal') {
+        g.fillStyle(COLORS.lightGreen, 0.22);
+        g.fillRect(c.x - 11, c.y - 3, 22, 6);
+      } else {
+        g.fillStyle(COLORS.lightGreen, 0.22);
+        g.fillRect(c.x - 3, c.y - 11, 6, 22);
+      }
+      // Rounded lamp bars, the stopped axis dimmed so green reads as “go”.
+      g.fillStyle(ew, ewAlpha);
+      g.fillRoundedRect(c.x - 7, c.y - 1.75, 14, 3.5, 1.5);
+      g.fillStyle(ns, nsAlpha);
+      g.fillRoundedRect(c.x - 1.75, c.y - 7, 3.5, 14, 1.5);
     }
   }
 

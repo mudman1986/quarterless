@@ -160,7 +160,7 @@ async function measureCityRender(page: Page): Promise<RenderStats> {
         const min = Math.min(r, g, b);
         if (max > 180 && r + g + b > 420) brightPixels += 1;
         if (max > 90 && max - min > 55) saturatedPixels += 1;
-        if (max < 72 && Math.abs(r - g) < 20 && Math.abs(g - b) < 20) roadLikePixels += 1;
+        if (max < 96 && Math.abs(r - g) < 20 && Math.abs(g - b) < 20) roadLikePixels += 1;
       }
     }
 

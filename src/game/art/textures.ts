@@ -1,10 +1,5 @@
 import Phaser from 'phaser';
-
-const VEHICLES_URL = new URL('./assets/vehicles.svg', import.meta.url).toString();
-const PEOPLE_URL = new URL('./assets/pedestrians.svg', import.meta.url).toString();
-const TILES_URL = new URL('./assets/tiles.svg', import.meta.url).toString();
-const EFFECTS_URL = new URL('./assets/effects.svg', import.meta.url).toString();
-const AMMO_URL = new URL('./assets/ammo.svg', import.meta.url).toString();
+import { generateGameTextures } from './spriteArt';
 
 export const TEX = {
   playerCar: 'tex-player-car',
@@ -114,37 +109,13 @@ export const FX = {
 } as const;
 
 export function preloadGameTextures(scene: Phaser.Scene): void {
-  if (!scene.textures.exists(SHEET.vehicles)) {
-    scene.load.spritesheet(SHEET.vehicles, VEHICLES_URL, {
-      frameWidth: 48,
-      frameHeight: 24,
-    });
-  }
-  if (!scene.textures.exists(SHEET.people)) {
-    scene.load.spritesheet(SHEET.people, PEOPLE_URL, {
-      frameWidth: 16,
-      frameHeight: 32,
-    });
-  }
-  if (!scene.textures.exists(SHEET.tiles)) {
-    scene.load.spritesheet(SHEET.tiles, TILES_URL, {
-      frameWidth: 64,
-      frameHeight: 64,
-    });
-  }
-  if (!scene.textures.exists(SHEET.effects)) {
-    scene.load.spritesheet(SHEET.effects, EFFECTS_URL, {
-      frameWidth: 32,
-      frameHeight: 32,
-    });
-  }
-  if (!scene.textures.exists(TEX.ammo)) {
-    scene.load.image(TEX.ammo, AMMO_URL);
-  }
-}
-
-export function createGameTextures(): void {
-  // Authored art now loads through Scene.preload via preloadGameTextures().
+  generateGameTextures(scene, {
+    vehicles: SHEET.vehicles,
+    people: SHEET.people,
+    tiles: SHEET.tiles,
+    effects: SHEET.effects,
+    ammo: TEX.ammo,
+  });
 }
 
 export function textureRef(key: TextureKey): TextureRef {
