@@ -2106,7 +2106,7 @@ export class CityScene extends Phaser.Scene {
 
     // Zebra crossings: draw the authored stripe rects directly so each bar is
     // oriented per crossing (upright over N-S roads, flat over E-W roads).
-    g.fillStyle(0xeef2f8, 0.72);
+    g.fillStyle(0xd9e0e9, 0.61);
     for (const cw of this.city.crosswalks) {
       for (const stripe of crosswalkStripeRects(cw)) {
         g.fillRect(stripe.x, stripe.y, stripe.w, stripe.h);
