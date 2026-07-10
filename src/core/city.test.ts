@@ -135,10 +135,23 @@ describe('buildCity with wider roads', () => {
 
 describe('buildCity with the live wide river layout', () => {
   const city = buildCity(CITY_SPEC);
-  const expectedBuildingSize = (CITY_SPEC.block - CITY_SPEC.roadWidth!) * CITY_SPEC.tile - 2 * CITY_SPEC.margin!;
+  const { block, roadWidth, tile, margin } = {
+    block: CITY_SPEC.block,
+    roadWidth: CITY_SPEC.roadWidth!,
+    tile: CITY_SPEC.tile,
+    margin: CITY_SPEC.margin!,
+  };
+  const singleSize = (block - roadWidth) * tile - 2 * margin;
+  const doubleSize = (2 * block - roadWidth) * tile - 2 * margin;
+  const riverSplitSize = doubleSize - CITY_SPEC.rivers![0].span * tile;
 
-  it('keeps full-size building footprints beside the river instead of clipping them into slivers', () => {
-    expect(city.buildings.every((b) => b.w === expectedBuildingSize && b.h === expectedBuildingSize)).toBe(true);
+  it('keeps full-size (merged) building footprints beside the river instead of clipping them into slivers', () => {
+    // With mergeBlocks on, footprints are one block (single), two fused blocks
+    // (double), or a two-block block halved by the river band — never a thin
+    // clipped sliver. Every side matches one of those authored sizes.
+    const allowed = new Set([singleSize, doubleSize, riverSplitSize]);
+    expect(city.buildings.every((b) => allowed.has(b.w) && allowed.has(b.h))).toBe(true);
+    expect(city.buildings.every((b) => b.w >= singleSize && b.h >= singleSize)).toBe(true);
   });
 
   it('does not place sidewalk strips over the water band', () => {

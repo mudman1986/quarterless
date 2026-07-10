@@ -18,5 +18,6 @@ export const CITY_SPEC: CitySpec = {
   roadWidth: 4,
   margin: 42,
   sidewalkWidth: 42,
+  mergeBlocks: true,
   rivers: [{ orientation: 'horizontal', start: 32, span: 3, bridgeEvery: 2 }],
 };
