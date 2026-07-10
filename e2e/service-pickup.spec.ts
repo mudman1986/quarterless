@@ -1,8 +1,9 @@
 import { test, expect, type Page } from '@playwright/test';
-import { SHEET } from '../src/game/art/textures';
 import { buildCity, tileCenter } from '../src/core/city';
 import { CITY_SPEC } from '../src/game/citySpec';
 import { launchSindicate } from './helpers';
+
+const PEOPLE_SHEET_TEXTURE = 'tex-sheet-people';
 
 interface Vec2 {
   x: number;
@@ -691,7 +692,7 @@ test('the player can steal the parked ambulance during the loading window', asyn
   expect(state.returningCrew).toBe(1);
   expect(state.crewHeadingHome).toBe(true);
   expect(state.crewUniform).toBe('medic');
-  expect(state.crewTexture).toBe(SHEET.people);
+  expect(state.crewTexture).toBe(PEOPLE_SHEET_TEXTURE);
   expect([12, 13]).toContain(state.crewFrame);
 });
 
@@ -739,7 +740,7 @@ test('the player can steal the parked tow truck during the loading window', asyn
   expect(state.returningCrew).toBe(1);
   expect(state.crewHeadingHome).toBe(true);
   expect(state.crewUniform).toBe('towWorker');
-  expect(state.crewTexture).toBe(SHEET.people);
+  expect(state.crewTexture).toBe(PEOPLE_SHEET_TEXTURE);
   expect([14, 15]).toContain(state.crewFrame);
 });
 
