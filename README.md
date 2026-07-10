@@ -102,6 +102,7 @@ initial landing-page cost.
 
 The core Sindicate logic is covered by Vitest unit tests next to the source files.
 The browser behavior is covered by Playwright against the production build.
+Keep Playwright spec top-level imports Node-safe: import pure `src/core/*` modules and literal test data, but avoid `src/game/*` runtime modules that eagerly pull Phaser during test collection.
 Story-mode unit coverage also checks that fixed authored mission markers stay on dry drivable tiles in the live city layout, so river-adjacent objectives do not regress back into water.
 The exhaustive live-city nearest-road comparison in the city tests carries its own higher per-test timeout because coverage instrumentation makes that brute-force cross-check materially slower than the rest of the unit suite.
 Story-mode Playwright helpers now wait for the Phaser City scene itself to rebuild after launcher transitions and `scene.restart(...)` calls; for save/load assertions, waiting on `window.__game` alone is not a strong enough readiness signal.
