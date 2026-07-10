@@ -1054,6 +1054,7 @@ function createConfig(parent: HTMLElement, scene: PenguinsOfTangramScene, level:
     backgroundColor: level.skyColor,
     width: VIEWPORT_WIDTH,
     height: VIEWPORT_HEIGHT,
+    render: { powerPreference: 'high-performance' },
     scale: {
       mode: Phaser.Scale.RESIZE,
       autoCenter: Phaser.Scale.CENTER_BOTH,
