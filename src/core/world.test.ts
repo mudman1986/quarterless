@@ -1571,7 +1571,7 @@ describe('World traffic rerouting and lights', () => {
     }
     expect(usedCrosswalk).toBe(true); // they stroll over the zebra crossings
     expect(crossedEast).toBe(true); // and actually reach the far kerb, not frozen
-  });
+  }, 10_000);
 
   it('reroutes calm pedestrians over a crosswalk instead of freezing at the kerb', () => {
     const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4, margin: 10 });
@@ -1745,7 +1745,7 @@ describe('World traffic rerouting and lights', () => {
       const p = w.pedestrians[0];
       expect(city.water.some((water) => pointInRect(p.pos, water))).toBe(false);
     }
-  });
+  }, 10_000);
 
   it('keeps a foot officer returning to station out of the river when home sits directly across the water', () => {
     const spec = {

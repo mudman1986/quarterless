@@ -118,7 +118,7 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
             description: 'Reach the 3 storage lockers in sequence before the trail goes cold',
             targets: [
               { x: 1024, y: 1472 },
-              { x: 1472, y: 1472 },
+              { x: 1152, y: 1472 },
               { x: 1920, y: 1472 },
             ],
             radius: 72,

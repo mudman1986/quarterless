@@ -1,5 +1,13 @@
 import { expect, test, type Page } from '@playwright/test';
+import { buildCity, tileCenter } from '../src/core/city';
+import { circleIntersectsRect } from '../src/core/collision';
+import { CITY_SPEC } from '../src/game/citySpec';
 import { launchSindicate, waitForCitySceneReady } from './helpers';
+
+interface Vec2 {
+  x: number;
+  y: number;
+}
 
 interface GameProbe {
   scene: {
@@ -9,6 +17,8 @@ interface GameProbe {
       hud: { text: string };
       world: {
         player: { pos: { x: number; y: number } };
+        cars: Array<{ pos: Vec2; speed: number }>;
+        drivingCarIndex: number | null;
         wanted: { heat: number };
         wantedStars: number;
         health: { current: number; max: number };
@@ -21,6 +31,30 @@ interface GameProbe {
 
 const SAVE_KEY = 'sindicate.gameState';
 const MANUAL_SAVE_KEY = 'sindicate.manualSave';
+const LIVE_CITY = buildCity(CITY_SPEC);
+
+function safeRoadPoint(index: number): Vec2 {
+  const points: Vec2[] = [];
+  const blockers = [...LIVE_CITY.buildings, ...LIVE_CITY.fences];
+  for (let ty = 0; ty < LIVE_CITY.spec.rows; ty++) {
+    for (let tx = 0; tx < LIVE_CITY.spec.cols; tx++) {
+      if (!LIVE_CITY.isRoad(tx, ty)) continue;
+      const point = tileCenter(LIVE_CITY.spec, tx, ty);
+      if (blockers.some((blocker) => circleIntersectsRect(point, 8, blocker))) continue;
+      points.push(point);
+    }
+  }
+  const point = points[index];
+  if (!point) throw new Error(`expected safe road point ${index}`);
+  return point;
+}
+
+const SAVE_POS_A = safeRoadPoint(12);
+const SAVE_POS_B = safeRoadPoint(28);
+const SAVE_POS_C = safeRoadPoint(44);
+const SAVE_POS_D = safeRoadPoint(60);
+const SAVE_POS_E = safeRoadPoint(76);
+const SAVE_POS_F = safeRoadPoint(92);
 
 function manualSaveKey(slot: number): string {
   return slot <= 1 ? MANUAL_SAVE_KEY : `${MANUAL_SAVE_KEY}.${slot}`;
@@ -71,20 +105,47 @@ async function readState(page: Page): Promise<PersistedState> {
   });
 }
 
-test('Sindicate restores the live run after a browser refresh', async ({ page }) => {
-  await boot(page);
-
-  await page.evaluate(() => {
+async function stageSaveState(
+  page: Page,
+  state: {
+    pos: Vec2;
+    health?: number;
+    ammo?: number;
+    score?: number;
+    best?: number;
+    wantedHeat?: number;
+    timeOfDay?: number;
+  },
+): Promise<void> {
+  await page.evaluate((nextState) => {
     const game = (window as unknown as { __game: GameProbe }).__game;
     const scene = game.scene.getScene('City');
     const world = scene.world;
-    world.player.pos = { x: 432, y: 654 };
-    world.health.current = 37;
-    world.weapon.ammo = 3;
-    world.score.current = 987;
-    world.score.best = 1234;
-    world.wanted.heat = 240;
-    scene.timeOfDay = 456.75;
+    world.drivingCarIndex = null;
+    for (let i = 0; i < world.cars.length; i++) {
+      world.cars[i] = { ...world.cars[i], pos: { x: 5000 + i * 24, y: 5000 }, speed: 0 };
+    }
+    world.player.pos = nextState.pos;
+    if (nextState.health !== undefined) world.health.current = nextState.health;
+    if (nextState.ammo !== undefined) world.weapon.ammo = nextState.ammo;
+    if (nextState.score !== undefined) world.score.current = nextState.score;
+    if (nextState.best !== undefined) world.score.best = nextState.best;
+    if (nextState.wantedHeat !== undefined) world.wanted.heat = nextState.wantedHeat;
+    if (nextState.timeOfDay !== undefined) scene.timeOfDay = nextState.timeOfDay;
+  }, state);
+}
+
+test('Sindicate restores the live run after a browser refresh', async ({ page }) => {
+  await boot(page);
+
+  await stageSaveState(page, {
+    pos: SAVE_POS_A,
+    health: 37,
+    ammo: 3,
+    score: 987,
+    best: 1234,
+    wantedHeat: 240,
+    timeOfDay: 456.75,
   });
 
   await page.waitForFunction(() => {
@@ -108,27 +169,27 @@ test('Sindicate restores the live run after a browser refresh', async ({ page })
   expect(storedRaw).not.toBeNull();
   const stored = JSON.parse(storedRaw ?? 'null') as StoredSave;
   expect(stored.version).toBe(1);
-  expect(stored.world.player.pos).toEqual({ x: 432, y: 654 });
+  expect(stored.world.player.pos).toEqual(SAVE_POS_A);
   expect(stored.world.score).toEqual({ current: 987, best: 1234 });
   expect(stored.timeOfDay).toBeGreaterThan(456);
 
   await boot(page);
 
-  await page.waitForFunction(() => {
+  await page.waitForFunction((expectedPos) => {
     const game = (window as unknown as { __game?: GameProbe }).__game;
     if (!game) return false;
     const scene = game.scene.getScene('City');
     const world = scene.world;
     return (
-      world.player.pos.x === 432 &&
-      world.player.pos.y === 654 &&
+      world.player.pos.x === expectedPos.x &&
+      world.player.pos.y === expectedPos.y &&
       world.health.current === 37 &&
       world.weapon.ammo === 3 &&
       world.score.current === 987 &&
       world.score.best === 1234 &&
       world.wantedStars === 2
     );
-  });
+  }, SAVE_POS_A);
 
   const afterReload = await readState(page);
   expect(afterReload.pos).toEqual(beforeReload.pos);
@@ -146,17 +207,14 @@ test('Sindicate restores the live run after a browser refresh', async ({ page })
 test('Sindicate can manually save a run and load it later from pause', async ({ page }) => {
   await boot(page);
 
-  await page.evaluate(() => {
-    const game = (window as unknown as { __game: GameProbe }).__game;
-    const scene = game.scene.getScene('City');
-    const world = scene.world;
-    world.player.pos = { x: 310, y: 470 };
-    world.health.current = 74;
-    world.weapon.ammo = 11;
-    world.score.current = 321;
-    world.score.best = 654;
-    world.wanted.heat = 130;
-    scene.timeOfDay = 222.25;
+  await stageSaveState(page, {
+    pos: SAVE_POS_B,
+    health: 74,
+    ammo: 11,
+    score: 321,
+    best: 654,
+    wantedHeat: 130,
+    timeOfDay: 222.25,
   });
 
   const manualBaseline = await readState(page);
@@ -169,24 +227,21 @@ test('Sindicate can manually save a run and load it later from pause', async ({ 
   const manualRaw = await page.evaluate((key) => window.localStorage.getItem(key), manualSaveKey(1));
   expect(manualRaw).not.toBeNull();
   const manualStored = JSON.parse(manualRaw ?? 'null') as StoredSave;
-  expect(manualStored.world.player.pos).toEqual({ x: 310, y: 470 });
+  expect(manualStored.world.player.pos).toEqual(SAVE_POS_B);
   expect(manualStored.world.score).toEqual({ current: 321, best: 654 });
 
   await page.getByRole('button', { name: /Resume Current Run|Continue Story|Start Story/ }).click();
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
   await waitForCitySceneReady(page);
 
-  await page.evaluate(() => {
-    const game = (window as unknown as { __game: GameProbe }).__game;
-    const scene = game.scene.getScene('City');
-    const world = scene.world;
-    world.player.pos = { x: 900, y: 901 };
-    world.health.current = 18;
-    world.weapon.ammo = 2;
-    world.score.current = 999;
-    world.score.best = 999;
-    world.wanted.heat = 0;
-    scene.timeOfDay = 700;
+  await stageSaveState(page, {
+    pos: SAVE_POS_C,
+    health: 18,
+    ammo: 2,
+    score: 999,
+    best: 999,
+    wantedHeat: 0,
+    timeOfDay: 700,
   });
   await page.waitForTimeout(700);
 
@@ -195,7 +250,7 @@ test('Sindicate can manually save a run and load it later from pause', async ({ 
   await boot(page);
 
   const resumedState = await readState(page);
-  expect(resumedState.pos).toEqual({ x: 900, y: 901 });
+  expect(resumedState.pos).toEqual(SAVE_POS_C);
   expect(resumedState.health.current).toBe(18);
   expect(resumedState.ammo).toBe(2);
   expect(resumedState.score).toEqual({ current: 999, best: 999 });
@@ -224,17 +279,14 @@ test('Sindicate can manually save a run and load it later from pause', async ({ 
 test('Sindicate keeps multiple manual save slots independent', async ({ page }) => {
   await boot(page);
 
-  await page.evaluate(() => {
-    const game = (window as unknown as { __game: GameProbe }).__game;
-    const scene = game.scene.getScene('City');
-    const world = scene.world;
-    world.player.pos = { x: 111, y: 222 };
-    world.health.current = 66;
-    world.weapon.ammo = 7;
-    world.score.current = 100;
-    world.score.best = 400;
-    world.wanted.heat = 115;
-    scene.timeOfDay = 150;
+  await stageSaveState(page, {
+    pos: SAVE_POS_D,
+    health: 66,
+    ammo: 7,
+    score: 100,
+    best: 400,
+    wantedHeat: 115,
+    timeOfDay: 150,
   });
 
   await page.waitForFunction(() => {
@@ -252,17 +304,14 @@ test('Sindicate keeps multiple manual save slots independent', async ({ page }) 
   await page.getByRole('button', { name: /Resume Current Run|Continue Story|Start Story/ }).click();
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
   await waitForCitySceneReady(page);
-  await page.evaluate(() => {
-    const game = (window as unknown as { __game: GameProbe }).__game;
-    const scene = game.scene.getScene('City');
-    const world = scene.world;
-    world.player.pos = { x: 333, y: 444 };
-    world.health.current = 55;
-    world.weapon.ammo = 13;
-    world.score.current = 200;
-    world.score.best = 500;
-    world.wanted.heat = 230;
-    scene.timeOfDay = 320;
+  await stageSaveState(page, {
+    pos: SAVE_POS_E,
+    health: 55,
+    ammo: 13,
+    score: 200,
+    best: 500,
+    wantedHeat: 230,
+    timeOfDay: 320,
   });
 
   const slotTwoState = await readState(page);
@@ -313,15 +362,12 @@ test('clicking the real Load-slot button in the story menu restores that slot', 
 }) => {
   await boot(page);
 
-  await page.evaluate(() => {
-    const game = (window as unknown as { __game: GameProbe }).__game;
-    const scene = game.scene.getScene('City');
-    const world = scene.world;
-    world.player.pos = { x: 501, y: 502 };
-    world.health.current = 55;
-    world.weapon.ammo = 9;
-    world.score.current = 555;
-    world.score.best = 777;
+  await stageSaveState(page, {
+    pos: SAVE_POS_D,
+    health: 55,
+    ammo: 9,
+    score: 555,
+    best: 777,
   });
 
   const savedState = await readState(page);
@@ -335,14 +381,12 @@ test('clicking the real Load-slot button in the story menu restores that slot', 
   await waitForCitySceneReady(page);
 
   // Drift away from the saved slot so we can tell whether Load actually restores it.
-  await page.evaluate(() => {
-    const game = (window as unknown as { __game: GameProbe }).__game;
-    const world = game.scene.getScene('City').world;
-    world.player.pos = { x: 1, y: 2 };
-    world.health.current = 12;
-    world.weapon.ammo = 0;
-    world.score.current = 1;
-    world.score.best = 1;
+  await stageSaveState(page, {
+    pos: SAVE_POS_F,
+    health: 12,
+    ammo: 0,
+    score: 1,
+    best: 1,
   });
 
   await page.keyboard.press('p');
@@ -350,12 +394,12 @@ test('clicking the real Load-slot button in the story menu restores that slot', 
   await page.locator('[data-story-slot-load="1"]').click();
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
   await waitForCitySceneReady(page);
-  await page.waitForFunction(() => {
+  await page.waitForFunction((expectedPos) => {
     const game = (window as unknown as { __game?: GameProbe }).__game;
     const world = game?.scene.getScene('City').world;
     if (!world) return false;
-    return world.player.pos.x === 501 && world.player.pos.y === 502;
-  });
+    return world.player.pos.x === expectedPos.x && world.player.pos.y === expectedPos.y;
+  }, SAVE_POS_D);
 
   const loadedState = await readState(page);
   expect(loadedState.pos).toEqual(savedState.pos);

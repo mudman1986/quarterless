@@ -3163,6 +3163,9 @@ export class CityScene extends Phaser.Scene {
       this.accumulator -= FIXED_STEP;
       steps += 1;
     }
+    if (steps === MAX_SUBSTEPS && this.accumulator >= FIXED_STEP) {
+      this.accumulator = 0;
+    }
 
     if (this.maybeStartSelectedStoryMission()) {
       this.prevTouchConfirm = !!touchSnapshot?.confirmPressed;
@@ -3170,7 +3173,7 @@ export class CityScene extends Phaser.Scene {
     }
 
     this.syncSprites();
-  this.syncEnvironmentArt(dt);
+    this.syncEnvironmentArt(dt);
     this.syncVisualFeedback(dt);
     this.minimapAccumulator += dt;
     if (this.minimapAccumulator >= MINIMAP_REFRESH_INTERVAL) {

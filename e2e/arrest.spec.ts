@@ -55,6 +55,7 @@ interface RuntimeWorld {
   drivingCarIndex: number | null;
   isDriving: boolean;
   carStoppedForBusted: number;
+  tick(controls: Record<string, boolean>, dt: number): void;
 }
 
 interface GameProbe {
@@ -231,6 +232,55 @@ async function traceInCarBustDelay(page: Page): Promise<void> {
   });
 }
 
+async function traceDelayedContactBust(page: Page): Promise<ArrestTrace> {
+  return page.evaluate(() => {
+    const win = window as unknown as { __game: GameProbe };
+    const w = win.__game.scene.getScene('City').world;
+    const controls = {
+      up: false,
+      down: false,
+      left: false,
+      right: false,
+      action: false,
+      confirm: false,
+      fire: false,
+    };
+    const trace: ArrestTrace = {
+      maxStoppedWhilePlaying: 0,
+      maxStoppedBeforeContact: 0,
+      firstContactStoppedFor: null,
+      contactAfterMs: null,
+      bustStoppedFor: null,
+    };
+
+    for (let frame = 0; frame < 90; frame += 1) {
+      w.tick(controls, 1 / 60);
+      trace.maxStoppedBeforeContact = Math.max(
+        trace.maxStoppedBeforeContact,
+        w.carStoppedForBusted,
+      );
+    }
+
+    const footCop = w.police.find((cop) => cop.kind === 'foot' && !cop.returningHome);
+    if (!footCop) throw new Error('expected a foot officer');
+    const contactPos = { ...w.focus };
+    footCop.pos = contactPos;
+    footCop.speed = 0;
+    trace.firstContactStoppedFor = w.carStoppedForBusted;
+    trace.contactAfterMs = 1500;
+
+    for (let frame = 0; frame < 90 && w.status === 'playing'; frame += 1) {
+      w.tick(controls, 1 / 60);
+      trace.maxStoppedWhilePlaying = Math.max(
+        trace.maxStoppedWhilePlaying,
+        w.carStoppedForBusted,
+      );
+    }
+    if (w.status === 'busted') trace.bustStoppedFor = w.carStoppedForBusted;
+    return trace;
+  });
+}
+
 test('a foot officer only busts a stopped player car after one second in the live game', async ({
   page,
 }) => {
@@ -273,36 +323,25 @@ test('a player parked for over one second is not busted instantly when a foot of
 }) => {
   await boot(page);
   await seedStoppedPlayerCarWithDistantFootCop(page);
-  await traceInCarBustDelay(page);
-
-  await page.waitForFunction(
-    () => {
-      const win = window as unknown as { __arrestTrace?: ArrestTrace };
-      return win.__arrestTrace?.bustStoppedFor !== null;
-    },
-    undefined,
-    { timeout: 7000 },
-  );
+  const trace = await traceDelayedContactBust(page);
 
   const state = await page.evaluate(() => {
-    const win = window as unknown as { __game: GameProbe; __arrestTrace?: ArrestTrace };
+    const win = window as unknown as { __game: GameProbe };
     const w = win.__game.scene.getScene('City').world;
     return {
       status: w.status,
       isDriving: w.isDriving,
       stoppedFor: w.carStoppedForBusted,
-      trace: win.__arrestTrace,
     };
   });
 
   expect(state.isDriving).toBe(true);
   expect(state.status).toBe('busted');
-  expect(state.trace).toBeDefined();
-  expect(state.trace?.contactAfterMs).toBeGreaterThan(1000);
-  expect(state.trace?.maxStoppedBeforeContact).toBeLessThan(0.1);
-  expect(state.trace?.firstContactStoppedFor).toBeGreaterThanOrEqual(0);
-  expect(state.trace?.firstContactStoppedFor).toBeLessThan(0.2);
-  expect(state.trace?.bustStoppedFor).toBeGreaterThanOrEqual(1);
-  expect(state.trace?.bustStoppedFor).toBeLessThan(1.2);
+  expect(trace.contactAfterMs).toBeGreaterThan(1000);
+  expect(trace.maxStoppedBeforeContact).toBeLessThan(0.1);
+  expect(trace.firstContactStoppedFor).toBeGreaterThanOrEqual(0);
+  expect(trace.firstContactStoppedFor).toBeLessThan(0.2);
+  expect(trace.bustStoppedFor).toBeGreaterThanOrEqual(1);
+  expect(trace.bustStoppedFor).toBeLessThan(1.2);
   expect(state.stoppedFor).toBeGreaterThanOrEqual(1);
 });

@@ -119,6 +119,7 @@ async function movePlayerToActiveObjectiveTarget(page: import('@playwright/test'
   await page.evaluate(() => {
     const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
     const scene = game?.scene.getScene('City') as {
+      syncStoryScript?: (dt: number) => void;
       world: {
         player: { pos: { x: number; y: number } };
         drivingCarIndex: number | null;
@@ -131,6 +132,7 @@ async function movePlayerToActiveObjectiveTarget(page: import('@playwright/test'
           >;
           objectiveState?: { kind: 'route'; completed: number } | null;
         } | null;
+        tick(controls: Record<string, boolean>, dt: number): void;
       };
     };
     const mission = scene?.world.mission;
@@ -149,6 +151,11 @@ async function movePlayerToActiveObjectiveTarget(page: import('@playwright/test'
         pos: { x: target.x, y: target.y },
       };
     }
+    scene.world.tick(
+      { up: false, down: false, left: false, right: false, action: false, confirm: false, fire: false },
+      1 / 60,
+    );
+    scene.syncStoryScript?.(1 / 60);
   });
 }
 

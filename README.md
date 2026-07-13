@@ -106,6 +106,7 @@ Keep Playwright spec top-level imports Node-safe: import pure `src/core/*` modul
 Story-mode unit coverage also checks that fixed authored mission markers stay on dry drivable tiles in the live city layout, so river-adjacent objectives do not regress back into water.
 The exhaustive live-city nearest-road comparison in the city tests carries its own higher per-test timeout because coverage instrumentation makes that brute-force cross-check materially slower than the rest of the unit suite.
 Story-mode Playwright helpers now wait for the Phaser City scene itself to rebuild after launcher transitions and `scene.restart(...)` calls; for save/load assertions, waiting on `window.__game` alone is not a strong enough readiness signal.
+The browser performance regression in [e2e/performance.spec.ts](e2e/performance.spec.ts) verifies that Sindicate drops stale fixed-step accumulator backlog after long frames, preventing slow-motion catch-up from turning driving into visible jumps after hitches.
 
 Recommended local check before pushing:
 

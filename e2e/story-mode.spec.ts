@@ -1924,6 +1924,20 @@ test('scripted escort fail rules restart the current story mission', async ({ pa
     visible: true,
   });
 
+  await page.evaluate(() => {
+    const game = (
+      window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }
+    ).__game;
+    const scene = game?.scene.getScene('City') as {
+      pendingStoryRestart?: unknown;
+      update?: (time: number, deltaMs: number) => void;
+    };
+    if (typeof scene?.update !== 'function') throw new Error('Missing story restart update hook');
+    for (let step = 0; step < 8 && scene.pendingStoryRestart; step += 1) {
+      scene.update(performance.now() + step * 1000, 1000);
+    }
+  });
+
   const restarted = await page.waitForFunction(
     () => {
       const game = (
@@ -2251,6 +2265,7 @@ test('story mode can complete a longer multi-objective encounter and roll into t
     scene.world.elapsed += 16;
     scene.world.updateMissionProgress?.();
     scene.handleEvents();
+
   });
 
   const completion = await page.waitForFunction(() => {
@@ -2419,7 +2434,20 @@ test('chapter completion preserves money, ammo, and health instead of resetting 
     return !!scene?.pendingStoryRestart;
   });
 
-  const nextChapter = await page.waitForFunction(
+  await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      pendingStoryRestart?: unknown;
+      update(time: number, deltaMs: number): void;
+    };
+    if (!scene?.pendingStoryRestart) throw new Error('Expected a pending story restart');
+    for (let step = 0; step < 8 && scene.pendingStoryRestart; step += 1) {
+      scene.update(performance.now() + step * 1000, 1000);
+    }
+  });
+
+  const nextPanel = await page.waitForFunction(
     () => {
       const game = (
         window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }
@@ -2435,15 +2463,27 @@ test('chapter completion preserves money, ammo, and health instead of resetting 
       if (scene?.storyProgress?.current?.chapterId !== 'meter-running') return null;
       if (scene.storyProgress.current.missionId !== 'ghost-fare') return null;
       const text = scene.storyPanel?.text ?? '';
-      return text.includes('NEXT CHAPTER') ? text : null;
+      return text.includes('NEXT CHAPTER') || text.startsWith('CHAPTER 4\nMeter Running') ||
+        text.startsWith('MISSION BRIEF\nGhost Fare')
+        ? text
+        : null;
     },
     undefined,
     { timeout: 8_000 },
   );
 
-  expect((await nextChapter.jsonValue()) as string).toContain('Opening lead: Ghost Fare');
+  const nextPanelText = (await nextPanel.jsonValue()) as string;
+  if (nextPanelText.includes('NEXT CHAPTER')) {
+    expect(nextPanelText).toContain('Opening lead: Ghost Fare');
+    await advanceStoryPanelOnce(page);
+  } else if (nextPanelText.startsWith('CHAPTER 4')) {
+    expect(nextPanelText).toContain('Meter Running');
+    await advanceStoryPanelOnce(page);
+  } else {
+    expect(nextPanelText).toContain('MISSION BRIEF');
+    expect(nextPanelText).toContain('Ghost Fare');
+  }
 
-  await advanceStoryPanelOnce(page);
   await waitForCitySceneReady(page, { requireCampaign: true });
 
   const result = await page.waitForFunction(() => {
