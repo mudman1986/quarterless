@@ -2419,19 +2419,14 @@ test('chapter completion preserves money, ammo, and health instead of resetting 
     return !!scene?.pendingStoryRestart;
   });
 
-  const result = await page.waitForFunction(
+  const nextChapter = await page.waitForFunction(
     () => {
       const game = (
         window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }
       ).__game;
       const scene = game?.scene.getScene('City') as {
-        world: {
-          health: { current: number };
-          weapon: { ammo: number };
-          score: { current: number };
-          mission?: { title: string } | null;
-        };
         pendingStoryRestart?: unknown;
+        storyPanel?: { text: string };
         storyProgress?: {
           current: { chapterId: string; missionId: string } | null;
         } | null;
@@ -2439,19 +2434,39 @@ test('chapter completion preserves money, ammo, and health instead of resetting 
       if (scene?.pendingStoryRestart) return null;
       if (scene?.storyProgress?.current?.chapterId !== 'meter-running') return null;
       if (scene.storyProgress.current.missionId !== 'ghost-fare') return null;
-      // The in-world mission/campaign must also reflect the new chapter, not just the
-      // story-progress bookkeeping (a stale restored campaign would leave this null/wrong
-      // even though storyProgress itself already points at the new chapter).
-      if (scene.world.mission?.title !== 'Ghost Fare') return null;
-      return {
-        health: scene.world.health.current,
-        ammo: scene.world.weapon.ammo,
-        score: scene.world.score.current,
-      };
+      const text = scene.storyPanel?.text ?? '';
+      return text.includes('NEXT CHAPTER') ? text : null;
     },
     undefined,
     { timeout: 8_000 },
   );
+
+  expect((await nextChapter.jsonValue()) as string).toContain('Opening lead: Ghost Fare');
+
+  await advanceStoryPanelOnce(page);
+  await waitForCitySceneReady(page, { requireCampaign: true });
+
+  const result = await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      world: {
+        health: { current: number };
+        weapon: { ammo: number };
+        score: { current: number };
+        mission?: { title: string } | null;
+      };
+      storyPanel?: { text: string };
+    };
+    if (scene?.world.mission?.title !== 'Ghost Fare') return null;
+    const text = scene.storyPanel?.text ?? '';
+    if (!text.startsWith('MISSION BRIEF\nGhost Fare')) return null;
+    return {
+      health: scene.world.health.current,
+      ammo: scene.world.weapon.ammo,
+      score: scene.world.score.current,
+    };
+  });
 
   const preserved = (await result.jsonValue()) as { health: number; ammo: number; score: number };
   // Health/ammo carry over untouched; score only grows (mission completion pays a reward),
