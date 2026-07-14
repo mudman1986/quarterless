@@ -211,3 +211,27 @@ test('city render stays varied and uses authored art sheets', async ({ page }) =
   expect(stats.saturatedPixels).toBeGreaterThanOrEqual(1200);
   expect(stats.roadLikePixels).toBeGreaterThanOrEqual(10_000);
 });
+
+test('NPC traffic starts only on live road tiles', async ({ page }) => {
+  await boot(page);
+
+  const invalidCars = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      city: { spec: { tile: number }; isRoad(tx: number, ty: number): boolean };
+      world: { cars: Array<{ pos: { x: number; y: number } }>; carDrivers: Array<unknown> };
+    };
+    const invalid: number[] = [];
+    for (let i = 0; i < scene.world.cars.length; i += 1) {
+      if (!scene.world.carDrivers[i]) continue;
+      const car = scene.world.cars[i];
+      const tx = Math.floor(car.pos.x / scene.city.spec.tile);
+      const ty = Math.floor(car.pos.y / scene.city.spec.tile);
+      if (!scene.city.isRoad(tx, ty)) invalid.push(i);
+    }
+    return invalid;
+  });
+
+  expect(invalidCars).toEqual([]);
+});

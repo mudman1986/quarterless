@@ -1673,7 +1673,7 @@ export class CityScene extends Phaser.Scene {
       const northTx = tx + northLane;
       const southTy = block * 2;
       const northTy = Math.max(block * 2, rows - block * 2 - 1);
-      if (southTx < cols && !this.city.isWater(southTx, southTy)) {
+      if (southTx < cols && this.city.isRoad(southTx, southTy)) {
         const start = tileCenter(spec, southTx, southTy);
         const kind = n % 6 === 0 ? 'taxi' : movingKind(n);
         pushTrafficCar(
@@ -1682,7 +1682,7 @@ export class CityScene extends Phaser.Scene {
           kind,
         );
       }
-      if (northTx < cols && !this.city.isWater(northTx, northTy)) {
+      if (northTx < cols && this.city.isRoad(northTx, northTy)) {
         const start = tileCenter(spec, northTx, northTy);
         const kind = n % 7 === 0 ? 'taxi' : movingKind(n + 3);
         pushTrafficCar(
@@ -1700,7 +1700,7 @@ export class CityScene extends Phaser.Scene {
       const westTx = Math.max(block * 2, cols - block * 2 - 1);
       const eastTy = ty + eastLane;
       const westTy = ty + westLane;
-      if (eastTy < rows && !this.city.isWater(eastTx, eastTy)) {
+      if (eastTy < rows && this.city.isRoad(eastTx, eastTy)) {
         const start = tileCenter(spec, eastTx, eastTy);
         const kind = n % 6 === 0 ? 'taxi' : movingKind(n + 1);
         pushTrafficCar(
@@ -1709,7 +1709,7 @@ export class CityScene extends Phaser.Scene {
           kind,
         );
       }
-      if (westTy < rows && !this.city.isWater(westTx, westTy)) {
+      if (westTy < rows && this.city.isRoad(westTx, westTy)) {
         const start = tileCenter(spec, westTx, westTy);
         const kind = n % 7 === 0 ? 'taxi' : movingKind(n + 4);
         pushTrafficCar(
