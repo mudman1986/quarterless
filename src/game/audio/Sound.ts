@@ -18,12 +18,10 @@ export class Sound {
     this.output = output;
   }
 
-  private readonly handleToneEnded = (event: Event): void => {
-    const oscillator = event.currentTarget as OscillatorNode | null;
-    if (!oscillator) return;
+  private handleToneEnded(oscillator: OscillatorNode): void {
     const gain = this.activeTones.get(oscillator);
     if (gain) this.disconnectTone(oscillator, gain);
-  };
+  }
 
   /** Play a single decaying tone. */
   private blip(
@@ -48,7 +46,7 @@ export class Sound {
       amplifier.gain.setValueAtTime(gain, now);
       amplifier.gain.exponentialRampToValueAtTime(0.0001, now + duration);
       this.activeTones.set(oscillator, amplifier);
-      oscillator.onended = this.handleToneEnded;
+      oscillator.onended = () => this.handleToneEnded(oscillator!);
       oscillator.start(now);
       oscillator.stop(now + duration);
     } catch {

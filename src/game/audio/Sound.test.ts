@@ -108,4 +108,19 @@ describe('Sound', () => {
     expect(managedContext.oscillators[0].disconnectCalls).toBe(1);
     expect(managedContext.gains[0].disconnectCalls).toBe(1);
   });
+
+  it('releases a tone when its oscillator ends without a current target', () => {
+    const managedContext = new FakeAudioContext();
+    const sound = new Sound({
+      context: managedContext as unknown as AudioContext,
+      destination: managedContext.destination as unknown as AudioNode,
+    });
+
+    sound.shot();
+    managedContext.oscillators[0].onended?.({ currentTarget: null } as unknown as Event);
+
+    expect((sound as unknown as { activeTones: Map<unknown, unknown> }).activeTones.size).toBe(0);
+    expect(managedContext.oscillators[0].disconnectCalls).toBe(1);
+    expect(managedContext.gains[0].disconnectCalls).toBe(1);
+  });
 });
