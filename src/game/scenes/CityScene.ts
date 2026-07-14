@@ -171,8 +171,8 @@ const COLORS = {
 };
 
 type VisualParticle = {
-  pos: Vec2;
-  vel: Vec2;
+  pos: { x: number; y: number };
+  vel: { x: number; y: number };
   age: number;
   life: number;
   radius: number;
@@ -209,10 +209,6 @@ function stringSeed(value: string | undefined): number {
     seed |= 0;
   }
   return Math.abs(seed);
-}
-
-function pickupVisualKey(pickup: AmmoPickup): string {
-  return `${Math.round(pickup.pos.x)}:${Math.round(pickup.pos.y)}:${pickup.amount}`;
 }
 
 /**
@@ -491,7 +487,7 @@ export class CityScene extends Phaser.Scene {
   };
 
   /** Procedural sound effects. */
-  private readonly sfx = new Sound();
+  private sfx = new Sound();
 
   // Previous-frame snapshots, for detecting events worth a sound or a banner.
   private prevBullets = 0;
@@ -500,7 +496,8 @@ export class CityScene extends Phaser.Scene {
   private prevMissionComplete = false;
   private prevCarHeadings: number[] = [];
   private prevCarHealth: number[] = [];
-  private prevAmmoPickups = new Map<string, AmmoPickup>();
+  private readonly prevAmmoPickups = new Set<AmmoPickup>();
+  private readonly currentAmmoPickups = new Set<AmmoPickup>();
   private visualParticles: VisualParticle[] = [];
   private prevMissionId: string | null = null;
   private prevObjective = '';
@@ -593,6 +590,12 @@ export class CityScene extends Phaser.Scene {
   }
 
   create(): void {
+    this.sfx.destroy();
+    this.sfx =
+      this.sound instanceof Phaser.Sound.WebAudioSoundManager
+        ? new Sound({ context: this.sound.context, destination: this.sound.destination })
+        : new Sound();
+
     // Reset per-run state so a new game (scene.restart) starts clean: the lazily
     // built sprite pools must not keep references to the previous run's objects.
     this.carSprites = [];
@@ -613,7 +616,8 @@ export class CityScene extends Phaser.Scene {
     this.visualParticles = [];
     this.prevCarHeadings = [];
     this.prevCarHealth = [];
-    this.prevAmmoPickups = new Map();
+    this.prevAmmoPickups.clear();
+    this.currentAmmoPickups.clear();
     this.sirenTimer = 0;
     this.timeOfDay = 0;
     this.skipPersistOnShutdown = false;
@@ -723,10 +727,7 @@ export class CityScene extends Phaser.Scene {
     if (typeof window !== 'undefined') {
       window.addEventListener('beforeunload', this.beforeUnloadHandler);
     }
-    // Browsers block audio until a user gesture: unlock on the first key press.
-    this.input.keyboard?.once('keydown', () => this.sfx.resume());
     const handlePointerDown = (pointer: Phaser.Input.Pointer): void => {
-      this.sfx.resume();
       const pointerType = (pointer.event as PointerEvent | undefined)?.pointerType;
       if (pointerType === 'touch') {
         this.touchAvailable = true;
@@ -743,6 +744,7 @@ export class CityScene extends Phaser.Scene {
       }
       if (!this.skipPersistOnShutdown) this.persistGameState();
       this.touchInput_?.destroy();
+      this.sfx.destroy();
     });
     this.persistGameState();
   }
@@ -4570,17 +4572,19 @@ export class CityScene extends Phaser.Scene {
 
 
   private syncVisualFeedback(dt: number): void {
-    const currentPickups = new Map<string, AmmoPickup>();
+    this.currentAmmoPickups.clear();
     for (const pickup of this.world.ammoPickups) {
-      currentPickups.set(pickupVisualKey(pickup), pickup);
+      this.currentAmmoPickups.add(pickup);
     }
-    for (const [key, pickup] of this.prevAmmoPickups) {
-      if (!currentPickups.has(key)) this.emitPickupParticles(pickup.pos);
+    for (const pickup of this.prevAmmoPickups) {
+      if (!this.currentAmmoPickups.has(pickup)) this.emitPickupParticles(pickup.pos);
     }
+    this.prevAmmoPickups.clear();
+    for (const pickup of this.currentAmmoPickups) this.prevAmmoPickups.add(pickup);
 
-    const nextCarHealth: number[] = [];
-    const nextCarHeadings: number[] = [];
-    this.world.cars.forEach((car, i) => {
+    const carCount = this.world.cars.length;
+    for (let i = 0; i < carCount; i++) {
+      const car = this.world.cars[i];
       const healthRatio = this.world.carHealthRatio(i);
       const prevHealthRatio = this.prevCarHealth[i];
       if (prevHealthRatio !== undefined && healthRatio < prevHealthRatio - 0.015 && !this.world.wreckedCars[i]) {
@@ -4598,13 +4602,11 @@ export class CityScene extends Phaser.Scene {
         this.emitSkidParticles(car);
       }
 
-      nextCarHealth[i] = healthRatio;
-      nextCarHeadings[i] = car.heading;
-    });
-
-    this.prevAmmoPickups = currentPickups;
-    this.prevCarHealth = nextCarHealth;
-    this.prevCarHeadings = nextCarHeadings;
+      this.prevCarHealth[i] = healthRatio;
+      this.prevCarHeadings[i] = car.heading;
+    }
+    this.prevCarHealth.length = carCount;
+    this.prevCarHeadings.length = carCount;
 
     this.syncDamageOverlays();
     this.syncFeedbackParticles(dt);
@@ -4618,11 +4620,11 @@ export class CityScene extends Phaser.Scene {
       const sideOffset = (i - (count - 1) / 2) * 1.8;
       const drift = 60 + severity * 160 + i * 5;
       this.visualParticles.push({
-        pos: vec2(pos.x + side.x * sideOffset, pos.y + side.y * sideOffset),
-        vel: vec2(
-          forward.x * (drift * 0.45) + side.x * sideOffset * 12,
-          forward.y * (drift * 0.45) + side.y * sideOffset * 12,
-        ),
+        pos: { x: pos.x + side.x * sideOffset, y: pos.y + side.y * sideOffset },
+        vel: {
+          x: forward.x * (drift * 0.45) + side.x * sideOffset * 12,
+          y: forward.y * (drift * 0.45) + side.y * sideOffset * 12,
+        },
         age: 0,
         life: 0.28 + severity * 0.18,
         radius: 1.5 + severity * 1.8,
@@ -4638,8 +4640,8 @@ export class CityScene extends Phaser.Scene {
       const heading = (Math.PI * 2 * i) / 8;
       const burst = fromAngle(heading, 45 + i * 8);
       this.visualParticles.push({
-        pos: vec2(pos.x, pos.y),
-        vel: burst,
+        pos: { x: pos.x, y: pos.y },
+        vel: { x: burst.x, y: burst.y },
         age: 0,
         life: 0.45,
         radius: i % 2 === 0 ? 2.4 : 1.8,
@@ -4656,8 +4658,8 @@ export class CityScene extends Phaser.Scene {
     const drift = fromAngle(car.heading + Math.PI, 28 + Math.min(60, Math.abs(car.speed) * 0.18));
     for (const dir of [-1, 1] as const) {
       this.visualParticles.push({
-        pos: vec2(car.pos.x + rear.x + side.x * dir, car.pos.y + rear.y + side.y * dir),
-        vel: vec2(drift.x + side.x * dir * 8, drift.y + side.y * dir * 8),
+        pos: { x: car.pos.x + rear.x + side.x * dir, y: car.pos.y + rear.y + side.y * dir },
+        vel: { x: drift.x + side.x * dir * 8, y: drift.y + side.y * dir * 8 },
         age: 0,
         life: 0.36,
         radius: 2.2,
@@ -4671,26 +4673,32 @@ export class CityScene extends Phaser.Scene {
   private syncFeedbackParticles(dt: number): void {
     const g = this.feedbackGfx;
     g.clear();
-    const next: VisualParticle[] = [];
-    for (const particle of this.visualParticles) {
+    const drag = Math.max(0, 1 - dt * 4.5);
+    const particleCount = this.visualParticles.length;
+    let activeCount = 0;
+    for (let readIndex = 0; readIndex < particleCount; readIndex++) {
+      const particle = this.visualParticles[readIndex];
       const age = particle.age + dt;
       if (age >= particle.life) continue;
-      const drag = Math.max(0, 1 - dt * 4.5);
-      const vel = vec2(particle.vel.x * drag, particle.vel.y * drag);
-      const pos = vec2(particle.pos.x + vel.x * dt, particle.pos.y + vel.y * dt);
+      particle.age = age;
+      particle.vel.x *= drag;
+      particle.vel.y *= drag;
+      particle.pos.x += particle.vel.x * dt;
+      particle.pos.y += particle.vel.y * dt;
       const alpha = particle.alpha * (1 - age / particle.life);
       g.lineStyle(Math.max(1, particle.radius * 0.65), particle.color, alpha * 0.85);
       g.lineBetween(
-        pos.x,
-        pos.y,
-        pos.x - vel.x * 0.03 * particle.stretch,
-        pos.y - vel.y * 0.03 * particle.stretch,
+        particle.pos.x,
+        particle.pos.y,
+        particle.pos.x - particle.vel.x * 0.03 * particle.stretch,
+        particle.pos.y - particle.vel.y * 0.03 * particle.stretch,
       );
       g.fillStyle(particle.color, alpha);
-      g.fillCircle(pos.x, pos.y, particle.radius);
-      next.push({ ...particle, pos, vel, age });
+      g.fillCircle(particle.pos.x, particle.pos.y, particle.radius);
+      this.visualParticles[activeCount] = particle;
+      activeCount += 1;
     }
-    this.visualParticles = next;
+    this.visualParticles.length = activeCount;
   }
 
   private syncDamageOverlays(): void {

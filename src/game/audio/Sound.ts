@@ -1,35 +1,29 @@
 /**
  * Tiny procedural sound effects via the Web Audio API. Every sound is
  * synthesised at runtime (no asset files, nothing copyrighted), and every call
- * is defensive: if Web Audio is unavailable or blocked, sounds silently no-op
- * so the game never throws. Browsers suspend audio until a user gesture, so
- * call {@link Sound.resume} from an input handler to unlock playback.
+ * is defensive: if Phaser did not select Web Audio, sounds silently no-op so
+ * the game never throws.
  */
+export type ProceduralAudioOutput = {
+  context: AudioContext;
+  destination: AudioNode;
+};
+
 export class Sound {
-  private ctx: AudioContext | null = null;
-  private available = true;
+  private output: ProceduralAudioOutput | null;
+  private readonly activeTones = new Map<OscillatorNode, GainNode>();
+  private destroyed = false;
 
-  /** Lazily create (and resume) the audio context, or null if unavailable. */
-  private context(): AudioContext | null {
-    if (!this.available) return null;
-    try {
-      if (typeof AudioContext === 'undefined') {
-        this.available = false;
-        return null;
-      }
-      this.ctx ??= new AudioContext();
-      if (this.ctx.state === 'suspended') void this.ctx.resume();
-      return this.ctx;
-    } catch {
-      this.available = false;
-      return null;
-    }
+  constructor(output: ProceduralAudioOutput | null = null) {
+    this.output = output;
   }
 
-  /** Unlock audio in response to a user gesture (browsers require this). */
-  resume(): void {
-    this.context();
-  }
+  private readonly handleToneEnded = (event: Event): void => {
+    const oscillator = event.currentTarget as OscillatorNode | null;
+    if (!oscillator) return;
+    const gain = this.activeTones.get(oscillator);
+    if (gain) this.disconnectTone(oscillator, gain);
+  };
 
   /** Play a single decaying tone. */
   private blip(
@@ -38,24 +32,56 @@ export class Sound {
     type: OscillatorType = 'square',
     gain = 0.05,
   ): void {
-    const ctx = this.context();
-    if (!ctx) return;
+    const output = this.output;
+    if (this.destroyed || !output || output.context.state === 'closed') return;
+    let oscillator: OscillatorNode | null = null;
+    let amplifier: GainNode | null = null;
     try {
-      const osc = ctx.createOscillator();
-      const amp = ctx.createGain();
-      osc.type = type;
-      osc.frequency.value = frequency;
-      osc.connect(amp);
-      amp.connect(ctx.destination);
+      oscillator = output.context.createOscillator();
+      amplifier = output.context.createGain();
+      oscillator.type = type;
+      oscillator.frequency.value = frequency;
+      oscillator.connect(amplifier);
+      amplifier.connect(output.destination);
 
-      const now = ctx.currentTime;
-      amp.gain.setValueAtTime(gain, now);
-      amp.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-      osc.start(now);
-      osc.stop(now + duration);
+      const now = output.context.currentTime;
+      amplifier.gain.setValueAtTime(gain, now);
+      amplifier.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+      this.activeTones.set(oscillator, amplifier);
+      oscillator.onended = this.handleToneEnded;
+      oscillator.start(now);
+      oscillator.stop(now + duration);
     } catch {
+      if (oscillator && amplifier) this.disconnectTone(oscillator, amplifier);
       /* ignore: audio is best-effort */
     }
+  }
+
+  private disconnectTone(oscillator: OscillatorNode, gain: GainNode): void {
+    this.activeTones.delete(oscillator);
+    oscillator.onended = null;
+    try {
+      oscillator.disconnect();
+      gain.disconnect();
+    } catch {
+      /* ignore: nodes may already be disconnected */
+    }
+  }
+
+  destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.output = null;
+    for (const [oscillator, gain] of this.activeTones) {
+      oscillator.onended = null;
+      try {
+        oscillator.stop();
+      } catch {
+        /* ignore: oscillator may already have stopped */
+      }
+      this.disconnectTone(oscillator, gain);
+    }
+    this.activeTones.clear();
   }
 
   /** A short, dry shot. */
