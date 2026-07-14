@@ -101,6 +101,32 @@ test('fixed-step simulation drops stale backlog after long frames', async ({ pag
   expect(result).toBeLessThan(1 / 60);
 });
 
+test('full-world autosaves stay below the per-second hitch budget', async ({ page }) => {
+  await launchSindicate(page);
+
+  const saveCount = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      saveAccumulator: number;
+      persistGameState: () => void;
+      update(time: number, deltaMs: number): void;
+    };
+    let saves = 0;
+    scene.saveAccumulator = 0;
+    scene.persistGameState = () => {
+      saves += 1;
+      scene.saveAccumulator = 0;
+    };
+    for (let frame = 1; frame <= 300; frame += 1) {
+      scene.update(frame * (1000 / 60), 1000 / 60);
+    }
+    return saves;
+  });
+
+  expect(saveCount).toBeLessThanOrEqual(3);
+});
+
 test('visual particles update and compact in place', async ({ page }) => {
   await launchSindicate(page);
 

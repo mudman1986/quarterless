@@ -2710,6 +2710,27 @@ describe('World car explosions', () => {
     expect(w.score.current).toBe(0);
   });
 
+  it('reuses hauled-away vehicle slots instead of growing the car arrays', () => {
+    const w = new World({ player: player(), cars: [carAt(100, 100)] });
+    const state = w as unknown as {
+      appendVehicleSlot: (car: Car, kind: string, options: { health: number; wrecked?: boolean; respawnsAtTow?: boolean }) => number;
+      wreckedCars: boolean[];
+      towedCars: boolean[];
+    };
+    state.wreckedCars[0] = true;
+    state.towedCars[0] = true;
+
+    const first = state.appendVehicleSlot(carAt(200, 200), 'ambulance', { health: 60 });
+    state.wreckedCars[0] = true;
+    state.towedCars[0] = true;
+    const second = state.appendVehicleSlot(carAt(300, 300), 'tow', { health: 60 });
+
+    expect(first).toBe(0);
+    expect(second).toBe(0);
+    expect(w.cars).toHaveLength(1);
+    expect(w.cars[0]?.pos).toEqual(vec2(300, 300));
+  });
+
   it('does not let two NPC cars blow up immediately on first impact', () => {
     const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
     const east: Car = { pos: tileCenter(city.spec, 1, 4), heading: 0, speed: 0, radius: 12 };

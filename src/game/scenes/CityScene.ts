@@ -279,7 +279,9 @@ function enteredCarLabel(kind: VehicleKind): string {
 }
 /** Length in seconds of a full day/night cycle (30 minutes). */
 const DAY_LENGTH = 1800;
-const SAVE_INTERVAL = 0.5;
+/** Full-world snapshots use synchronous storage, so keep the cadence low enough
+ * that serialization cannot become a recurring frame hitch. */
+const SAVE_INTERVAL = 2;
 /** Tow-truck amber beacon: blink interval (ms) and how far forward (px) of the
  * truck's centre the cab-roof light sits. */
 const TOW_BEACON_BLINK_MS = 280;

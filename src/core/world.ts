@@ -1861,6 +1861,35 @@ export class World {
     opts: { health: number; wrecked?: boolean; respawnsAtTow?: boolean },
   ): number {
     const wrecked = opts.wrecked ?? false;
+    const reusableIndex = this.cars.findIndex(
+      (_, index) =>
+        this.wreckedCars[index] &&
+        this.towedCars[index] &&
+        index !== this.drivingCarIndex &&
+        !this.tows.some((tow) => tow.targetCar === index) &&
+        (this.playerServiceMission?.kind !== 'tow' ||
+          this.playerServiceMission.targetCar !== index),
+    );
+    if (reusableIndex !== -1) {
+      this.cars[reusableIndex] = car;
+      this.carDrivers[reusableIndex] = null;
+      this.carKinds[reusableIndex] = kind;
+      this.taxiStates[reusableIndex] = kind === 'taxi' ? this.createTaxiState() : null;
+      this.carRespawnsAtTow[reusableIndex] = opts.respawnsAtTow ?? false;
+      this.carHealth[reusableIndex] = wrecked ? 0 : opts.health;
+      this.carBurnTimers[reusableIndex] = 0;
+      this.carBurnByPlayer[reusableIndex] = false;
+      this.stolenServiceVehicles[reusableIndex] = false;
+      this.towDispatchCooldowns[reusableIndex] = 0;
+      this.wreckedCars[reusableIndex] = wrecked;
+      this.towedCars[reusableIndex] = false;
+      const prefix = `car:${reusableIndex}|`;
+      const suffix = `|car:${reusableIndex}`;
+      for (const key of this.vehicleImpactCooldowns.keys()) {
+        if (key.startsWith(prefix) || key.endsWith(suffix)) this.vehicleImpactCooldowns.delete(key);
+      }
+      return reusableIndex;
+    }
     this.cars.push(car);
     this.carDrivers.push(null);
     this.carKinds.push(kind);
