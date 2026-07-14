@@ -1,6 +1,19 @@
 import Phaser from 'phaser';
 import type { GameRuntime } from '../../arcade/types';
 import {
+  TANGRAM_FIXED_STEP,
+  TANGRAM_MAX_FRAME_DT,
+  TANGRAM_MAX_SUBSTEPS,
+  TANGRAM_PLAYER_HEIGHT,
+  TANGRAM_PLAYER_WIDTH,
+  buildTangramJumpAudit,
+  createTangramPlatformerState,
+  isTangramPoweredUp,
+  tickTangramPlatformer,
+  type TangramPlatformerEvent,
+  type TangramPlatformerState,
+} from '../../core/tangramPlatformer';
+import {
   DEFAULT_CHARACTER_ID,
   PLAYABLE_CHARACTERS,
   getTangramCharacter,
@@ -12,7 +25,6 @@ import {
   FIRST_LEVEL_ID,
   getTangramLevel,
   nextTangramLevelId,
-  type EnemyDefinition,
   type Rect,
   type TangramLevelDefinition,
   type TangramLevelId,
@@ -20,24 +32,11 @@ import {
 
 const VIEWPORT_WIDTH = 960;
 const VIEWPORT_HEIGHT = 540;
-const PLAYER_WIDTH = 52;
-const PLAYER_HEIGHT = 72;
-const PLAYER_GRAVITY = 2200;
-const PLAYER_MAX_FALL_SPEED = 960;
-const POWERUP_DURATION_MS = 12_000;
 
 type Collectible = {
-  x: number;
-  y: number;
-  label: string;
-  secret: boolean;
   sprite: Phaser.GameObjects.Container;
-  collected: boolean;
 };
-type Hazard = Rect & { label: string; sprite: Phaser.GameObjects.Container };
-type Enemy = EnemyDefinition & {
-  direction: 1 | -1;
-  active: boolean;
+type Enemy = {
   sprite: Phaser.GameObjects.Container;
 };
 
@@ -105,66 +104,8 @@ type TangramKeys = {
   space: Phaser.Input.Keyboard.Key;
 };
 
-function intersects(a: Rect, b: Rect): boolean {
-  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
-
-function jumpRiseForVelocity(jumpVelocity: number): number {
-  return (jumpVelocity * jumpVelocity) / (2 * PLAYER_GRAVITY);
-}
-
-function horizontalGapBetween(a: { x: number; width: number }, b: { x: number; width: number }): number {
-  if (a.x + a.width < b.x) return b.x - (a.x + a.width);
-  if (b.x + b.width < a.x) return a.x - (b.x + b.width);
-  return 0;
-}
-
 function buildJumpAudit(level: TangramLevelDefinition, character: TangramCharacterDefinition): JumpAudit {
-  const nodes = [
-    { label: level.start.label, x: level.start.x, width: PLAYER_WIDTH, topY: level.start.y },
-    ...level.platforms.map((platform) => ({
-      label: platform.label ?? `Platform ${platform.x}`,
-      x: platform.x,
-      width: platform.width,
-      topY: platform.y - PLAYER_HEIGHT,
-    })),
-  ];
-  const reachable = new Set<number>([0]);
-  const maxRiseByNode = new Map<number, number>([[0, 0]]);
-  const jumpRise = jumpRiseForVelocity(Math.abs(character.movement.jumpVelocity));
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (let from = 0; from < nodes.length; from += 1) {
-      if (!reachable.has(from)) continue;
-      for (let to = 1; to < nodes.length; to += 1) {
-        if (from === to || reachable.has(to)) continue;
-        const rise = nodes[from].topY - nodes[to].topY;
-        const gap = horizontalGapBetween(nodes[from], nodes[to]);
-        const allowableGap = rise >= 0 ? 270 : 340;
-        const allowed = rise <= jumpRise + 6 && gap <= allowableGap;
-        if (!allowed) continue;
-        reachable.add(to);
-        maxRiseByNode.set(to, Math.max(maxRiseByNode.get(from) ?? 0, Math.max(0, rise)));
-        changed = true;
-      }
-    }
-  }
-  const unreachable = level.platforms
-    .map((platform, index) => ({ platform, node: index + 1 }))
-    .filter(({ node }) => !reachable.has(node))
-    .map(({ platform }) => platform.label ?? `Platform ${platform.x}`);
-  const maxRequiredRise = Math.max(0, ...Array.from(maxRiseByNode.values()));
-  return {
-    allCriticalPlatformsReachable: unreachable.length === 0,
-    jumpRise,
-    maxRequiredRise,
-    unreachable,
-  };
+  return buildTangramJumpAudit(level, character.movement);
 }
 
 class PenguinsOfTangramScene extends Phaser.Scene {
@@ -184,27 +125,11 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   private goalBanner!: Phaser.GameObjects.Container;
   private powerSnack!: Phaser.GameObjects.Container;
   private collectibles: Collectible[] = [];
-  private hazards: Hazard[] = [];
   private enemies: Enemy[] = [];
-  private playerState!: {
-    x: number;
-    y: number;
-    velocityX: number;
-    velocityY: number;
-    grounded: boolean;
-    facing: 1 | -1;
-  };
-  private startTime = 0;
-  private lastCheckpoint!: { x: number; y: number; label: string };
-  private badgesCollected = 0;
-  private falls = 0;
-  private powerUntil = 0;
-  private finished = false;
-  private checkpointActivated = false;
-  private hint!: string;
-  private hintUntil = 0;
+  private readonly simulation: TangramPlatformerState;
+  private readonly simulationEvents: TangramPlatformerEvent[] = [];
+  accumulator = 0;
   private lastJumpDown = false;
-  private invulnerableUntil = 0;
 
   constructor(
     character: TangramCharacterDefinition,
@@ -220,20 +145,10 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     this.level = level;
     this.callbacks = callbacks;
     this.jumpAudit = buildJumpAudit(level, character);
-    this.playerState = {
-      x: level.start.x,
-      y: level.start.y,
-      velocityX: 0,
-      velocityY: 0,
-      grounded: false,
-      facing: 1,
-    };
-    this.lastCheckpoint = { ...level.start };
-    this.hint = level.hint;
+    this.simulation = createTangramPlatformerState(level);
   }
 
   create(): void {
-    this.startTime = this.time.now;
     this.cameras.main.setBackgroundColor(this.level.skyColor);
     this.cameras.main.setBounds(0, 0, this.level.worldWidth, this.level.worldHeight);
     this.createBackdrop();
@@ -263,35 +178,57 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   }
 
   update(_: number, deltaMs: number): void {
-    if (this.finished) return;
-    const delta = Math.min(deltaMs / 1000, 1 / 30);
-    this.updateEnemies(delta);
-    this.updatePlayer(delta);
-    this.updatePlayerVisuals();
-    this.handleBouncePads();
-    this.handleCollectibles();
-    this.handleHazards();
-    this.handleEnemies();
-    this.handleCheckpoint();
-    this.handlePowerSnack();
-    this.handleGoal();
-    this.updateHintExpiry();
-    this.updatePowerVisual();
+    if (this.simulation.finished) return;
+    const leftDown = Boolean(this.keys?.left.isDown || this.keys?.a.isDown);
+    const rightDown = Boolean(this.keys?.right.isDown || this.keys?.d.isDown);
+    const jumpDown = Boolean(this.keys?.up.isDown || this.keys?.w.isDown || this.keys?.space.isDown);
+    const direction = ((rightDown ? 1 : 0) - (leftDown ? 1 : 0)) as -1 | 0 | 1;
+    let jumpPressed = jumpDown && !this.lastJumpDown;
+    this.lastJumpDown = jumpDown;
+    this.accumulator += Math.min(deltaMs / 1000, TANGRAM_MAX_FRAME_DT);
+    let steps = 0;
+    while (this.accumulator >= TANGRAM_FIXED_STEP && steps < TANGRAM_MAX_SUBSTEPS) {
+      tickTangramPlatformer(
+        this.simulation,
+        this.level,
+        this.character.movement,
+        { direction, jumpPressed },
+        TANGRAM_FIXED_STEP,
+        this.simulationEvents,
+      );
+      jumpPressed = false;
+      this.accumulator -= TANGRAM_FIXED_STEP;
+      steps += 1;
+    }
+    if (steps === TANGRAM_MAX_SUBSTEPS && this.accumulator >= TANGRAM_FIXED_STEP) {
+      this.accumulator = 0;
+    }
+    this.syncSimulationVisuals();
+    this.applySimulationEvents();
   }
 
   debugCompleteLevel(): void {
-    if (this.finished) return;
-    this.badgesCollected = this.collectibles.length;
-    for (const collectible of this.collectibles) {
-      collectible.collected = true;
-      collectible.sprite.setVisible(false);
-    }
-    this.lastCheckpoint = { x: this.level.checkpoint.x + 12, y: this.level.checkpoint.y - 8, label: this.level.checkpoint.label };
-    this.playerState.x = this.level.goal.x;
-    this.playerState.y = this.level.goal.y;
-    this.player.x = this.playerState.x + PLAYER_WIDTH / 2;
-    this.player.y = this.playerState.y + PLAYER_HEIGHT / 2;
-    this.handleGoal();
+    if (this.simulation.finished) return;
+    this.simulation.collected.fill(true);
+    this.simulation.badgesCollected = this.collectibles.length;
+    this.simulation.checkpointActivated = true;
+    this.simulation.respawnPoint = {
+      x: this.level.checkpoint.x + 12,
+      y: this.level.checkpoint.y - 8,
+      label: this.level.checkpoint.label,
+    };
+    this.simulation.player.x = this.level.goal.x;
+    this.simulation.player.y = this.level.goal.y;
+    tickTangramPlatformer(
+      this.simulation,
+      this.level,
+      this.character.movement,
+      { direction: 0, jumpPressed: false },
+      TANGRAM_FIXED_STEP,
+      this.simulationEvents,
+    );
+    this.syncSimulationVisuals();
+    this.applySimulationEvents();
   }
 
   private createBackdrop(): void {
@@ -427,27 +364,16 @@ class PenguinsOfTangramScene extends Phaser.Scene {
 
   private createCollectibles(): void {
     this.collectibles = this.level.collectibles.map((entry) => ({
-      x: entry.x,
-      y: entry.y,
-      label: entry.label,
-      secret: Boolean(entry.secret),
-      collected: false,
       sprite: this.createBadge(entry.x, entry.y, entry.secret ? 0xff93c2 : 0xffd166),
     }));
   }
 
   private createHazards(): void {
-    this.hazards = this.level.hazards.map((hazard) => ({
-      ...hazard,
-      sprite: this.createPuddle(hazard),
-    }));
+    for (const hazard of this.level.hazards) this.createPuddle(hazard);
   }
 
   private createEnemies(): void {
     this.enemies = this.level.enemies.map((enemy, index) => ({
-      ...enemy,
-      direction: index % 2 === 0 ? 1 : -1,
-      active: true,
       sprite: this.createCritter(enemy.x, enemy.y, index),
     }));
   }
@@ -496,8 +422,11 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   }
 
   private createPlayer(): Phaser.GameObjects.Container {
-    const container = this.add.container(this.playerState.x + PLAYER_WIDTH / 2, this.playerState.y + PLAYER_HEIGHT / 2);
-    container.setSize(PLAYER_WIDTH, PLAYER_HEIGHT);
+    const container = this.add.container(
+      this.simulation.player.x + TANGRAM_PLAYER_WIDTH / 2,
+      this.simulation.player.y + TANGRAM_PLAYER_HEIGHT / 2,
+    );
+    container.setSize(TANGRAM_PLAYER_WIDTH, TANGRAM_PLAYER_HEIGHT);
     container.setDepth(6);
     const bodyColor = Phaser.Display.Color.HexStringToColor(this.character.body).color;
     const accentColor = Phaser.Display.Color.HexStringToColor(this.character.accent).color;
@@ -560,253 +489,61 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     return critter;
   }
 
-  private updateEnemies(delta: number): void {
-    for (const enemy of this.enemies) {
-      if (!enemy.active) continue;
-      enemy.x += enemy.speed * enemy.direction * delta;
-      if (enemy.x <= enemy.minX) {
-        enemy.x = enemy.minX;
-        enemy.direction = 1;
-      }
-      if (enemy.x >= enemy.maxX) {
-        enemy.x = enemy.maxX;
-        enemy.direction = -1;
-      }
-      enemy.sprite.x = enemy.x + enemy.width / 2;
-      enemy.sprite.scaleX = enemy.direction;
+  private syncSimulationVisuals(): void {
+    const playerState = this.simulation.player;
+    this.player.x = playerState.x + TANGRAM_PLAYER_WIDTH / 2;
+    this.player.y = playerState.y + TANGRAM_PLAYER_HEIGHT / 2;
+    this.player.scaleX = playerState.facing;
+    this.player.rotation = Phaser.Math.Linear(this.player.rotation, playerState.velocityX * 0.0008, 0.15);
+    this.player.y += playerState.grounded ? Math.sin(this.time.now * 0.02) * 0.08 : 0;
+
+    for (let index = 0; index < this.enemies.length; index += 1) {
+      const enemyState = this.simulation.enemies[index];
+      const definition = this.level.enemies[index];
+      const sprite = this.enemies[index].sprite;
+      sprite.setVisible(enemyState.active);
+      sprite.x = enemyState.x + definition.width / 2;
+      sprite.scaleX = enemyState.direction;
     }
-  }
-
-  private updatePlayer(delta: number): void {
-    const leftDown = Boolean(this.keys?.left.isDown || this.keys?.a.isDown);
-    const rightDown = Boolean(this.keys?.right.isDown || this.keys?.d.isDown);
-    const jumpDown = Boolean(this.keys?.up.isDown || this.keys?.w.isDown || this.keys?.space.isDown);
-    const inputDirection = (rightDown ? 1 : 0) - (leftDown ? 1 : 0);
-    const maxSpeed = this.isPoweredUp() ? this.character.movement.poweredMaxSpeed : this.character.movement.maxSpeed;
-    const jumpVelocity = this.isPoweredUp() ? this.character.movement.poweredJumpVelocity : this.character.movement.jumpVelocity;
-    const acceleration = this.character.movement.acceleration;
-    const drag = this.character.movement.drag;
-    const previous = { x: this.playerState.x, y: this.playerState.y };
-
-    if (inputDirection !== 0) {
-      this.playerState.velocityX += inputDirection * acceleration * delta;
-      this.playerState.velocityX = clamp(this.playerState.velocityX, -maxSpeed, maxSpeed);
-      this.playerState.facing = inputDirection > 0 ? 1 : -1;
-    } else {
-      const dragAmount = drag * delta;
-      if (Math.abs(this.playerState.velocityX) <= dragAmount) this.playerState.velocityX = 0;
-      else this.playerState.velocityX -= Math.sign(this.playerState.velocityX) * dragAmount;
+    for (let index = 0; index < this.collectibles.length; index += 1) {
+      this.collectibles[index].sprite.setVisible(!this.simulation.collected[index]);
     }
-
-    if (jumpDown && !this.lastJumpDown && this.playerState.grounded) {
-      this.playerState.velocityY = jumpVelocity;
-      this.playerState.grounded = false;
-      this.setHint(`Leap into ${this.level.title.toLowerCase()} and keep the parade moving.`);
-    }
-    this.lastJumpDown = jumpDown;
-
-    this.playerState.x += this.playerState.velocityX * delta;
-    this.resolveHorizontal(previous.x);
-    this.playerState.velocityY = clamp(this.playerState.velocityY + PLAYER_GRAVITY * delta, -1800, PLAYER_MAX_FALL_SPEED);
-    this.playerState.y += this.playerState.velocityY * delta;
-    this.playerState.grounded = false;
-    this.resolveVertical(previous.y);
-
-    if (this.playerState.y > this.level.worldHeight + 120) {
-      this.respawn(`Take the safer route through ${this.level.title.toLowerCase()}.`);
-      return;
-    }
-    this.playerState.x = clamp(this.playerState.x, 0, this.level.worldWidth - PLAYER_WIDTH);
-    this.player.x = this.playerState.x + PLAYER_WIDTH / 2;
-    this.player.y = this.playerState.y + PLAYER_HEIGHT / 2;
-  }
-
-  private resolveHorizontal(previousX: number): void {
-    const playerRect = this.playerRect();
-    for (const platform of this.level.platforms) {
-      if (!intersects(playerRect, platform)) continue;
-      const wasLeft = previousX + PLAYER_WIDTH <= platform.x;
-      const wasRight = previousX >= platform.x + platform.width;
-      if (wasLeft) this.playerState.x = platform.x - PLAYER_WIDTH;
-      else if (wasRight) this.playerState.x = platform.x + platform.width;
-      else if (this.playerState.velocityX > 0) this.playerState.x = platform.x - PLAYER_WIDTH;
-      else this.playerState.x = platform.x + platform.width;
-      this.playerState.velocityX = 0;
-      playerRect.x = this.playerState.x;
-    }
-  }
-
-  private resolveVertical(previousY: number): void {
-    const playerRect = this.playerRect();
-    for (const platform of this.level.platforms) {
-      if (!intersects(playerRect, platform)) continue;
-      const wasAbove = previousY + PLAYER_HEIGHT <= platform.y;
-      const wasBelow = previousY >= platform.y + platform.height;
-      if (wasAbove && this.playerState.velocityY >= 0) {
-        this.playerState.y = platform.y - PLAYER_HEIGHT;
-        this.playerState.velocityY = 0;
-        this.playerState.grounded = true;
-      } else if (wasBelow && this.playerState.velocityY < 0) {
-        this.playerState.y = platform.y + platform.height;
-        this.playerState.velocityY = 0;
-      } else if (this.playerState.velocityY > 0) {
-        this.playerState.y = platform.y - PLAYER_HEIGHT;
-        this.playerState.velocityY = 0;
-        this.playerState.grounded = true;
-      }
-      playerRect.y = this.playerState.y;
-    }
-  }
-
-  private updatePlayerVisuals(): void {
-    this.player.scaleX = this.playerState.facing;
-    this.player.rotation = Phaser.Math.Linear(this.player.rotation, this.playerState.velocityX * 0.0008, 0.15);
-    this.player.y += this.playerState.grounded ? Math.sin(this.time.now * 0.02) * 0.08 : 0;
-  }
-
-  private handleBouncePads(): void {
-    const feetRect = {
-      x: this.playerState.x + 10,
-      y: this.playerState.y + PLAYER_HEIGHT - 10,
-      width: PLAYER_WIDTH - 20,
-      height: 12,
-    };
-    for (const pad of this.level.bouncePads ?? []) {
-      if (!intersects(feetRect, pad)) continue;
-      if (this.playerState.velocityY > 0 || this.playerState.grounded) {
-        this.playerState.velocityY = -pad.strength;
-        this.playerState.grounded = false;
-        this.setHint(`${pad.label} launches ${this.character.name.toLowerCase()} toward the high route.`);
-      }
-    }
-  }
-
-  private handleCollectibles(): void {
-    const playerRect = this.playerRect();
-    for (const collectible of this.collectibles) {
-      if (collectible.collected) continue;
-      if (!intersects(playerRect, { x: collectible.x - 13, y: collectible.y - 13, width: 26, height: 26 })) continue;
-      collectible.collected = true;
-      collectible.sprite.setVisible(false);
-      this.badgesCollected += 1;
-      this.setHint(
-        collectible.secret
-          ? `Secret found: ${collectible.label}.`
-          : `Badges collected: ${this.badgesCollected}/${this.collectibles.length}`,
-      );
-      this.updateHud();
-    }
-  }
-
-  private handleHazards(): void {
-    if (this.time.now < this.invulnerableUntil) return;
-    const feetRect = {
-      x: this.playerState.x + 8,
-      y: this.playerState.y + PLAYER_HEIGHT - 14,
-      width: PLAYER_WIDTH - 16,
-      height: 16,
-    };
-    for (const hazard of this.hazards) {
-      if (intersects(feetRect, hazard)) {
-        this.respawn(`${hazard.label}! Start again from the checkpoint.`);
-        return;
-      }
-    }
-  }
-
-  private handleEnemies(): void {
-    if (this.time.now < this.invulnerableUntil) return;
-    const playerRect = this.playerRect();
-    const previousBottom = this.playerState.y + PLAYER_HEIGHT - this.playerState.velocityY * (1 / 60);
-    for (const enemy of this.enemies) {
-      if (!enemy.active) continue;
-      const enemyRect = { x: enemy.x, y: enemy.y, width: enemy.width, height: enemy.height };
-      if (!intersects(playerRect, enemyRect)) continue;
-      if (this.playerState.velocityY > 0 && previousBottom <= enemy.y + 10) {
-        enemy.active = false;
-        enemy.sprite.setVisible(false);
-        this.playerState.velocityY = -460;
-        this.setHint('Nice stomp! Keep the class parade moving.');
-        return;
-      }
-      this.respawn('A critter bumped you back to safety.');
-      return;
-    }
-  }
-
-  private handleCheckpoint(): void {
-    if (this.checkpointActivated) return;
-    if (!intersects(this.playerRect(), this.level.checkpoint)) return;
-    this.checkpointActivated = true;
-    this.lastCheckpoint = { x: this.level.checkpoint.x + 12, y: this.level.checkpoint.y - 8, label: this.level.checkpoint.label };
-    this.checkpointBanner.list.forEach((child) => {
-      if ('setTint' in child && typeof child.setTint === 'function') child.setTint(0x7dfc8a);
-    });
-    this.setHint(`Checkpoint reached: ${this.level.checkpoint.label}`);
-    this.updateHud();
-  }
-
-  private handlePowerSnack(): void {
-    if (!this.powerSnack.visible) return;
-    if (!intersects(this.playerRect(), this.level.powerup)) return;
-    this.powerSnack.setVisible(false);
-    this.powerUntil = this.time.now + POWERUP_DURATION_MS;
-    this.setHint(`${this.level.powerup.label} active! Bigger jumps and faster waddles for a short time.`);
-    this.updateHud();
-  }
-
-  private handleGoal(): void {
-    if (!intersects(this.playerRect(), this.level.goal)) return;
-    if (this.badgesCollected < this.collectibles.length) {
-      this.setHint(`You still need ${this.collectibles.length - this.badgesCollected} more Tangram badges.`);
-      return;
-    }
-    this.finished = true;
-    this.callbacks.onComplete({
-      characterName: this.character.name,
-      levelTitle: this.level.title,
-      badgesCollected: this.badgesCollected,
-      totalBadges: this.collectibles.length,
-      durationSeconds: Math.max(1, Math.round((this.time.now - this.startTime) / 1000)),
-      checkpointLabel: this.lastCheckpoint.label,
-      falls: this.falls,
-      nextLevelId: nextTangramLevelId(this.level.id),
-      campaignComplete: nextTangramLevelId(this.level.id) === null,
-    });
-  }
-
-  private updateHintExpiry(): void {
-    if (this.hintUntil === 0 || this.time.now <= this.hintUntil) return;
-    this.hintUntil = 0;
-    this.hint = this.isPoweredUp() ? 'Power snack active — race ahead while it lasts.' : this.level.hint;
-    this.updateHud();
-  }
-
-  private updatePowerVisual(): void {
-    const powered = this.isPoweredUp();
+    this.powerSnack.setVisible(this.simulation.powerSnackAvailable);
+    const powered = isTangramPoweredUp(this.simulation);
     this.playerAura.setVisible(powered);
     this.playerAura.x = this.player.x;
     this.playerAura.y = this.player.y - 10;
-    this.callbacks.onSceneState(this.currentSceneHookState());
+    if (this.simulation.checkpointActivated) {
+      this.checkpointBanner.list.forEach((child) => {
+        if ('setTint' in child && typeof child.setTint === 'function') child.setTint(0x7dfc8a);
+      });
+    }
   }
 
-  private respawn(message: string): void {
-    this.falls += 1;
-    this.playerState.x = this.lastCheckpoint.x;
-    this.playerState.y = this.lastCheckpoint.y;
-    this.playerState.velocityX = 0;
-    this.playerState.velocityY = 0;
-    this.playerState.grounded = false;
-    this.invulnerableUntil = this.time.now + this.character.movement.respawnShieldMs;
-    this.cameras.main.shake(180, 0.004);
-    this.setHint(message);
-    this.updateHud();
+  private applySimulationEvents(): void {
+    let shouldUpdateHud = false;
+    for (const event of this.simulationEvents) {
+      if (event.type === 'hud') shouldUpdateHud = true;
+      if (event.type === 'shake') this.cameras.main.shake(180, 0.004);
+      if (event.type === 'complete') this.completeLevel();
+    }
+    this.simulationEvents.length = 0;
+    if (shouldUpdateHud && !this.simulation.finished) this.updateHud();
   }
 
-  private setHint(message: string): void {
-    this.hint = message;
-    this.hintUntil = this.time.now + 3200;
-    this.updateHud();
+  private completeLevel(): void {
+    const nextLevelId = nextTangramLevelId(this.level.id);
+    this.callbacks.onComplete({
+      characterName: this.character.name,
+      levelTitle: this.level.title,
+      badgesCollected: this.simulation.badgesCollected,
+      totalBadges: this.collectibles.length,
+      durationSeconds: Math.max(1, Math.round(this.simulation.elapsedSeconds)),
+      checkpointLabel: this.simulation.respawnPoint.label,
+      falls: this.simulation.falls,
+      nextLevelId,
+      campaignComplete: nextLevelId === null,
+    });
   }
 
   private updateHud(): void {
@@ -814,31 +551,23 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       zoneTitle: this.level.title,
       characterName: this.character.name,
       characterClass: this.character.className,
-      badgesCollected: this.badgesCollected,
+      badgesCollected: this.simulation.badgesCollected,
       totalBadges: this.collectibles.length,
-      checkpointLabel: this.lastCheckpoint.label,
-      powerLabel: this.isPoweredUp() ? 'Super snack active' : 'No power-up',
-      hint: this.hint,
+      checkpointLabel: this.simulation.respawnPoint.label,
+      powerLabel: isTangramPoweredUp(this.simulation) ? 'Super snack active' : 'No power-up',
+      hint: this.simulation.hint,
     });
     this.callbacks.onSceneState(this.currentSceneHookState());
   }
 
   private currentSceneHookState(): SceneHookState {
     return {
-      badgesCollected: this.badgesCollected,
+      badgesCollected: this.simulation.badgesCollected,
       totalBadges: this.collectibles.length,
-      checkpointLabel: this.lastCheckpoint.label,
-      poweredUp: this.isPoweredUp(),
+      checkpointLabel: this.simulation.respawnPoint.label,
+      poweredUp: isTangramPoweredUp(this.simulation),
       jumpAudit: this.jumpAudit,
     };
-  }
-
-  private isPoweredUp(): boolean {
-    return this.time.now < this.powerUntil;
-  }
-
-  private playerRect(): Rect {
-    return { x: this.playerState.x, y: this.playerState.y, width: PLAYER_WIDTH, height: PLAYER_HEIGHT };
   }
 }
 

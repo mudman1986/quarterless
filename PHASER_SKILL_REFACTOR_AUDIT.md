@@ -18,19 +18,23 @@ All work must preserve these constraints:
 
 | Priority | Work item | Skills affected | Why it is justified |
 | --- | --- | --- | --- |
-| High | R1: Move Penguins gameplay to a pure fixed-step simulation | debugging, performance, Arcade Physics | Penguins currently integrates movement and collision once per rendered frame, so frame cadence changes gameplay and the simulation remains embedded in a Phaser scene. |
-| Medium | R2: Publish Penguins power state only on transitions | performance, text | `updatePowerVisual()` rebuilds and publishes the test hook every frame; when the power-up expires, the visible DOM HUD is not refreshed. |
+| Complete | R1: Move Penguins gameplay to a pure fixed-step simulation | debugging, performance, Arcade Physics | Completed with a Phaser-free simulation core, bounded fixed-step scene adapter, and red/green browser backlog regression. |
+| Complete | R2: Publish Penguins power state only on transitions | performance, text | Completed with core transition events and a red/green browser regression covering idle, pickup, and expiry publication. |
 | Complete | R3: Reuse Phaser's audio context and clean up procedural nodes | audio | Completed on 2026-07-14 with Phaser-managed context/output routing, active-node cleanup, and red/green unit regressions. |
 | Complete | R4: Remove steady-state particle allocations | particles, performance | Completed on 2026-07-14 with in-place survivor updates and array compaction, backed by a red/green browser regression. |
 | Complete | R5: Reuse visual-feedback frame state | performance | Completed on 2026-07-14 by reusing pickup identity sets and car history arrays instead of allocating three collections plus pickup key strings per rendered frame. |
 
-The remaining differences are intentional. In particular, this audit rejects a speculative rewrite of Sindicate's `Graphics` layers: traffic lights and corpses are state-guarded, touch controls are dirty-key guarded, the minimap is throttled, and only genuinely dynamic feedback is redrawn continuously. No measured evidence supports replacing those layers with many Shape objects.
+The remaining differences are intentional. Every `Keep` decision was revalidated after R3-R5, and none warranted promotion to a refactor. In particular, this audit rejects a speculative rewrite of Sindicate's `Graphics` layers: traffic lights and corpses are state-guarded, touch controls are dirty-key guarded, the minimap is throttled, and only genuinely dynamic feedback is redrawn continuously. No measured evidence supports replacing those layers with many Shape objects.
 
 ## Start-Ready Refactor Tasks
 
 ### R1. Extract And Fix-Step Penguins Gameplay
 
 **Owners:** `src/games/penguins-of-tangram/index.ts`; new `src/core/tangramPlatformer.ts` and `src/core/tangramPlatformer.test.ts`; `e2e/performance.spec.ts`.
+
+**Status:** Complete.
+
+**Implementation:** `TangramPlatformerState` now owns player physics, collision, enemy patrol and stomps, collectibles, hazards, bounce pads, checkpoints, respawn shielding, simulation-time power/hint expiry, and completion. `PenguinsOfTangramScene` samples input once per rendered frame, latches the jump edge for one substep, runs at 60 Hz with a five-substep cap, discards stale backlog, synchronizes persistent Containers once, and translates core events to HUD, camera, and completion effects. Vitest covers 30/60/120 Hz equivalence, maximum-speed landing, power duration, and invulnerability duration. The browser accumulator test first failed because the scene had no accumulator, then passed after the fixed-step adapter; the existing five-zone campaign and reachability regression also passes.
 
 **Steps:**
 
@@ -48,6 +52,10 @@ The remaining differences are intentional. In particular, this audit rejects a s
 ### R2. Make Penguins Power Reporting Transition-Driven
 
 **Owners:** `PenguinsOfTangramScene.updatePowerVisual`, `updateHud`, and `handlePowerSnack` in `src/games/penguins-of-tangram/index.ts`; `e2e/penguins-gameplay.spec.ts` or `e2e/performance.spec.ts`.
+
+**Status:** Complete.
+
+**Implementation:** Power pickup and expiry now arrive as core HUD transition events. Aura position still synchronizes every rendered frame, while launcher hook and DOM HUD publication occur only for state changes. The browser regression observed ten writes over ten idle frames when the old unconditional callback was temporarily restored, then zero idle writes and exactly one write each for pickup and expiry after restoring the fix.
 
 **Steps:**
 
@@ -162,10 +170,10 @@ The remaining differences are intentional. In particular, this audit rejects a s
 
 ## 7. Debugging Performance Issues (`debugging-performance-issues`)
 
-- **Current approach:** Sindicate has a clamped, bounded fixed-step loop, pooled render objects, throttled minimap/save work, a direct accumulator regression, in-place particle compaction, and reusable visual-feedback history. Penguins clamps delta but integrates gameplay once per render and publishes a test hook every frame.
-- **Difference from the skill:** The remaining gap is in Penguins: it lacks fixed-step/backlog invariants and introduces avoidable render-frequency allocation.
-- **Decision:** `Refactor`.
-- **Implementation task:** Execute R1 and R2. R4 and R5 are complete. Use the skill's page-side probes before and after; do not claim frame-time savings without measurements.
+- **Current approach:** Both games have clamped, bounded fixed-step loops and direct stale-backlog regressions. Sindicate also uses pooled render objects, throttled minimap/save work, in-place particle compaction, and reusable visual-feedback history. Penguins synchronizes persistent Containers from pure core state and publishes launcher state on transitions.
+- **Difference from the skill:** No unresolved correctness or allocation gap remains in the audited paths.
+- **Decision:** `Keep` after completing R1, R2, R4, and R5.
+- **Implementation task:** None. Continue using page-side probes before and after future hot-loop changes; do not claim frame-time savings without measurements.
 - **Benefit:** Mechanical hitch recovery and bounded hot-loop allocation in both Phaser games.
 
 ## 8. Events System (`events-system`)
@@ -250,18 +258,18 @@ The remaining differences are intentional. In particular, this audit rejects a s
 
 ## 18. Performance Development Guidelines (`performance-development-guidelines`)
 
-- **Current approach:** Sindicate follows the skill's fixed-step, backlog, pool, minimap, autosave, HUD, in-place particle-update, and reusable frame-state guidance. Penguins only clamps its variable step and performs unconditional per-frame hook publication.
-- **Difference from the skill:** Penguins does not meet the required fixed-step simulation rule, and its hook still violates the review checklist for avoidable per-frame allocation.
-- **Decision:** `Refactor`.
-- **Implementation task:** Execute R1 and R2. R4 and R5 are complete with direct red/green verification.
+- **Current approach:** Sindicate follows the skill's fixed-step, backlog, pool, minimap, autosave, HUD, in-place particle-update, and reusable frame-state guidance. Penguins now runs pure gameplay at a bounded 60 Hz fixed step, drops stale debt, reuses render objects, and publishes HUD/hook state only on transitions.
+- **Difference from the skill:** None requiring further work at current scale.
+- **Decision:** `Keep` after completing R1 and R2.
+- **Implementation task:** None. Preserve the fixed-step/core boundary and transition-driven publication.
 - **Benefit:** Frame-cadence-independent gameplay and demonstrably bounded per-frame work.
 
 ## 19. Arcade Physics (`physics-arcade`)
 
-- **Current approach:** Sindicate uses deterministic pure-core vehicle/collision logic. Penguins hand-rolls platform movement and AABB collision inside its Phaser scene.
-- **Difference from the skill:** Neither game enables Arcade Physics. Sindicate's divergence is intentional; Penguins' issue is ownership and time stepping, not the absence of Arcade bodies.
-- **Decision:** `Refactor` Penguins through R1, but do not adopt Arcade Physics.
-- **Implementation task:** Move Penguins simulation to pure core and fixed steps. Preserve its small explicit collision model instead of making Phaser bodies the source of truth.
+- **Current approach:** Both games use deterministic pure-core movement and collision logic. Penguins retains its small explicit AABB platform model under `src/core/tangramPlatformer.ts`.
+- **Difference from the skill:** Neither game enables Arcade Physics; Phaser bodies are not gameplay authority.
+- **Decision:** `Keep` after completing R1.
+- **Implementation task:** None. Preserve the pure-core collision model unless future mechanics require a measured change.
 - **Benefit:** Meets repository architecture and deterministic-test requirements that an Arcade Physics migration would not satisfy.
 
 ## 20. Matter Physics (`physics-matter`)
@@ -306,10 +314,10 @@ The remaining differences are intentional. In particular, this audit rejects a s
 
 ## 25. Text And BitmapText (`text-and-bitmaptext`)
 
-- **Current approach:** Sindicate uses Phaser Text with change guards and state-driven story updates. Penguins uses mostly static Phaser labels plus a DOM HUD updated through callbacks.
-- **Difference from the skill:** BitmapText is unnecessary at current update rates, but Penguins fails to republish the DOM power label when a timed power-up expires and publishes hook state every frame instead.
-- **Decision:** `Refactor` the Penguins update trigger; keep Text choices.
-- **Implementation task:** Execute R2. Do not add a bitmap font or convert the DOM HUD.
+- **Current approach:** Sindicate uses Phaser Text with change guards and state-driven story updates. Penguins uses mostly static Phaser labels plus a transition-driven DOM HUD callback; pickup and expiry each update the visible power label exactly once.
+- **Difference from the skill:** BitmapText remains unnecessary at current update rates.
+- **Decision:** `Keep` after completing R2.
+- **Implementation task:** None. Keep the transition trigger and existing text choices.
 - **Benefit:** Correct visible status and transition-only updates without new assets.
 
 ## 26. Tilemaps (`tilemaps`)
@@ -322,10 +330,10 @@ The remaining differences are intentional. In particular, this audit rejects a s
 
 ## 27. Time And Timers (`time-and-timers`)
 
-- **Current approach:** Visual pulses use `this.time.now`; Sindicate gameplay durations use fixed-step core time. Penguins uses deadline comparisons for power, hints, and invulnerability.
+- **Current approach:** Visual pulses use `this.time.now`; gameplay durations in both games use fixed-step core time. Penguins stores remaining power, hint, and invulnerability durations in its pure simulation state.
 - **Difference from the skill:** There are no `TimerEvent` or `delayedCall` callbacks.
-- **Decision:** `Keep` the deadline approach. R1 moves Penguins deadlines to fixed simulation time.
-- **Implementation task:** Do not convert gameplay deadlines to Phaser TimerEvents. During R1, store remaining durations or simulation deadlines in core state and test them deterministically.
+- **Decision:** `Keep` after completing R1.
+- **Implementation task:** Do not convert gameplay deadlines to Phaser TimerEvents; keep them deterministic and serializable in core state.
 - **Benefit:** Timers remain serializable/testable and cannot outlive their gameplay state through callback ownership mistakes.
 
 ## 28. Tweens (`tweens`)
@@ -359,4 +367,5 @@ The remaining differences are intentional. In particular, this audit rejects a s
 - Compare both Phaser game implementations: complete.
 - Record intentional differences and concrete benefits: complete.
 - Provide start-ready tasks only where evidence supports work: complete.
-- Before implementing R1-R2: create focused regressions, demonstrate red/green, then run `npm run lint`, `npm run typecheck`, relevant Vitest tests, and relevant Playwright tests. R3-R5 have completed this process.
+- R1-R5 implementation tasks: complete with focused regression coverage and demonstrated red/green checks.
+- Final validation: run `npm run test:run`, `npm run test:e2e`, `npm run lint`, and `npm run typecheck` after documentation updates.
