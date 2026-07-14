@@ -25,7 +25,7 @@ import type { Car } from '../../core/vehicle';
 import type { Pedestrian } from '../../core/pedestrianAI';
 import { type TrafficAI, openDirections, tileCoord } from '../../core/trafficAI';
 import type { AmmoPickup } from '../../core/weapon';
-import { distance, vec2, type Vec2 } from '../../core/vector';
+import { distance, fromAngle, vec2, type Vec2 } from '../../core/vector';
 import { uiScreenToWorld, uiCounterScale, uiAnchorOnScreen } from '../../core/hudLayout';
 import { greenAxis } from '../../core/trafficLight';
 import { KeyboardInput } from '../input/KeyboardInput';
@@ -38,7 +38,19 @@ import {
   type TouchSnapshot,
 } from '../input/touchControls';
 import { Sound } from '../audio/Sound';
-import { createGameTextures, TEX } from '../art/textures';
+import {
+  CIVILIAN_VEHICLE_TEXTURES,
+  cycleFrame,
+  effectFrame,
+  FX,
+  PEDESTRIAN_VARIANT_TEXTURES,
+  pickVariantTexture,
+  preloadGameTextures,
+  TILE,
+  TEX,
+  textureRef,
+  type TextureRef,
+} from '../art/textures';
 import { NO_CONTROLS } from '../../core/types';
 import { buildSandboxCampaigns } from '../story/sandboxCampaigns';
 import { STORY_MODE_PROTOTYPE } from '../story/storyCampaign';
@@ -60,15 +72,19 @@ import {
 import { clearStoryLaunchRequest, loadStoryLaunchRequest } from '../story/storyLaunchState';
 import {
   compileStoryChapterRuntimeCampaign,
+  formatStoryCityState,
   formatStorySystem,
   resolveStoryMissionPlan,
   STORY_MISSION_GROUP_SELECTION_INDEX,
   storyMissionStartPosition,
   storyObjectiveIndexFromRuntime,
+  summarizeStoryCityState,
 } from '../story/storyMode';
 import type {
+  StoryBeatPresentation,
   PedestrianRouteActorScript,
   PedestrianSquadActorScript,
+  StoryChapter,
   StoryMissionPlan,
   StoryRuntimeScript,
   StoryRuntimeStage,
@@ -81,15 +97,17 @@ import {
   applyStoryFailRules,
   isStageTransitionMet,
   normalizeRouteCompletion,
+  placeStorySquadMember,
   updateTailCaptureProgress,
 } from '../story/runtimeActors';
 
 const COLORS = {
-  road: 0x2b2b30,
-  roadLine: 0x52525b,
+  road: 0x1f2430,
+  roadLine: 0x6b7280,
+  roadShadow: 0x121720,
   building: 0x4b5563,
-  buildingEdge: 0x111827,
-  buildingRoof: 0x596577,
+  buildingEdge: 0x0f172a,
+  buildingRoof: 0x6a7688,
   policeBuilding: 0x1d4ed8,
   hospitalBuilding: 0xf8fafc,
   towBuilding: 0xf59e0b,
@@ -111,17 +129,25 @@ const COLORS = {
   garageStripe: 0xf8fafc,
   ammo: 0xfacc15,
   // Water & bridges.
-  water: 0x1d4e6f,
-  waterEdge: 0x123a52,
+  water: 0x155e75,
+  waterEdge: 0x0f3f54,
+  waterFoam: 0x67e8f9,
   bridge: 0x3a3a42,
   bridgeEdge: 0x18181b,
   fence: 0xa8a29e,
   // Streets.
-  sidewalk: 0x6b7280,
-  crosswalk: 0xd1d5db,
+  sidewalk: 0x7b8592,
+  sidewalkShade: 0x5f6977,
+  curbLine: 0xa8b2c0,
+  crosswalk: 0xe2e8f0,
   lightGreen: 0x22c55e,
   lightRed: 0xef4444,
-  parkingLine: 0xca8a04,
+  parkingLine: 0xf59e0b,
+  spark: 0xfb923c,
+  sparkCore: 0xfef08a,
+  pickupSpark: 0x22d3ee,
+  pickupCore: 0xfacc15,
+  skid: 0x0f172a,
   fireGlow: 0xf97316,
   fireCore: 0xfacc15,
   smoke: 0x111827,
@@ -144,6 +170,47 @@ const COLORS = {
   mmAmmo: 0xfacc15,
 };
 
+type VisualParticle = {
+  pos: { x: number; y: number };
+  vel: { x: number; y: number };
+  age: number;
+  life: number;
+  radius: number;
+  color: number;
+  alpha: number;
+  stretch: number;
+};
+
+function blendColor(a: number, b: number, amount: number): number {
+  const mix = (x: number, y: number) => Math.round(x + (y - x) * amount);
+  const ar = (a >> 16) & 0xff;
+  const ag = (a >> 8) & 0xff;
+  const ab = a & 0xff;
+  const br = (b >> 16) & 0xff;
+  const bg = (b >> 8) & 0xff;
+  const bb = b & 0xff;
+  return (mix(ar, br) << 16) | (mix(ag, bg) << 8) | mix(ab, bb);
+}
+
+function stableVisualSeed(...values: number[]): number {
+  let seed = 17;
+  for (const value of values) {
+    seed = Math.imul(seed, 31) + Math.trunc(value);
+    seed |= 0;
+  }
+  return Math.abs(seed);
+}
+
+function stringSeed(value: string | undefined): number {
+  if (!value) return 0;
+  let seed = 0;
+  for (let i = 0; i < value.length; i++) {
+    seed = Math.imul(seed, 33) + value.charCodeAt(i);
+    seed |= 0;
+  }
+  return Math.abs(seed);
+}
+
 /**
  * The browser's `localStorage`, or an in-memory fallback when it is unavailable
  * (e.g. blocked by privacy settings). Keeps the high score from ever throwing.
@@ -164,6 +231,12 @@ function safeStorage(): KeyValueStore {
 
 const FIXED_STEP = 1 / 60;
 const MAX_SUBSTEPS = 5;
+/** Largest per-frame delta (seconds) ever fed into the simulation/story timers. A dropped
+ * frame, a GC pause, or the browser tab losing focus and later resuming can otherwise hand a
+ * multi-second `deltaMs` to a single `update()` call; unclamped, that jumps straight past any
+ * story fail-rule's `maxSeconds` in one shot (a mission could fail the instant the tab regains
+ * focus, well before the player could ever have actually held the failing condition that long). */
+const MAX_FRAME_DT = 0.25;
 const PLAYER_SIZE = 14;
 const PED_SIZE = 10;
 /** Every Nth sidewalk strip gets a starting pedestrian. Lower means denser crowds. */
@@ -206,7 +279,9 @@ function enteredCarLabel(kind: VehicleKind): string {
 }
 /** Length in seconds of a full day/night cycle (30 minutes). */
 const DAY_LENGTH = 1800;
-const SAVE_INTERVAL = 0.5;
+/** Full-world snapshots use synchronous storage, so keep the cadence low enough
+ * that serialization cannot become a recurring frame hitch. */
+const SAVE_INTERVAL = 2;
 /** Tow-truck amber beacon: blink interval (ms) and how far forward (px) of the
  * truck's centre the cab-roof light sits. */
 const TOW_BEACON_BLINK_MS = 280;
@@ -293,6 +368,8 @@ interface StoryMissionSummaryBaseline {
 interface StoryMissionSummaryCard {
   chapterTitle: string;
   title: string;
+  voiceText: string | null;
+  beatText: string | null;
   reward: number;
   outcome: string;
   durationSeconds: number;
@@ -301,9 +378,22 @@ interface StoryMissionSummaryCard {
   vehicleConditionText: string;
   serviceLaneText: string;
   factionEffectText: string;
+  cityStateText: string;
   systemsText: string;
   unlockText: string;
   nextText: string;
+}
+
+type StoryPanelTone = 'chapter' | 'brief' | 'summary' | 'complete' | 'danger';
+
+interface StoryPanelBeat {
+  text: string;
+  tone: StoryPanelTone;
+  beat?: StoryBeatPresentation;
+  focusTarget?: Vec2 | null;
+  seconds?: number;
+  requiresAcknowledge?: boolean;
+  pauseGame?: boolean;
 }
 
 /**
@@ -325,6 +415,11 @@ export class CityScene extends Phaser.Scene {
   private carSprites: Phaser.GameObjects.Image[] = [];
   private pedSprites: Phaser.GameObjects.Image[] = [];
   private policeSprites: Phaser.GameObjects.Image[] = [];
+  private waterTiles: Phaser.GameObjects.TileSprite[] = [];
+  private shimmerSprites: Phaser.GameObjects.Image[] = [];
+  private explosionSprites: Phaser.GameObjects.Image[] = [];
+  private fireSprites: Phaser.GameObjects.Image[] = [];
+  private damageSprites: Phaser.GameObjects.Image[] = [];
   private bulletSprites: Phaser.GameObjects.Rectangle[] = [];
   private policeBulletSprites: Phaser.GameObjects.Rectangle[] = [];
   private ammoSprites: { sprite: Phaser.GameObjects.Image; pickup: AmmoPickup }[] = [];
@@ -332,8 +427,7 @@ export class CityScene extends Phaser.Scene {
   private storyChoiceMarkersGfx!: Phaser.GameObjects.Graphics;
   private taxiMarker!: Phaser.GameObjects.Arc;
   private serviceMarker!: Phaser.GameObjects.Arc;
-  private explosionGfx!: Phaser.GameObjects.Graphics;
-  private burningGfx!: Phaser.GameObjects.Graphics;
+  private feedbackGfx!: Phaser.GameObjects.Graphics;
   private lightsGfx!: Phaser.GameObjects.Graphics;
   private corpseGfx!: Phaser.GameObjects.Graphics;
   private ambulanceSprite!: Phaser.GameObjects.Image;
@@ -356,6 +450,15 @@ export class CityScene extends Phaser.Scene {
   private bustedText!: Phaser.GameObjects.Text;
   private banner!: Phaser.GameObjects.Text;
   private bannerCloseButton!: Phaser.GameObjects.Text;
+  private storyPanelFrame!: Phaser.GameObjects.Graphics;
+  private storyPanelAccent!: Phaser.GameObjects.Rectangle;
+  private storyPortraitBackdrop!: Phaser.GameObjects.Graphics;
+  private storyPortraitFrame!: Phaser.GameObjects.Graphics;
+  private storyPortraitBadge!: Phaser.GameObjects.Arc;
+  private storyPortraitMonogram!: Phaser.GameObjects.Text;
+  private storyPortraitName!: Phaser.GameObjects.Text;
+  private storyPortraitRole!: Phaser.GameObjects.Text;
+  private storyPortraitKicker!: Phaser.GameObjects.Text;
   private storyPanel!: Phaser.GameObjects.Text;
   private storyStateText!: Phaser.GameObjects.Text;
   private touchControlsGfx!: Phaser.GameObjects.Graphics;
@@ -386,13 +489,18 @@ export class CityScene extends Phaser.Scene {
   };
 
   /** Procedural sound effects. */
-  private readonly sfx = new Sound();
+  private sfx = new Sound();
 
   // Previous-frame snapshots, for detecting events worth a sound or a banner.
   private prevBullets = 0;
   private prevKills = 0;
   private prevStatus: 'playing' | 'busted' | 'wasted' = 'playing';
   private prevMissionComplete = false;
+  private prevCarHeadings: number[] = [];
+  private prevCarHealth: number[] = [];
+  private readonly prevAmmoPickups = new Set<AmmoPickup>();
+  private readonly currentAmmoPickups = new Set<AmmoPickup>();
+  private visualParticles: VisualParticle[] = [];
   private prevMissionId: string | null = null;
   private prevObjective = '';
   private prevTaxiMissionId: number | null = null;
@@ -415,6 +523,11 @@ export class CityScene extends Phaser.Scene {
   private storyPanelRemaining = 0;
   private storyPanelRequiresAcknowledge = false;
   private storyPanelPauseGame = false;
+  private storyPanelTone: StoryPanelTone = 'brief';
+  private storyPanelCinematicActive = false;
+  private storyPanelBaseZoom = 1;
+  private storyPanelFocusTarget: Vec2 | null = null;
+  private storyPanelQueue: StoryPanelBeat[] = [];
   private pendingStoryRestart: StoryProgressSnapshot | null = null;
   /** True when the pending restart should resume from the just-saved game
    * state (e.g. a chapter-complete advance) instead of wiping progress (a
@@ -442,6 +555,10 @@ export class CityScene extends Phaser.Scene {
 
   constructor() {
     super('City');
+  }
+
+  preload(): void {
+    preloadGameTextures(this);
   }
 
   init(data: CitySceneStartData = {}): void {
@@ -475,11 +592,22 @@ export class CityScene extends Phaser.Scene {
   }
 
   create(): void {
+    this.sfx.destroy();
+    this.sfx =
+      this.sound instanceof Phaser.Sound.WebAudioSoundManager
+        ? new Sound({ context: this.sound.context, destination: this.sound.destination })
+        : new Sound();
+
     // Reset per-run state so a new game (scene.restart) starts clean: the lazily
     // built sprite pools must not keep references to the previous run's objects.
     this.carSprites = [];
     this.pedSprites = [];
     this.policeSprites = [];
+    this.waterTiles = [];
+    this.shimmerSprites = [];
+    this.explosionSprites = [];
+    this.fireSprites = [];
+    this.damageSprites = [];
     this.bulletSprites = [];
     this.policeBulletSprites = [];
     this.ammoSprites = [];
@@ -487,6 +615,11 @@ export class CityScene extends Phaser.Scene {
     this.accumulator = 0;
     this.minimapAccumulator = MINIMAP_REFRESH_INTERVAL;
     this.saveAccumulator = 0;
+    this.visualParticles = [];
+    this.prevCarHeadings = [];
+    this.prevCarHealth = [];
+    this.prevAmmoPickups.clear();
+    this.currentAmmoPickups.clear();
     this.sirenTimer = 0;
     this.timeOfDay = 0;
     this.skipPersistOnShutdown = false;
@@ -512,6 +645,7 @@ export class CityScene extends Phaser.Scene {
     this.storyPanelRemaining = 0;
     this.storyPanelRequiresAcknowledge = false;
     this.storyPanelPauseGame = false;
+    this.storyPanelQueue = [];
     this.pendingStoryRestart = null;
     this.pendingStoryRestartResume = false;
     this.storyScript = null;
@@ -522,7 +656,6 @@ export class CityScene extends Phaser.Scene {
     this.despawnedStoryPedIndices.clear();
 
     this.city = buildCity(CITY_SPEC);
-    createGameTextures(this);
     this.intersectionCenters = this.computeIntersectionCenters();
     const spawn = tileCenter(this.city.spec, this.city.spec.block, this.city.spec.block);
 
@@ -571,6 +704,7 @@ export class CityScene extends Phaser.Scene {
     this.createMinimap();
     this.layoutHud();
     this.syncMinimap();
+    this.paused = false;
     this.syncStoryScript(0);
     this.syncStoryMissionSummaryBaseline();
     this.showStoryBriefingIfNeeded();
@@ -592,14 +726,10 @@ export class CityScene extends Phaser.Scene {
       if (this.storyPanelRequiresAcknowledge) this.acknowledgeStoryPanel();
     };
     kb.on('keydown-ENTER', handleStoryAcknowledge);
-    this.paused = false;
     if (typeof window !== 'undefined') {
       window.addEventListener('beforeunload', this.beforeUnloadHandler);
     }
-    // Browsers block audio until a user gesture: unlock on the first key press.
-    this.input.keyboard?.once('keydown', () => this.sfx.resume());
     const handlePointerDown = (pointer: Phaser.Input.Pointer): void => {
-      this.sfx.resume();
       const pointerType = (pointer.event as PointerEvent | undefined)?.pointerType;
       if (pointerType === 'touch') {
         this.touchAvailable = true;
@@ -616,6 +746,7 @@ export class CityScene extends Phaser.Scene {
       }
       if (!this.skipPersistOnShutdown) this.persistGameState();
       this.touchInput_?.destroy();
+      this.sfx.destroy();
     });
     this.persistGameState();
   }
@@ -657,6 +788,7 @@ export class CityScene extends Phaser.Scene {
       this.storyProgress.current.missionId,
       this.storyProgress.current.objectiveIndex,
       this.storyProgress.branchOutcomes,
+      summarizeStoryCityState(STORY_MODE_PROTOTYPE, this.storyProgress.branchOutcomes),
     );
   }
 
@@ -887,22 +1019,28 @@ export class CityScene extends Phaser.Scene {
     const existing = this.storyPedIndices(actorId);
     if (existing && existing.length > 0) {
       existing.forEach((index, i) => {
-        const offsetX = count === 1 ? 0 : (i - (count - 1) / 2) * spread;
         const ped = this.world.pedestrians[index];
         if (!ped) return;
-        const shouldResetPosition =
-          opts.resetPosition ||
-          (ped.pos.x === STORY_ACTOR_DESPAWN_POS.x && ped.pos.y === STORY_ACTOR_DESPAWN_POS.y);
+        const placement = placeStorySquadMember(
+          ped.pos,
+          pos,
+          i,
+          count,
+          spread,
+          STORY_ACTOR_DESPAWN_POS,
+          opts.resetPosition ?? false,
+        );
         this.world.pedestrians[index] = {
           ...ped,
-          pos: shouldResetPosition ? vec2(pos.x + offsetX, pos.y) : ped.pos,
-          heading: shouldResetPosition ? 0 : ped.heading,
-          state: shouldResetPosition ? 'wait' : ped.state,
-          target: shouldResetPosition ? vec2(pos.x + offsetX, pos.y) : ped.target,
+          pos: placement.pos,
+          heading: placement.reset ? 0 : ped.heading,
+          state: placement.reset ? 'wait' : ped.state,
+          target: placement.reset ? placement.pos : ped.target,
           missionTarget: opts.missionTarget ?? false,
           uniform: opts.uniform,
           storyActorId: actorId,
           storyActorOrder: i,
+          visualSeed: ped.visualSeed ?? stableVisualSeed(stringSeed(actorId), i + 1),
         };
         this.despawnedStoryPedIndices.delete(index);
       });
@@ -922,6 +1060,7 @@ export class CityScene extends Phaser.Scene {
         uniform: opts.uniform,
         storyActorId: actorId,
         storyActorOrder: i,
+        visualSeed: stableVisualSeed(stringSeed(actorId), i + 1),
       };
       const index = this.storyReusablePedIndices.pop() ?? this.world.pedestrians.length;
       this.despawnedStoryPedIndices.delete(index);
@@ -960,13 +1099,28 @@ export class CityScene extends Phaser.Scene {
     if (!script) return;
     const carIndex = script.actorCarIndices[actorId];
     if (carIndex !== undefined && this.world.cars[carIndex]) {
+      if (this.world.drivingCarIndex === carIndex) this.world.exitVehicle();
       const carDrivers = (this.world as unknown as { carDrivers: (TrafficAI | null)[] }).carDrivers;
+      const carHealth = (this.world as unknown as { carHealth: number[] }).carHealth;
+      const carBurnTimers = (this.world as unknown as { carBurnTimers: number[] }).carBurnTimers;
+      const carBurnByPlayer = (this.world as unknown as { carBurnByPlayer: boolean[] })
+        .carBurnByPlayer;
+      const towDispatchCooldowns = (this.world as unknown as { towDispatchCooldowns: number[] })
+        .towDispatchCooldowns;
+      const wreckedCars = (this.world as unknown as { wreckedCars: boolean[] }).wreckedCars;
+      const towedCars = (this.world as unknown as { towedCars: boolean[] }).towedCars;
       this.world.cars[carIndex] = {
         ...this.world.cars[carIndex]!,
         pos: STORY_ACTOR_DESPAWN_POS,
         speed: 0,
       };
       carDrivers[carIndex] = null;
+      carHealth[carIndex] = 100;
+      carBurnTimers[carIndex] = 0;
+      carBurnByPlayer[carIndex] = false;
+      towDispatchCooldowns[carIndex] = 0;
+      wreckedCars[carIndex] = false;
+      towedCars[carIndex] = false;
       this.despawnedStoryCarIndices.add(carIndex);
       if (!this.storyReusableCarIndices.includes(carIndex)) this.storyReusableCarIndices.push(carIndex);
     }
@@ -1023,14 +1177,23 @@ export class CityScene extends Phaser.Scene {
       return { carIndex, routeIndex, disabled };
     }
     const step = advanceVehicleRouteActor(actor, car.pos, routeIndex, dt, car.heading);
+    const nextPos = this.world.keepNpcCarOutOfWater(car.pos, step.pos);
+    const blockedByWater =
+      nextPos.x === car.pos.x &&
+      nextPos.y === car.pos.y &&
+      (step.pos.x !== car.pos.x || step.pos.y !== car.pos.y);
     this.world.cars[carIndex] = {
       ...car,
       heading: step.heading,
-      speed: step.speed,
-      pos: step.pos,
+      speed: blockedByWater ? 0 : step.speed,
+      pos: nextPos,
     };
-    script.actorRouteIndices[actor.actorId] = step.routeIndex;
-    return { carIndex, routeIndex: step.routeIndex, disabled };
+    script.actorRouteIndices[actor.actorId] = blockedByWater ? routeIndex : step.routeIndex;
+    return {
+      carIndex,
+      routeIndex: blockedByWater ? routeIndex : step.routeIndex,
+      disabled,
+    };
   }
 
   private runPedestrianRouteActor(
@@ -1093,6 +1256,7 @@ export class CityScene extends Phaser.Scene {
     this.showStoryPanel(
       `MISSION FAILED\n\n${failureText}\n\nRetrying ${currentStoryMission(STORY_MODE_PROTOTYPE, restart)?.title ?? 'mission'}...`,
       2.6,
+      'danger',
     );
     this.pendingStoryRestart = restart;
     this.pendingStoryRestartResume = true;
@@ -1259,6 +1423,16 @@ export class CityScene extends Phaser.Scene {
         const nextActorIds = new Set(nextStage.actors.map((nextActor) => nextActor.actorId));
         for (const actor of stage.actors) {
           if (!nextActorIds.has(actor.actorId)) this.despawnStoryActor(actor.actorId);
+        }
+        // An actor that persists into the next stage starts that stage's route
+        // fresh: the new stage's `route` array is a separately authored path,
+        // not a continuation of the old one's waypoint indices. Without this,
+        // a leftover index from the previous stage's (often differently-sized)
+        // route can land past the end of, or partway into, the new route,
+        // silently skipping its earlier waypoints (or freezing immediately if
+        // the leftover index already reads as "at the end").
+        for (const actorId of nextActorIds) {
+          script.actorRouteIndices[actorId] = 0;
         }
         script.stageIndex += 1;
         script.failCounters = {};
@@ -1501,7 +1675,7 @@ export class CityScene extends Phaser.Scene {
       const northTx = tx + northLane;
       const southTy = block * 2;
       const northTy = Math.max(block * 2, rows - block * 2 - 1);
-      if (southTx < cols && !this.city.isWater(southTx, southTy)) {
+      if (southTx < cols && this.city.isRoad(southTx, southTy)) {
         const start = tileCenter(spec, southTx, southTy);
         const kind = n % 6 === 0 ? 'taxi' : movingKind(n);
         pushTrafficCar(
@@ -1510,7 +1684,7 @@ export class CityScene extends Phaser.Scene {
           kind,
         );
       }
-      if (northTx < cols && !this.city.isWater(northTx, northTy)) {
+      if (northTx < cols && this.city.isRoad(northTx, northTy)) {
         const start = tileCenter(spec, northTx, northTy);
         const kind = n % 7 === 0 ? 'taxi' : movingKind(n + 3);
         pushTrafficCar(
@@ -1528,7 +1702,7 @@ export class CityScene extends Phaser.Scene {
       const westTx = Math.max(block * 2, cols - block * 2 - 1);
       const eastTy = ty + eastLane;
       const westTy = ty + westLane;
-      if (eastTy < rows && !this.city.isWater(eastTx, eastTy)) {
+      if (eastTy < rows && this.city.isRoad(eastTx, eastTy)) {
         const start = tileCenter(spec, eastTx, eastTy);
         const kind = n % 6 === 0 ? 'taxi' : movingKind(n + 1);
         pushTrafficCar(
@@ -1537,7 +1711,7 @@ export class CityScene extends Phaser.Scene {
           kind,
         );
       }
-      if (westTy < rows && !this.city.isWater(westTx, westTy)) {
+      if (westTy < rows && this.city.isRoad(westTx, westTy)) {
         const start = tileCenter(spec, westTx, westTy);
         const kind = n % 7 === 0 ? 'taxi' : movingKind(n + 4);
         pushTrafficCar(
@@ -1557,7 +1731,14 @@ export class CityScene extends Phaser.Scene {
     this.city.sidewalks.forEach((s, i) => {
       if (i % PEDESTRIAN_SIDEWALK_STRIDE !== 0) return; // a denser but still manageable scattering across the city
       const pos = vec2(s.x + s.w / 2, s.y + s.h / 2);
-      peds.push({ pos, heading: 0, radius: PED_SIZE / 2, state: 'wander', target: pos });
+          peds.push({
+            pos,
+            heading: 0,
+            radius: PED_SIZE / 2,
+            state: 'wander',
+            target: pos,
+            visualSeed: stableVisualSeed(i + 1, Math.round(pos.x), Math.round(pos.y)),
+          });
     });
     return peds;
   }
@@ -1600,7 +1781,12 @@ export class CityScene extends Phaser.Scene {
   private drawCity(): void {
     const { width, height, spec } = this.city;
     const roadWidth = Math.max(1, Math.min(spec.block, spec.roadWidth ?? 1));
-    this.cameras.main.setBackgroundColor(COLORS.road);
+    this.cameras.main.setBackgroundColor(COLORS.roadShadow);
+
+    this.add
+      .tileSprite(0, 0, width, height, TILE.road.texture, TILE.road.frame)
+      .setOrigin(0)
+      .setDepth(-0.2);
 
     // Lane markings between every lane, with a stronger divider between the two directions.
     const lines = this.add.graphics();
@@ -1626,6 +1812,7 @@ export class CityScene extends Phaser.Scene {
 
     // Buildings with rooftops and lit windows for a denser city look.
     const g = this.add.graphics();
+    const emblemG = this.add.graphics().setDepth(1.2);
     const shades = [0x3f4654, 0x4b5563, 0x434b59, 0x515b6b, 0x3a4150];
     const facilities = new Map(this.city.facilities.map((f) => [f.buildingIndex, f]));
     this.city.buildings.forEach((b, i) => {
@@ -1650,55 +1837,46 @@ export class CityScene extends Phaser.Scene {
               : facility?.kind === 'taxiDepot'
                 ? COLORS.taxiRoof
                 : COLORS.buildingRoof;
-      g.fillStyle(bodyColor, 1);
-      g.fillRect(b.x, b.y, b.w, b.h);
-      g.fillStyle(roofColor, 1);
-      g.fillRect(b.x + 5, b.y + 5, b.w - 10, b.h - 10);
+
+      this.add
+        .rectangle(b.x + 8 + b.w / 2, b.y + 10 + b.h / 2, b.w, b.h, COLORS.roadShadow, 0.22)
+        .setDepth(0.6)
+        .setOrigin(0.5);
+      this.add
+        .tileSprite(b.x, b.y, b.w, b.h, TILE.building.texture, TILE.building.frame)
+        .setOrigin(0)
+        .setDepth(0.8)
+        .setTint(bodyColor);
+      this.add
+        .tileSprite(b.x + 5, b.y + 5, b.w - 10, b.h - 10, TILE.roof.texture, TILE.roof.frame)
+        .setOrigin(0)
+        .setDepth(0.9)
+        .setTint(roofColor);
       g.lineStyle(2, COLORS.buildingEdge, 1);
       g.strokeRect(b.x, b.y, b.w, b.h);
 
-      // A grid of windows; a deterministic few are "lit".
-      const pad = 12;
-      const cell = 18;
-      for (let wx = b.x + pad; wx <= b.x + b.w - pad - 8; wx += cell) {
-        for (let wy = b.y + pad; wy <= b.y + b.h - pad - 8; wy += cell) {
-          const lit = (Math.floor(wx) + Math.floor(wy)) % 3 === 0;
-          g.fillStyle(lit ? COLORS.window : COLORS.windowDark, lit ? 0.85 : 1);
-          g.fillRect(wx, wy, 8, 8);
-        }
+      const sparkle = this.add
+        .image(b.x + b.w - 18, b.y + 18, TILE.sparkle.texture, TILE.sparkle.frame)
+        .setDepth(1.1)
+        .setScale(0.34)
+        .setTint(facility ? COLORS.window : roofColor);
+      this.shimmerSprites.push(sparkle);
+
+      if (b.w >= 70 && b.h >= 70) {
+        this.add
+          .image(b.x + b.w - 21, b.y + 19, TILE.roof.texture, TILE.roof.frame)
+          .setDepth(1.05)
+          .setScale(0.28)
+          .setTint(blendColor(roofColor, COLORS.buildingEdge, 0.35));
+        this.add
+          .image(b.x + 24, b.y + b.h - 22, TILE.roof.texture, TILE.roof.frame)
+          .setDepth(1.05)
+          .setScale(0.33)
+          .setTint(blendColor(roofColor, COLORS.buildingEdge, 0.42));
       }
 
-      if (facility?.kind === 'hospital') {
-        const cx = b.x + b.w / 2;
-        const cy = b.y + b.h / 2;
-        g.fillStyle(0xdc2626, 1);
-        g.fillRect(cx - 6, cy - 18, 12, 36);
-        g.fillRect(cx - 18, cy - 6, 36, 12);
-      } else if (facility?.kind === 'policeStation') {
-        const cx = b.x + b.w / 2;
-        const cy = b.y + b.h / 2;
-        g.fillStyle(0xbfdbfe, 1);
-        g.fillRect(cx - 16, cy - 12, 32, 6);
-        g.fillRect(cx - 12, cy - 4, 24, 6);
-        g.fillRect(cx - 8, cy + 4, 16, 6);
-      } else if (facility?.kind === 'towYard') {
-        g.fillStyle(0x111114, 1);
-        for (let k = 0; k < 5; k++) {
-          g.fillRect(b.x + 16 + k * 18, b.y + b.h / 2 - 4, 10, 8);
-        }
-      } else if (facility?.kind === 'taxiDepot') {
-        const cx = b.x + b.w / 2;
-        const cy = b.y + b.h / 2;
-        g.fillStyle(0x111114, 1);
-        for (let row = 0; row < 2; row++) {
-          for (let col = 0; col < 3; col++) {
-            if ((row + col) % 2 === 0) {
-              g.fillRect(cx - 18 + col * 12, cy - 10 + row * 10, 10, 8);
-            }
-          }
-        }
-        g.fillStyle(0x111114, 1);
-        g.fillRect(cx - 4, cy + 6, 8, 18);
+      if (facility) {
+        this.drawFacilityEmblem(emblemG, facility.kind, b.x + b.w / 2, b.y + b.h / 2, Math.min(b.w, b.h));
       }
     });
 
@@ -1762,29 +1940,126 @@ export class CityScene extends Phaser.Scene {
     g.strokeRect(cx - doorSpan / 2, doorY, doorSpan, doorDepth);
   }
 
+  /** A clear rooftop emblem so each service building's purpose reads at a glance:
+   * red medical cross (hospital), white badge star (police), amber hazard chevrons
+   * (tow yard), black/yellow checker (taxi depot). Drawn on a layer above the roofs. */
+  private drawFacilityEmblem(
+    g: Phaser.GameObjects.Graphics,
+    kind: Facility['kind'],
+    cx: number,
+    cy: number,
+    size: number,
+  ): void {
+    const panel = Math.min(56, Math.max(28, size * 0.5));
+    const half = panel / 2;
+    const drawPanel = (fill: number): void => {
+      g.fillStyle(fill, 0.96);
+      g.fillRoundedRect(cx - half, cy - half, panel, panel, 6);
+      g.lineStyle(2, COLORS.buildingEdge, 0.9);
+      g.strokeRoundedRect(cx - half, cy - half, panel, panel, 6);
+    };
+    if (kind === 'hospital') {
+      drawPanel(0xf8fafc);
+      const arm = panel * 0.16;
+      const len = panel * 0.66;
+      g.fillStyle(0xdc2626, 1);
+      g.fillRect(cx - arm, cy - len / 2, arm * 2, len);
+      g.fillRect(cx - len / 2, cy - arm, len, arm * 2);
+    } else if (kind === 'policeStation') {
+      drawPanel(0x1d4ed8);
+      this.drawStar(g, cx, cy, 5, panel * 0.42, panel * 0.18, 0xffffff);
+    } else if (kind === 'towYard') {
+      drawPanel(0xf59e0b);
+      const hw = panel * 0.3;
+      const hh = panel * 0.16;
+      const t = panel * 0.13;
+      for (let k = 0; k < 3; k++) {
+        this.drawChevron(g, cx, cy - panel * 0.22 + k * (hh + t * 0.5), hw, hh, t, 0x1c1917);
+      }
+    } else if (kind === 'taxiDepot') {
+      drawPanel(0xfacc15);
+      const cell = panel / 6;
+      g.fillStyle(0x111114, 1);
+      for (let row = 0; row < 3; row++) {
+        for (let col = 0; col < 6; col++) {
+          if ((row + col) % 2 === 0) {
+            g.fillRect(cx - half + col * cell, cy - cell * 1.5 + row * cell, cell, cell);
+          }
+        }
+      }
+    }
+  }
+
+  /** Filled N-point star, used for the police badge emblem. */
+  private drawStar(
+    g: Phaser.GameObjects.Graphics,
+    cx: number,
+    cy: number,
+    spikes: number,
+    outer: number,
+    inner: number,
+    color: number,
+  ): void {
+    const points: Phaser.Math.Vector2[] = [];
+    const step = Math.PI / spikes;
+    let rot = -Math.PI / 2;
+    for (let i = 0; i < spikes; i++) {
+      points.push(new Phaser.Math.Vector2(cx + Math.cos(rot) * outer, cy + Math.sin(rot) * outer));
+      rot += step;
+      points.push(new Phaser.Math.Vector2(cx + Math.cos(rot) * inner, cy + Math.sin(rot) * inner));
+      rot += step;
+    }
+    g.fillStyle(color, 1);
+    g.fillPoints(points, true);
+  }
+
+  /** A thick downward chevron, stacked to form the tow-yard hazard emblem. */
+  private drawChevron(
+    g: Phaser.GameObjects.Graphics,
+    cx: number,
+    y: number,
+    hw: number,
+    hh: number,
+    t: number,
+    color: number,
+  ): void {
+    g.fillStyle(color, 1);
+    g.fillPoints(
+      [
+        new Phaser.Math.Vector2(cx - hw, y),
+        new Phaser.Math.Vector2(cx, y + hh),
+        new Phaser.Math.Vector2(cx + hw, y),
+        new Phaser.Math.Vector2(cx + hw, y + t),
+        new Phaser.Math.Vector2(cx, y + hh + t),
+        new Phaser.Math.Vector2(cx - hw, y + t),
+      ],
+      true,
+    );
+  }
+
   /** Draw the river water, the bridge decks crossing it, and the bridge rails. */
   private drawTerrain(): void {
     if (this.city.water.length === 0) return;
     const { tile } = this.city.spec;
 
-    // Water bodies.
-    const w = this.add.graphics().setDepth(1);
     for (const body of this.city.water) {
-      w.fillStyle(COLORS.water, 1);
-      w.fillRect(body.x, body.y, body.w, body.h);
-      w.lineStyle(2, COLORS.waterEdge, 1);
-      w.strokeRect(body.x, body.y, body.w, body.h);
+      const water = this.add
+        .tileSprite(body.x, body.y, body.w, body.h, TILE.water.texture, TILE.water.frame)
+        .setOrigin(0)
+        .setDepth(1);
+      this.waterTiles.push(water);
     }
 
     // Bridge decks: a solid plank covering each bridge tile so it reads as a
     // crossing over the water rather than part of the river.
-    const decks = this.add.graphics().setDepth(2);
     const { cols, rows } = this.city.spec;
-    decks.fillStyle(COLORS.bridge, 1);
     for (let tx = 0; tx < cols; tx++) {
       for (let ty = 0; ty < rows; ty++) {
         if (this.city.isBridge(tx, ty)) {
-          decks.fillRect(tx * tile, ty * tile, tile, tile);
+          this.add
+            .image(tx * tile + tile / 2, ty * tile + tile / 2, TILE.bridge.texture, TILE.bridge.frame)
+            .setDisplaySize(tile, tile)
+            .setDepth(2);
         }
       }
     }
@@ -1817,14 +2092,25 @@ export class CityScene extends Phaser.Scene {
   }
 
   private drawStreets(): void {
-    const g = this.add.graphics().setDepth(0);
+    const g = this.add.graphics().setDepth(0.4);
 
-    // Sidewalks: pale strips hugging the buildings.
-    g.fillStyle(COLORS.sidewalk, 1);
-    for (const s of this.city.sidewalks) g.fillRect(s.x, s.y, s.w, s.h);
+    for (const s of this.city.sidewalks) {
+      this.add
+        .tileSprite(s.x, s.y, s.w, s.h, TILE.sidewalk.texture, TILE.sidewalk.frame)
+        .setOrigin(0)
+        .setDepth(0);
+      g.lineStyle(1, COLORS.sidewalkShade, 0.35);
+      g.strokeRect(s.x + 1, s.y + 1, Math.max(0, s.w - 2), Math.max(0, s.h - 2));
+    }
 
-    // Crosswalks: zebra stripes laid across the full crossing from kerb to kerb.
-    g.fillStyle(COLORS.crosswalk, 0.9);
+    g.lineStyle(1, COLORS.curbLine, 0.18);
+    for (const s of this.city.sidewalks) {
+      g.strokeRect(s.x, s.y, s.w, s.h);
+    }
+
+    // Zebra crossings: draw the authored stripe rects directly so each bar is
+    // oriented per crossing (upright over N-S roads, flat over E-W roads).
+    g.fillStyle(0xd9e0e9, 0.61);
     for (const cw of this.city.crosswalks) {
       for (const stripe of crosswalkStripeRects(cw)) {
         g.fillRect(stripe.x, stripe.y, stripe.w, stripe.h);
@@ -1837,8 +2123,24 @@ export class CityScene extends Phaser.Scene {
       const along = Math.abs(Math.cos(spot.heading)) > 0.5; // pointing along x?
       const halfW = along ? 17 : 9;
       const halfH = along ? 9 : 17;
+      g.fillStyle(COLORS.roadShadow, 0.1);
+      g.fillRect(spot.pos.x - halfW, spot.pos.y - halfH, halfW * 2, halfH * 2);
       g.strokeRect(spot.pos.x - halfW, spot.pos.y - halfH, halfW * 2, halfH * 2);
     }
+  }
+
+  private syncEnvironmentArt(dt: number): void {
+    for (const water of this.waterTiles) {
+      water.tilePositionX += dt * 18;
+      water.tilePositionY += dt * 6;
+    }
+
+    const pulse = this.time.now / 420;
+    this.shimmerSprites.forEach((sprite, index) => {
+      const strength = 0.5 + 0.5 * Math.sin(pulse + index * 0.9);
+      sprite.setAlpha(0.18 + strength * 0.36);
+      sprite.setScale(0.28 + strength * 0.08);
+    });
   }
 
   private createEntitySprites(): void {
@@ -1861,11 +2163,11 @@ export class CityScene extends Phaser.Scene {
       .setVisible(false);
 
     this.carSprites = this.world.cars.map((car, i) =>
-      this.add.image(car.pos.x, car.pos.y, this.carTexture(i)).setDepth(4).setRotation(car.heading),
+      this.spawnImage(car.pos.x, car.pos.y, this.carTexture(i)).setDepth(4).setRotation(car.heading),
     );
 
-    this.pedSprites = this.world.pedestrians.map((ped) =>
-      this.add.image(ped.pos.x, ped.pos.y, this.pedTexture(ped)).setDepth(5),
+    this.pedSprites = this.world.pedestrians.map((ped, index) =>
+      this.spawnImage(ped.pos.x, ped.pos.y, this.pedTexture(ped, index)).setDepth(5),
     );
 
     this.ammoSprites = this.world.ammoPickups.map((pickup) => ({
@@ -1874,21 +2176,20 @@ export class CityScene extends Phaser.Scene {
     }));
 
     const p = this.world.player;
+    const playerTexture = textureRef(TEX.player);
     this.playerSprite = this.add
-      .image(p.pos.x, p.pos.y, TEX.player)
+      .image(p.pos.x, p.pos.y, playerTexture.texture, playerTexture.frame)
       .setDepth(10)
       .setRotation(p.angle);
 
-    // A graphics layer for drawing explosion blasts above everything else.
-    this.explosionGfx = this.add.graphics().setDepth(11);
-    // Burning vehicles need a persistent flame/smoke treatment before they explode.
-    this.burningGfx = this.add.graphics().setDepth(5.5);
+    // Quick transient trails and impact bursts keep motion readable.
+    this.feedbackGfx = this.add.graphics().setDepth(6.4);
     // Traffic-light indicators sit above the road but below entities.
     this.lightsGfx = this.add.graphics().setDepth(7);
     // Corpses and their blood puddles sit just above the road, below the living.
     this.corpseGfx = this.add.graphics().setDepth(4);
     // The ambulance: a white emergency vehicle, hidden until dispatched.
-    this.ambulanceSprite = this.add.image(0, 0, TEX.ambulance).setDepth(6).setVisible(false);
+    this.ambulanceSprite = this.spawnImage(0, 0, textureRef(TEX.ambulance)).setDepth(6).setVisible(false);
     // Tow trucks: amber service vehicles, created on demand into a pool.
     this.towSprites = [];
 
@@ -1968,52 +2269,52 @@ export class CityScene extends Phaser.Scene {
 
   /** Draw each active explosion as an expanding, fading blast. */
   private syncExplosions(): void {
-    const g = this.explosionGfx;
-    g.clear();
-    for (const e of this.world.explosions) {
-      const t = e.age / e.life; // 0 -> 1 over the blast's life
-      const r = e.radius * (0.4 + 0.6 * t);
-      g.fillStyle(0xfacc15, (1 - t) * 0.5); // yellow flash
-      g.fillCircle(e.pos.x, e.pos.y, r);
-      g.fillStyle(0xf97316, (1 - t) * 0.6); // orange core
-      g.fillCircle(e.pos.x, e.pos.y, r * 0.6);
+    this.world.explosions.forEach((e, i) => {
+      let sprite = this.explosionSprites[i];
+      if (!sprite) {
+        sprite = this.add.image(e.pos.x, e.pos.y, FX.explosion.texture, FX.explosion.frames[0]).setDepth(11);
+        this.explosionSprites[i] = sprite;
+      }
+      const t = e.age / e.life;
+      this.applyTextureFrame(
+        sprite,
+        { texture: FX.explosion.texture },
+        effectFrame(FX.explosion.frames, Math.floor(t * FX.explosion.frames.length)),
+      )
+        .setVisible(true)
+        .setPosition(e.pos.x, e.pos.y)
+        .setScale((e.radius / 18) * (0.85 + t * 0.55))
+        .setAlpha(0.95 - t * 0.55);
+    });
+    for (let i = this.world.explosions.length; i < this.explosionSprites.length; i++) {
+      this.explosionSprites[i].setVisible(false);
     }
   }
 
   /** Draw a flickering fire + smoke overlay on cars that are currently burning. */
   private syncBurningCars(): void {
-    const g = this.burningGfx;
-    g.clear();
-    const t = this.time.now / 120;
     this.world.cars.forEach((car, i) => {
-      if (!this.world.carIsBurning(i)) return;
+      let sprite = this.fireSprites[i];
+      if (!sprite) {
+        sprite = this.add.image(car.pos.x, car.pos.y, FX.fire.texture, FX.fire.frames[0]).setDepth(5.5);
+        this.fireSprites[i] = sprite;
+      }
+      if (!this.world.carIsBurning(i)) {
+        sprite.setVisible(false);
+        return;
+      }
 
-      const pulse = 0.55 + 0.45 * Math.sin(t + i * 1.1);
-      const jitterX = Math.sin(t * 0.8 + i) * 2.5;
-      const jitterY = Math.cos(t * 0.65 + i * 0.7) * 1.5;
-      const rearX = car.pos.x - Math.cos(car.heading) * (car.radius * 0.45);
-      const rearY = car.pos.y - Math.sin(car.heading) * (car.radius * 0.45);
-
-      g.fillStyle(COLORS.smoke, 0.14 + pulse * 0.08);
-      g.fillCircle(rearX - 3 + jitterX, rearY - 8 + jitterY, car.radius * (0.9 + pulse * 0.15));
-      g.fillCircle(rearX + 4 - jitterX * 0.4, rearY - 13 - jitterY, car.radius * 0.7);
-
-      g.fillStyle(COLORS.fireGlow, 0.24 + pulse * 0.12);
-      g.fillCircle(car.pos.x, car.pos.y, car.radius * (1.05 + pulse * 0.18));
-
-      g.fillStyle(COLORS.fireGlow, 0.75);
-      g.fillCircle(
-        car.pos.x + jitterX * 0.35,
-        car.pos.y + jitterY * 0.35,
-        car.radius * (0.55 + pulse * 0.12),
-      );
-
-      g.fillStyle(COLORS.fireCore, 0.85);
-      g.fillCircle(
-        car.pos.x - jitterX * 0.2,
-        car.pos.y - jitterY * 0.15,
-        car.radius * (0.26 + pulse * 0.08),
-      );
+      const pulse = 0.55 + 0.45 * Math.sin(this.time.now / 120 + i * 1.1);
+      this.applyTextureFrame(
+        sprite,
+        { texture: FX.fire.texture },
+        effectFrame(FX.fire.frames, Math.floor(this.time.now / 120 + i)),
+      )
+        .setVisible(true)
+        .setPosition(car.pos.x, car.pos.y - car.radius * 0.1)
+        .setRotation(car.heading)
+        .setScale((car.radius / 12) * (0.9 + pulse * 0.22))
+        .setAlpha(0.5 + pulse * 0.35);
     });
   }
 
@@ -2035,11 +2336,26 @@ export class CityScene extends Phaser.Scene {
     g.clear();
     const ew = axis === 'horizontal' ? COLORS.lightGreen : COLORS.lightRed;
     const ns = axis === 'vertical' ? COLORS.lightGreen : COLORS.lightRed;
+    const ewAlpha = axis === 'horizontal' ? 1 : 0.78;
+    const nsAlpha = axis === 'vertical' ? 1 : 0.78;
     for (const c of this.intersectionCenters) {
-      g.fillStyle(ew, 1);
-      g.fillRect(c.x - 7, c.y - 1.5, 14, 3); // east-west indicator
-      g.fillStyle(ns, 1);
-      g.fillRect(c.x - 1.5, c.y - 7, 3, 14); // north-south indicator
+      // Dark signal housing behind each lamp bar.
+      g.fillStyle(0x0a0e16, 0.85);
+      g.fillRoundedRect(c.x - 9, c.y - 3.5, 18, 7, 2);
+      g.fillRoundedRect(c.x - 3.5, c.y - 9, 7, 18, 2);
+      // Soft green glow along whichever axis currently has right of way.
+      if (axis === 'horizontal') {
+        g.fillStyle(COLORS.lightGreen, 0.22);
+        g.fillRect(c.x - 11, c.y - 3, 22, 6);
+      } else {
+        g.fillStyle(COLORS.lightGreen, 0.22);
+        g.fillRect(c.x - 3, c.y - 11, 6, 22);
+      }
+      // Rounded lamp bars, the stopped axis dimmed so green reads as “go”.
+      g.fillStyle(ew, ewAlpha);
+      g.fillRoundedRect(c.x - 7, c.y - 1.75, 14, 3.5, 1.5);
+      g.fillStyle(ns, nsAlpha);
+      g.fillRoundedRect(c.x - 1.75, c.y - 7, 3.5, 14, 1.5);
     }
   }
 
@@ -2081,9 +2397,18 @@ export class CityScene extends Phaser.Scene {
 
     // The medic on foot, while the ambulance is parked fetching the body.
     if (amb.crew) {
-      this.medicSprite ??= this.add.image(0, 0, TEX.medic).setDepth(6);
+      this.medicSprite ??= this.spawnImage(0, 0, textureRef(TEX.medic)).setDepth(6);
       const goal = amb.phase === 'collect' ? amb.target : amb.pos;
-      this.medicSprite
+      const medicTexture = textureRef(TEX.medic);
+      this.applyTextureFrame(
+        this.medicSprite,
+        medicTexture,
+        this.animatedFrame(
+          medicTexture,
+          Math.hypot(amb.crew.x - this.medicSprite.x, amb.crew.y - this.medicSprite.y) > 0.12,
+          165,
+        ),
+      )
         .setVisible(true)
         .setPosition(amb.crew.x, amb.crew.y)
         .setRotation(Math.atan2(goal.y - amb.crew.y, goal.x - amb.crew.x));
@@ -2130,7 +2455,7 @@ export class CityScene extends Phaser.Scene {
     this.world.tows.forEach((tow, i) => {
       let sprite = this.towSprites[i];
       if (!sprite) {
-        sprite = this.add.image(0, 0, TEX.tow).setDepth(6);
+        sprite = this.spawnImage(0, 0, textureRef(TEX.tow)).setDepth(6);
         this.towSprites[i] = sprite;
       }
       sprite.setVisible(true).setPosition(tow.pos.x, tow.pos.y).setRotation(tow.heading);
@@ -2139,11 +2464,20 @@ export class CityScene extends Phaser.Scene {
       let worker = this.towWorkerSprites[i];
       if (tow.crew) {
         if (!worker) {
-          worker = this.add.image(0, 0, TEX.towWorker).setDepth(6);
+          worker = this.spawnImage(0, 0, textureRef(TEX.towWorker)).setDepth(6);
           this.towWorkerSprites[i] = worker;
         }
         const goal = tow.phase === 'collect' ? tow.target : tow.pos;
-        worker
+        const workerTexture = textureRef(TEX.towWorker);
+        this.applyTextureFrame(
+          worker,
+          workerTexture,
+          this.animatedFrame(
+            workerTexture,
+            Math.hypot(tow.crew.x - worker.x, tow.crew.y - worker.y) > 0.12,
+            165,
+          ),
+        )
           .setVisible(true)
           .setPosition(tow.crew.x, tow.crew.y)
           .setRotation(Math.atan2(goal.y - tow.crew.y, goal.x - tow.crew.x));
@@ -2178,10 +2512,36 @@ export class CityScene extends Phaser.Scene {
     }
   }
 
-  private pedTexture(ped: Pedestrian): string {
-    if (ped.uniform === 'medic') return TEX.medic;
-    if (ped.uniform === 'towWorker') return TEX.towWorker;
-    return TEX.pedestrian;
+  private spawnImage(x: number, y: number, ref: TextureRef): Phaser.GameObjects.Image {
+    return this.add.image(x, y, ref.texture, ref.frame);
+  }
+
+  private animatedFrame(ref: TextureRef, moving: boolean, rateMs = 180): string | number | undefined {
+    if (!moving || !ref.frames || ref.frames.length === 0) return ref.frame;
+    return cycleFrame(ref, Math.floor(this.time.now / rateMs));
+  }
+
+  private applyTextureFrame(
+    sprite: Phaser.GameObjects.Image,
+    ref: TextureRef,
+    frame: string | number | undefined,
+  ): Phaser.GameObjects.Image {
+    return sprite.setTexture(ref.texture, frame);
+  }
+
+  private pedTexture(ped: Pedestrian, index: number): TextureRef {
+    if (ped.uniform === 'medic') return textureRef(TEX.medic);
+    if (ped.uniform === 'towWorker') return textureRef(TEX.towWorker);
+    const seed =
+      ped.visualSeed ??
+      stableVisualSeed(
+        index + 1,
+        ped.taxiPassengerId ?? 0,
+        ped.policeSuspectId ?? 0,
+        ped.storyActorOrder ?? 0,
+        stringSeed(ped.storyActorId),
+      );
+    return pickVariantTexture(PEDESTRIAN_VARIANT_TEXTURES, seed);
   }
 
   private setupCamera(): void {
@@ -2203,20 +2563,31 @@ export class CityScene extends Phaser.Scene {
     });
   }
 
+  private viewportBaseZoom(): number {
+    const { width, height } = this.scale.gameSize;
+    const span = Math.min(width, height);
+    if (span <= 0) return MIN_ZOOM;
+    return Phaser.Math.Clamp(span / VIEW_SPAN, MIN_ZOOM, MAX_ZOOM);
+  }
+
   /** Fit the camera zoom to the current viewport so the player stays centred and
    * a consistent amount of the city is visible on every device. */
   private applyZoom(): void {
-    const { width, height } = this.scale.gameSize;
-    const span = Math.min(width, height);
-    if (span <= 0) return;
-    const zoom = Phaser.Math.Clamp(span / VIEW_SPAN, MIN_ZOOM, MAX_ZOOM);
+    const zoom = this.viewportBaseZoom();
     this.cameras.main.setZoom(zoom);
     this.cameras.main.centerOn(this.world.focus.x, this.world.focus.y);
   }
 
   /** Handle a viewport resize: refit the zoom and recentre screen-space UI. */
   private onResize(): void {
-    this.applyZoom();
+    if (this.storyPanelCinematicActive) {
+      this.storyPanelBaseZoom = this.viewportBaseZoom();
+      this.cameras.main.setZoom(this.storyPanelTargetZoom(this.storyPanelTone));
+      const focus = this.storyPanelFocusTarget ?? this.world.focus;
+      this.cameras.main.centerOn(focus.x, focus.y);
+    } else {
+      this.applyZoom();
+    }
     const { width, height } = this.scale.gameSize;
     this.dayNightOverlay?.setSize(width * 3, height * 3);
     this.layoutHud();
@@ -2241,6 +2612,8 @@ export class CityScene extends Phaser.Scene {
         | Phaser.GameObjects.Image
         | Phaser.GameObjects.Text
         | Phaser.GameObjects.Graphics
+        | Phaser.GameObjects.Rectangle
+        | Phaser.GameObjects.Arc
         | undefined,
       screenX: number,
       screenY: number,
@@ -2255,6 +2628,15 @@ export class CityScene extends Phaser.Scene {
     place(this.banner, 10, bannerTop);
     place(this.bannerCloseButton, 24 + this.banner.width, bannerTop + 6);
     place(this.storyStateText, 10, bannerTop + this.banner.height + 8);
+    place(this.storyPanelFrame, width / 2, height / 2 - 12);
+    place(this.storyPanelAccent, width / 2 - 322, height / 2 - 12);
+    place(this.storyPortraitBackdrop, width / 2 - 224, height / 2 - 12);
+    place(this.storyPortraitFrame, width / 2 - 224, height / 2 - 12);
+    place(this.storyPortraitBadge, width / 2 - 224, height / 2 - 74);
+    place(this.storyPortraitMonogram, width / 2 - 224, height / 2 - 74);
+    place(this.storyPortraitKicker, width / 2 - 224, height / 2 - 138);
+    place(this.storyPortraitName, width / 2 - 224, height / 2 + 6);
+    place(this.storyPortraitRole, width / 2 - 224, height / 2 + 42);
     place(this.storyPanel, width / 2, height / 2 - 12);
     place(this.bustedText, width / 2, height / 2);
     place(this.pauseTouchButton, width / 2, height / 2 + 306);
@@ -2348,6 +2730,94 @@ export class CityScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(2502)
       .setVisible(false);
+
+    this.storyPanelFrame = this.add
+      .graphics()
+      .setScrollFactor(0)
+      .setDepth(2500)
+      .setVisible(false);
+
+    this.storyPanelAccent = this.add
+      .rectangle(this.scale.width / 2 - 322, this.scale.height / 2 - 12, 12, 308, 0x67e8f9, 0.95)
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(2501)
+      .setVisible(false);
+
+    this.storyPortraitBackdrop = this.add
+      .graphics()
+      .setScrollFactor(0)
+      .setDepth(2501)
+      .setVisible(false);
+
+    this.storyPortraitFrame = this.add
+      .graphics()
+      .setScrollFactor(0)
+      .setDepth(2502)
+      .setVisible(false);
+
+    this.storyPortraitBadge = this.add
+      .circle(this.scale.width / 2 - 224, this.scale.height / 2 - 74, 34, 0x67e8f9, 0.95)
+      .setScrollFactor(0)
+      .setDepth(2504)
+      .setVisible(false);
+
+    this.storyPortraitMonogram = this.add
+      .text(this.scale.width / 2 - 224, this.scale.height / 2 - 74, '', {
+        fontFamily: 'monospace',
+        fontSize: '22px',
+        color: '#f8fafc',
+        align: 'center',
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(2505)
+      .setVisible(false);
+
+    this.storyPortraitKicker = this.add
+      .text(this.scale.width / 2 - 224, this.scale.height / 2 - 138, '', {
+        fontFamily: 'monospace',
+        fontSize: '12px',
+        color: '#e2e8f0',
+        align: 'center',
+        backgroundColor: '#082f49d0',
+        padding: { x: 10, y: 6 },
+        wordWrap: { width: 152, useAdvancedWrap: true },
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(2505)
+      .setVisible(false);
+
+    this.storyPortraitName = this.add
+      .text(this.scale.width / 2 - 224, this.scale.height / 2 + 6, '', {
+        fontFamily: 'monospace',
+        fontSize: '18px',
+        color: '#f8fafc',
+        align: 'center',
+        wordWrap: { width: 168, useAdvancedWrap: true },
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(2505)
+      .setVisible(false);
+
+    this.storyPortraitRole = this.add
+      .text(this.scale.width / 2 - 224, this.scale.height / 2 + 42, '', {
+        fontFamily: 'monospace',
+        fontSize: '14px',
+        color: '#cbd5e1',
+        align: 'center',
+        backgroundColor: '#020617d0',
+        padding: { x: 10, y: 6 },
+        wordWrap: { width: 168, useAdvancedWrap: true },
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(2505)
+      .setVisible(false);
+
+    this.syncStoryPanelFrame();
 
     this.storyStateText = this.add
       .text(this.scale.width / 2, 140, '', {
@@ -2661,11 +3131,15 @@ export class CityScene extends Phaser.Scene {
         this.storyPanelRemaining -= deltaMs / 1000;
       }
       if (this.storyPanelRemaining <= 0) {
+        if (this.advanceStoryPanelQueue()) {
+          this.prevTouchConfirm = !!touchSnapshot?.confirmPressed;
+          return;
+        }
         const progress = this.pendingStoryRestart;
         const resume = this.pendingStoryRestartResume;
         this.pendingStoryRestart = null;
         this.pendingStoryRestartResume = false;
-        this.storyPanel.setVisible(false);
+        this.hideStoryPanel();
         this.skipPersistOnShutdown = true;
         if (!resume) clearGameState(this.store);
         this.scene.restart({
@@ -2682,7 +3156,7 @@ export class CityScene extends Phaser.Scene {
     const keyboard = this.input_.read();
     const touch = this.touchEnabled && touchSnapshot ? touchSnapshot.controls : NO_CONTROLS;
     const controls = mergeControls(keyboard, touch);
-    const dt = deltaMs / 1000;
+    const dt = Math.min(deltaMs / 1000, MAX_FRAME_DT);
 
     this.syncStoryScript(dt);
 
@@ -2693,6 +3167,9 @@ export class CityScene extends Phaser.Scene {
       this.accumulator -= FIXED_STEP;
       steps += 1;
     }
+    if (steps === MAX_SUBSTEPS && this.accumulator >= FIXED_STEP) {
+      this.accumulator = 0;
+    }
 
     if (this.maybeStartSelectedStoryMission()) {
       this.prevTouchConfirm = !!touchSnapshot?.confirmPressed;
@@ -2700,6 +3177,8 @@ export class CityScene extends Phaser.Scene {
     }
 
     this.syncSprites();
+    this.syncEnvironmentArt(dt);
+    this.syncVisualFeedback(dt);
     this.minimapAccumulator += dt;
     if (this.minimapAccumulator >= MINIMAP_REFRESH_INTERVAL) {
       this.syncMinimap();
@@ -2726,7 +3205,9 @@ export class CityScene extends Phaser.Scene {
     }
     if (!this.storyPanelRequiresAcknowledge && this.storyPanelRemaining > 0) {
       this.storyPanelRemaining -= dt;
-      if (this.storyPanelRemaining <= 0) this.storyPanel.setVisible(false);
+      if (this.storyPanelRemaining <= 0) {
+        if (!this.advanceStoryPanelQueue()) this.hideStoryPanel();
+      }
     }
 
     this.prevTouchConfirm = !!touchSnapshot?.confirmPressed;
@@ -2857,9 +3338,8 @@ export class CityScene extends Phaser.Scene {
         this.clearActiveStoryActors();
         this.persistGameState(GAME_STATE_KEY, { pruneStoryActors: true });
         if (nextMission?.prototypeRuntime && nextChapter) {
-          this.showStoryPanel(
-            `CHAPTER COMPLETE\n${previousStoryChapter?.title ?? 'Story Chapter'}\n\n${previousStoryChapter?.combinedGoal ?? ''}\n\nNext: ${nextChapter.title}`,
-            2.4,
+          this.queueStoryPanelSequence(
+            this.chapterCompleteSequence(previousStoryChapter ?? nextChapter, nextChapter, nextMission),
           );
           this.pendingStoryRestart = this.storyProgress;
           this.pendingStoryRestartResume = true;
@@ -2870,6 +3350,7 @@ export class CityScene extends Phaser.Scene {
             ? 'STORY PROTOTYPE COMPLETE\n\nThe next authored chapter has not been wired into runtime play yet.'
             : 'STORY COMPLETE\n\nRook and Nia have broken the current live slice of the Switchboard.',
           3.2,
+          'complete',
         );
       } else {
         this.showBanner('ALL MISSIONS COMPLETE!');
@@ -2881,7 +3362,7 @@ export class CityScene extends Phaser.Scene {
         if (this.mode === 'story') {
           if (this.prevMissionId !== null) this.clearActiveStoryActors();
           if (this.prevMissionId !== null) this.showMissionTransitionPanel(this.prevMissionId);
-          else this.showMissionBriefingPanel();
+          else if (!this.storyPanel.visible) this.showMissionBriefingPanel();
         }
         this.showBanner(`NEW MISSION\n${w.mission.title}\n${objective}`, { stageBound: true });
       }
@@ -2978,17 +3459,306 @@ export class CityScene extends Phaser.Scene {
     this.layoutHud();
   }
 
-  private showStoryPanel(text: string, seconds: number): void {
-    this.storyPanel.setText(text).setVisible(true);
-    this.storyPanelRemaining = seconds;
-    this.storyPanelRequiresAcknowledge = false;
-    this.storyPanelPauseGame = false;
+  private storyPanelToneStyle(tone: StoryPanelTone): {
+    backgroundColor: string;
+    accentColor: number;
+    lineColor: number;
+    shadowAlpha: number;
+    width: number;
+  } {
+    if (tone === 'chapter') {
+      return {
+        backgroundColor: '#130d04f0',
+        accentColor: 0xfbbf24,
+        lineColor: 0xf59e0b,
+        shadowAlpha: 0.44,
+        width: 648,
+      };
+    }
+    if (tone === 'summary') {
+      return {
+        backgroundColor: '#04130ef0',
+        accentColor: 0x34d399,
+        lineColor: 0x10b981,
+        shadowAlpha: 0.44,
+        width: 648,
+      };
+    }
+    if (tone === 'complete') {
+      return {
+        backgroundColor: '#071221f0',
+        accentColor: 0x60a5fa,
+        lineColor: 0x38bdf8,
+        shadowAlpha: 0.44,
+        width: 648,
+      };
+    }
+    if (tone === 'danger') {
+      return {
+        backgroundColor: '#190708f0',
+        accentColor: 0xf87171,
+        lineColor: 0xef4444,
+        shadowAlpha: 0.5,
+        width: 648,
+      };
+    }
+    return {
+      backgroundColor: '#06131af0',
+      accentColor: 0x67e8f9,
+      lineColor: 0x22d3ee,
+      shadowAlpha: 0.44,
+      width: 648,
+    };
   }
 
-  private showPersistentStoryPanel(text: string, pauseGame = true): void {
-    this.storyPanel.setText(`${text}\n\nPress Enter or tap to continue`).setVisible(true);
-    this.storyPanelRemaining = 0;
-    this.storyPanelRequiresAcknowledge = true;
+  private storyPanelTargetZoom(tone: StoryPanelTone): number {
+    const multiplier =
+      tone === 'chapter' || tone === 'complete'
+        ? 1.12
+        : tone === 'summary'
+          ? 1.08
+          : tone === 'danger'
+            ? 1.1
+            : 1.05;
+    return Phaser.Math.Clamp(this.storyPanelBaseZoom * multiplier, MIN_ZOOM, MAX_ZOOM);
+  }
+
+  private beginStoryPanelCinematic(tone: StoryPanelTone, pauseGame: boolean): void {
+    this.storyPanelCinematicActive = true;
+    this.storyPanelBaseZoom = this.viewportBaseZoom();
+    const focus = this.storyPanelFocusTarget ?? this.world.focus;
+    this.tweens.killTweensOf(this.storyPanel);
+    this.tweens.killTweensOf(this.storyPanelFrame);
+    this.tweens.killTweensOf(this.storyPanelAccent);
+    this.tweens.killTweensOf(this.storyPortraitBackdrop);
+    this.tweens.killTweensOf(this.storyPortraitFrame);
+    this.tweens.killTweensOf(this.storyPortraitBadge);
+    this.tweens.killTweensOf(this.storyPortraitMonogram);
+    this.tweens.killTweensOf(this.storyPortraitName);
+    this.tweens.killTweensOf(this.storyPortraitRole);
+    this.tweens.killTweensOf(this.storyPortraitKicker);
+    this.tweens.killTweensOf(this.cameras.main);
+    this.cameras.main.stopFollow();
+    this.storyPanel.setAlpha(0);
+    this.storyPanelFrame.setAlpha(0);
+    this.storyPanelAccent.setAlpha(0);
+    this.storyPortraitBackdrop.setAlpha(0);
+    this.storyPortraitFrame.setAlpha(0);
+    this.storyPortraitBadge.setAlpha(0);
+    this.storyPortraitMonogram.setAlpha(0);
+    this.storyPortraitName.setAlpha(0);
+    this.storyPortraitRole.setAlpha(0);
+    this.storyPortraitKicker.setAlpha(0);
+    this.tweens.add({
+      targets: [
+        this.storyPanelFrame,
+        this.storyPanelAccent,
+        this.storyPanel,
+        this.storyPortraitBackdrop,
+        this.storyPortraitFrame,
+        this.storyPortraitBadge,
+        this.storyPortraitMonogram,
+        this.storyPortraitName,
+        this.storyPortraitRole,
+        this.storyPortraitKicker,
+      ],
+      alpha: 1,
+      duration: pauseGame ? 220 : 160,
+      ease: 'Quad.easeOut',
+    });
+    this.cameras.main.pan(focus.x, focus.y, pauseGame ? 260 : 200, 'Quad.easeOut', true);
+    this.tweens.add({
+      targets: this.cameras.main,
+      zoom: this.storyPanelTargetZoom(tone),
+      duration: pauseGame ? 260 : 200,
+      ease: 'Quad.easeOut',
+    });
+  }
+
+  private endStoryPanelCinematic(): void {
+    this.storyPanelCinematicActive = false;
+    this.storyPanelFocusTarget = null;
+    this.tweens.killTweensOf(this.storyPanel);
+    this.tweens.killTweensOf(this.storyPanelFrame);
+    this.tweens.killTweensOf(this.storyPanelAccent);
+    this.tweens.killTweensOf(this.storyPortraitBackdrop);
+    this.tweens.killTweensOf(this.storyPortraitFrame);
+    this.tweens.killTweensOf(this.storyPortraitBadge);
+    this.tweens.killTweensOf(this.storyPortraitMonogram);
+    this.tweens.killTweensOf(this.storyPortraitName);
+    this.tweens.killTweensOf(this.storyPortraitRole);
+    this.tweens.killTweensOf(this.storyPortraitKicker);
+    this.tweens.killTweensOf(this.cameras.main);
+    this.storyPanel.setAlpha(1);
+    this.storyPanelFrame.setAlpha(1);
+    this.storyPanelAccent.setAlpha(1);
+    this.storyPortraitBackdrop.setAlpha(1);
+    this.storyPortraitFrame.setAlpha(1);
+    this.storyPortraitBadge.setAlpha(1);
+    this.storyPortraitMonogram.setAlpha(1);
+    this.storyPortraitName.setAlpha(1);
+    this.storyPortraitRole.setAlpha(1);
+    this.storyPortraitKicker.setAlpha(1);
+    this.cameras.main.startFollow(this.focusPoint, true, 0.15, 0.15);
+    this.tweens.add({
+      targets: this.cameras.main,
+      zoom: this.viewportBaseZoom(),
+      duration: 180,
+      ease: 'Quad.easeInOut',
+    });
+  }
+
+  private applyStoryPanelTone(tone: StoryPanelTone): void {
+    this.storyPanelTone = tone;
+    const style = this.storyPanelToneStyle(tone);
+    this.storyPanel.setStyle({
+      backgroundColor: style.backgroundColor,
+      wordWrap: { width: 560, useAdvancedWrap: true },
+      padding: { x: 22, y: 16 },
+    });
+    this.storyPanelAccent.setFillStyle(style.accentColor, 0.95);
+    this.storyPortraitBadge.setFillStyle(style.accentColor, 0.95);
+    this.storyPortraitKicker.setStyle({ backgroundColor: `${style.backgroundColor.slice(0, -2)}ff` });
+    this.storyPortraitRole.setStyle({ backgroundColor: `${style.backgroundColor.slice(0, -2)}d8` });
+  }
+
+  private syncStoryPanelFrame(): void {
+    const style = this.storyPanelToneStyle(this.storyPanelTone);
+    const width = style.width;
+    const height = Math.max(228, this.storyPanel.height + 34);
+    this.storyPanelFrame.clear();
+    this.storyPanelFrame.fillStyle(0x000000, style.shadowAlpha);
+    this.storyPanelFrame.fillRoundedRect(-width / 2 + 12, -height / 2 + 12, width, height, 18);
+    this.storyPanelFrame.fillStyle(0x020617, 0.9);
+    this.storyPanelFrame.fillRoundedRect(-width / 2, -height / 2, width, height, 18);
+    this.storyPanelFrame.lineStyle(3, style.lineColor, 0.95);
+    this.storyPanelFrame.strokeRoundedRect(-width / 2, -height / 2, width, height, 18);
+    this.storyPanelAccent.setDisplaySize(12, Math.max(188, height - 36));
+
+    this.storyPortraitBackdrop.clear();
+    this.storyPortraitBackdrop.fillStyle(style.accentColor, 0.16);
+    this.storyPortraitBackdrop.fillRoundedRect(-84, -100, 168, 200, 18);
+    this.storyPortraitBackdrop.fillStyle(style.lineColor, 0.12);
+    this.storyPortraitBackdrop.fillTriangle(-84, 42, 84, -54, 84, 100);
+    this.storyPortraitBackdrop.fillStyle(0xf8fafc, 0.08);
+    this.storyPortraitBackdrop.fillRect(-72, -90, 144, 8);
+    this.storyPortraitBackdrop.fillRect(-72, 68, 144, 8);
+
+    this.storyPortraitFrame.clear();
+    this.storyPortraitFrame.fillStyle(0x020617, 0.92);
+    this.storyPortraitFrame.fillRoundedRect(-88, -104, 176, 208, 18);
+    this.storyPortraitFrame.lineStyle(3, style.lineColor, 0.95);
+    this.storyPortraitFrame.strokeRoundedRect(-88, -104, 176, 208, 18);
+  }
+
+  private storyPortraitSeed(beat: StoryBeatPresentation): number {
+    return `${beat.speaker}|${beat.role ?? ''}|${beat.kicker ?? ''}`
+      .split('')
+      .reduce((hash, char) => (hash * 33 + char.charCodeAt(0)) >>> 0, 5381);
+  }
+
+  private syncStoryPortraitArt(beat: StoryBeatPresentation): void {
+    const style = this.storyPanelToneStyle(this.storyPanelTone);
+    const seed = this.storyPortraitSeed(beat);
+    const profileShift = (seed % 24) - 12;
+    const shoulderWidth = 104 + (seed % 28);
+    const shoulderHeight = 44 + ((seed >> 3) % 16);
+    const auraRadius = 42 + ((seed >> 5) % 12);
+    const stripeHeight = 18 + ((seed >> 7) % 16);
+
+    this.storyPortraitBackdrop.clear();
+    this.storyPortraitBackdrop.fillStyle(style.accentColor, 0.14);
+    this.storyPortraitBackdrop.fillRoundedRect(-84, -100, 168, 200, 18);
+    this.storyPortraitBackdrop.fillStyle(style.lineColor, 0.18);
+    this.storyPortraitBackdrop.fillTriangle(-84, 54, 84, -38, 84, 100);
+    this.storyPortraitBackdrop.fillStyle(0xf8fafc, 0.08);
+    this.storyPortraitBackdrop.fillRect(-68, -86, 136, 7);
+    this.storyPortraitBackdrop.fillRect(-68, 72, 136, 7);
+    this.storyPortraitBackdrop.fillStyle(style.accentColor, 0.18);
+    this.storyPortraitBackdrop.fillRect(-84, -100, 168, stripeHeight);
+    this.storyPortraitBackdrop.fillCircle(profileShift - 4, -12, auraRadius);
+    this.storyPortraitBackdrop.fillStyle(0x020617, 0.78);
+    this.storyPortraitBackdrop.fillCircle(profileShift + 8, -20, 30);
+    this.storyPortraitBackdrop.fillRoundedRect(
+      -shoulderWidth / 2 + profileShift,
+      10,
+      shoulderWidth,
+      shoulderHeight,
+      22,
+    );
+    this.storyPortraitBackdrop.fillRoundedRect(profileShift - 12, -16, 46, 84, 20);
+    this.storyPortraitBackdrop.fillStyle(style.lineColor, 0.22);
+    this.storyPortraitBackdrop.fillRect(-84, 84, 168, 4);
+  }
+
+  private storyPortraitMonogramText(beat: StoryBeatPresentation | undefined): string {
+    if (!beat) return '';
+    const letters = beat.speaker
+      .split(/\s+/)
+      .map((part) => part[0] ?? '')
+      .join('')
+      .slice(0, 2)
+      .toUpperCase();
+    return letters || '?';
+  }
+
+  private syncStoryPortrait(beat: StoryBeatPresentation | undefined): void {
+    const visible = !!beat;
+    this.storyPortraitBackdrop.setVisible(visible);
+    this.storyPortraitFrame.setVisible(visible);
+    this.storyPortraitBadge.setVisible(visible);
+    this.storyPortraitMonogram.setVisible(visible);
+    this.storyPortraitName.setVisible(visible);
+    this.storyPortraitRole.setVisible(visible);
+    this.storyPortraitKicker.setVisible(visible && !!beat?.kicker);
+    if (!beat) {
+      this.storyPortraitBackdrop.clear();
+      this.storyPortraitMonogram.setText('');
+      this.storyPortraitName.setText('');
+      this.storyPortraitRole.setText('');
+      this.storyPortraitKicker.setText('');
+      return;
+    }
+    this.syncStoryPortraitArt(beat);
+    this.storyPortraitMonogram.setText(this.storyPortraitMonogramText(beat));
+    this.storyPortraitName.setText(beat.speaker);
+    this.storyPortraitRole.setText(beat.role ?? beat.kicker ?? 'City contact');
+    this.storyPortraitKicker.setText(beat.kicker?.toUpperCase() ?? '');
+  }
+
+  private storyMissionFocus(plan: Pick<StoryMissionPlan, 'prototypeRuntime' | 'prototypeScript'>): Vec2 | null {
+    const focus = storyMissionStartPosition(plan);
+    return focus ? { x: focus.x, y: focus.y } : null;
+  }
+
+  private chapterOpenerFocus(chapter: StoryChapter): Vec2 | null {
+    const firstMission = chapter.missions[0];
+    return firstMission ? this.storyMissionFocus(firstMission) : null;
+  }
+
+  private missionBriefingFocus(mission: StoryMissionPlan): Vec2 | null {
+    return this.storyMissionFocus(mission);
+  }
+
+  private missionSummaryFocus(mission: StoryMissionPlan): Vec2 | null {
+    return this.storyMissionFocus(mission);
+  }
+
+  private presentStoryPanelBeat(beat: StoryPanelBeat): void {
+    const requiresAcknowledge = beat.requiresAcknowledge ?? false;
+    const pauseGame = beat.pauseGame ?? requiresAcknowledge;
+    this.applyStoryPanelTone(beat.tone);
+    this.storyPanelFocusTarget = beat.focusTarget ?? null;
+    this.syncStoryPortrait(beat.beat);
+    this.storyPanel
+      .setText(requiresAcknowledge ? `${beat.text}\n\nPress Enter or tap to continue` : beat.text)
+      .setVisible(true);
+    this.storyPanelFrame.setVisible(true);
+    this.storyPanelAccent.setVisible(true);
+    this.syncStoryPanelFrame();
+    this.beginStoryPanelCinematic(beat.tone, pauseGame);
+    this.storyPanelRemaining = requiresAcknowledge ? 0 : Math.max(0, beat.seconds ?? 0);
+    this.storyPanelRequiresAcknowledge = requiresAcknowledge;
     this.storyPanelPauseGame = pauseGame;
     if (pauseGame && !this.paused) {
       this.paused = true;
@@ -2998,9 +3768,69 @@ export class CityScene extends Phaser.Scene {
     }
   }
 
-  private acknowledgeStoryPanel(): void {
-    const shouldResume = this.storyPanelPauseGame && this.paused;
+  private queueStoryPanelSequence(beats: readonly StoryPanelBeat[]): void {
+    if (beats.length === 0) return;
+    this.storyPanelQueue = beats.slice(1);
+    this.presentStoryPanelBeat(beats[0]!);
+  }
+
+  private advanceStoryPanelQueue(): boolean {
+    const nextBeat = this.storyPanelQueue.shift();
+    if (!nextBeat) return false;
+    this.presentStoryPanelBeat(nextBeat);
+    return true;
+  }
+
+  private hideStoryPanel(): void {
+    this.endStoryPanelCinematic();
     this.storyPanel.setVisible(false);
+    this.storyPanelFrame.setVisible(false);
+    this.storyPanelAccent.setVisible(false);
+    this.syncStoryPortrait(undefined);
+    this.storyPanelQueue = [];
+  }
+
+  private showStoryPanel(
+    text: string,
+    seconds: number,
+    tone: StoryPanelTone = 'brief',
+    beat?: StoryBeatPresentation,
+    focusTarget: Vec2 | null = null,
+  ): void {
+    this.storyPanelQueue = [];
+    this.presentStoryPanelBeat({
+      text,
+      tone,
+      beat,
+      focusTarget,
+      seconds,
+      requiresAcknowledge: false,
+      pauseGame: false,
+    });
+  }
+
+  private showPersistentStoryPanel(
+    text: string,
+    pauseGame = true,
+    tone: StoryPanelTone = 'brief',
+    beat?: StoryBeatPresentation,
+    focusTarget: Vec2 | null = null,
+  ): void {
+    this.storyPanelQueue = [];
+    this.presentStoryPanelBeat({
+      text,
+      tone,
+      beat,
+      focusTarget,
+      requiresAcknowledge: true,
+      pauseGame,
+    });
+  }
+
+  private acknowledgeStoryPanel(): void {
+    if (this.advanceStoryPanelQueue()) return;
+    const shouldResume = this.storyPanelPauseGame && this.paused;
+    this.hideStoryPanel();
     this.storyPanelRemaining = 0;
     this.storyPanelRequiresAcknowledge = false;
     this.storyPanelPauseGame = false;
@@ -3025,6 +3855,168 @@ export class CityScene extends Phaser.Scene {
     ].join(':');
   }
 
+  private currentStoryActTitle(chapter: { actId: string }): string {
+    return STORY_MODE_PROTOTYPE.acts.find((act) => act.id === chapter.actId)?.title ?? chapter.actId;
+  }
+
+  private currentStoryCityStandingText(): string {
+    if (this.mode !== 'story' || !this.storyProgress) {
+      return 'City steady - no lasting shifts yet';
+    }
+    return formatStoryCityState(
+      summarizeStoryCityState(STORY_MODE_PROTOTYPE, this.storyProgress.branchOutcomes),
+    );
+  }
+
+  private storyChapterById(chapterId: string): StoryChapter | null {
+    return STORY_MODE_PROTOTYPE.acts
+      .flatMap((act) => act.chapters)
+      .find((chapter) => chapter.id === chapterId) ?? null;
+  }
+
+  private storyVoiceLine(beat: StoryBeatPresentation | undefined): string | null {
+    if (!beat) return null;
+    return beat.role ? `Voice: ${beat.speaker} (${beat.role})` : `Voice: ${beat.speaker}`;
+  }
+
+  private storyBeatLine(beat: StoryBeatPresentation | undefined): string | null {
+    return beat?.kicker ? `Beat: ${beat.kicker}` : null;
+  }
+
+  private chapterOpenerBeat(chapter: StoryChapter): StoryBeatPresentation | undefined {
+    return chapter.presentation?.opener;
+  }
+
+  private missionBriefingBeat(
+    chapter: StoryChapter,
+    mission: StoryMissionPlan,
+  ): StoryBeatPresentation | undefined {
+    return mission.presentation?.briefing ?? chapter.presentation?.briefing ?? chapter.presentation?.opener;
+  }
+
+  private missionSummaryBeat(
+    chapter: StoryChapter,
+    mission: StoryMissionPlan,
+  ): StoryBeatPresentation | undefined {
+    return (
+      mission.presentation?.summary ??
+      chapter.presentation?.summary ??
+      mission.presentation?.briefing ??
+      chapter.presentation?.briefing ??
+      chapter.presentation?.opener
+    );
+  }
+
+  private missionBriefingText(
+    chapter: StoryChapter,
+    mission: StoryMissionPlan,
+  ): string {
+    const beat = this.missionBriefingBeat(chapter, mission);
+    return [
+      'MISSION BRIEF',
+      mission.title,
+      '',
+      `Chapter ${chapter.order} • ${chapter.title}`,
+      `Act: ${this.currentStoryActTitle(chapter)}`,
+      this.storyVoiceLine(beat),
+      this.storyBeatLine(beat),
+      `Beat: ${chapter.storyRole}`,
+      '',
+      mission.hook,
+      '',
+      `Goal: ${mission.primaryGoal}`,
+      `Pressure: ${mission.secondaryPressure}`,
+      `Failure: ${mission.failureState}`,
+      `City Standing: ${this.currentStoryCityStandingText()}`,
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join('\n');
+  }
+
+  private chapterBriefingText(chapter: StoryChapter): string {
+    const beat = this.chapterOpenerBeat(chapter);
+    return [
+      `CHAPTER ${chapter.order}`,
+      chapter.title,
+      '',
+      `Act: ${this.currentStoryActTitle(chapter)}`,
+      this.storyVoiceLine(beat),
+      this.storyBeatLine(beat),
+      `Role: ${chapter.storyRole}`,
+      '',
+      `Goal: ${chapter.combinedGoal}`,
+      `City Standing: ${this.currentStoryCityStandingText()}`,
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join('\n');
+  }
+
+  private chapterOpenerSequence(chapter: StoryChapter, mission: StoryMissionPlan): StoryPanelBeat[] {
+    return [
+      {
+        text: this.chapterBriefingText(chapter),
+        tone: 'chapter',
+        beat: this.chapterOpenerBeat(chapter),
+        focusTarget: this.chapterOpenerFocus(chapter),
+        requiresAcknowledge: true,
+        pauseGame: true,
+      },
+      {
+        text: this.missionBriefingText(chapter, mission),
+        tone: 'brief',
+        beat: this.missionBriefingBeat(chapter, mission),
+        focusTarget: this.missionBriefingFocus(mission),
+        requiresAcknowledge: true,
+        pauseGame: true,
+      },
+    ];
+  }
+
+  private chapterCompleteSequence(
+    previousChapter: StoryChapter,
+    nextChapter: StoryChapter,
+    nextMission: StoryMissionPlan,
+  ): StoryPanelBeat[] {
+    return [
+      {
+        text: [
+          'CHAPTER COMPLETE',
+          previousChapter.title,
+          '',
+          previousChapter.combinedGoal,
+          '',
+          `City Standing: ${this.currentStoryCityStandingText()}`,
+        ].join('\n'),
+        tone: 'complete',
+        beat: this.chapterOpenerBeat(previousChapter),
+        focusTarget: this.chapterOpenerFocus(previousChapter),
+        seconds: 1.8,
+        pauseGame: false,
+      },
+      {
+        text: [
+          `NEXT CHAPTER • ${nextChapter.order}`,
+          nextChapter.title,
+          '',
+          `Act: ${this.currentStoryActTitle(nextChapter)}`,
+          this.storyVoiceLine(this.chapterOpenerBeat(nextChapter)),
+          this.storyBeatLine(this.chapterOpenerBeat(nextChapter)),
+          `Role: ${nextChapter.storyRole}`,
+          '',
+          `Opening lead: ${nextMission.title}`,
+          nextMission.primaryGoal,
+        ]
+          .filter((line): line is string => Boolean(line))
+          .join('\n'),
+        tone: 'chapter',
+        beat: this.chapterOpenerBeat(nextChapter),
+        focusTarget: this.chapterOpenerFocus(nextChapter),
+        seconds: 2.2,
+        pauseGame: false,
+      },
+    ];
+  }
+
   private showMissionBriefingPanel(): void {
     if (this.mode !== 'story' || !this.storyProgress) return;
     if (this.selectingStoryMission()) {
@@ -3035,7 +4027,11 @@ export class CityScene extends Phaser.Scene {
     const mission = currentStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress);
     if (!chapter || !mission) return;
     this.showPersistentStoryPanel(
-      `MISSION BRIEF\n${mission.title}\n\n${mission.hook}\n\nGoal: ${mission.primaryGoal}`,
+      this.missionBriefingText(chapter, mission),
+      true,
+      'brief',
+      this.missionBriefingBeat(chapter, mission),
+      this.missionBriefingFocus(mission),
     );
   }
 
@@ -3052,6 +4048,7 @@ export class CityScene extends Phaser.Scene {
     const resolvedPreviousMission = resolveStoryMissionPlan(
       previousMission,
       this.storyProgress.branchOutcomes,
+      summarizeStoryCityState(STORY_MODE_PROTOTYPE, this.storyProgress.branchOutcomes),
     );
     const summary = this.buildStoryMissionSummaryCard(resolvedPreviousMission, this.storyProgress);
     if (summary) {
@@ -3070,10 +4067,17 @@ export class CityScene extends Phaser.Scene {
         vehicleConditionText: summary.vehicleConditionText,
         serviceLaneText: summary.serviceLaneText,
         factionEffectText: summary.factionEffectText,
+        cityStateText: summary.cityStateText,
         systemsText: summary.systemsText,
         recordedAt: Date.now(),
       });
-      this.showPersistentStoryPanel(this.storyMissionSummaryText(summary));
+      this.showPersistentStoryPanel(
+        this.storyMissionSummaryText(summary),
+        true,
+        'summary',
+        chapter ? this.missionSummaryBeat(chapter, resolvedPreviousMission) : undefined,
+        this.missionSummaryFocus(resolvedPreviousMission),
+      );
       return;
     }
     if (!mission) return;
@@ -3081,6 +4085,9 @@ export class CityScene extends Phaser.Scene {
     this.showStoryPanel(
       `MISSION COMPLETE\n${resolvedPreviousMission.title}\nReward: $${reward}\n\n${resolvedPreviousMission.payoff}\n\nNext: ${mission.title}\n${mission.primaryGoal}`,
       4.8,
+      'complete',
+      chapter ? this.missionSummaryBeat(chapter, resolvedPreviousMission) : undefined,
+      this.missionSummaryFocus(resolvedPreviousMission),
     );
   }
 
@@ -3093,17 +4100,39 @@ export class CityScene extends Phaser.Scene {
       ? chapter.missions.find((entry) => entry.id === previousMissionId)
       : null;
     const resolvedPreviousMission = previousMission
-      ? resolveStoryMissionPlan(previousMission, this.storyProgress.branchOutcomes)
+      ? resolveStoryMissionPlan(
+          previousMission,
+          this.storyProgress.branchOutcomes,
+          summarizeStoryCityState(STORY_MODE_PROTOTYPE, this.storyProgress.branchOutcomes),
+        )
       : null;
     const leads = choices
       .map((mission, index) => `${index + 1}. ${mission.title}\n${mission.primaryGoal}`)
       .join('\n\n');
     const header = resolvedPreviousMission
-      ? `MISSION COMPLETE\n${resolvedPreviousMission.title}\n\n${resolvedPreviousMission.payoff}`
-      : `CHAPTER ${chapter.order}\n${chapter.title}`;
+      ? [
+          'MISSION COMPLETE',
+          resolvedPreviousMission.title,
+          '',
+          resolvedPreviousMission.payoff,
+          '',
+          `City Standing: ${this.currentStoryCityStandingText()}`,
+        ].join('\n')
+      : [
+          `CHAPTER ${chapter.order}`,
+          chapter.title,
+          '',
+          `Role: ${chapter.storyRole}`,
+          `City Standing: ${this.currentStoryCityStandingText()}`,
+        ].join('\n');
     this.showStoryPanel(
       `${header}\n\nChoose the next lead by driving into a mission marker.\n\n${leads}`,
       6.2,
+      'chapter',
+      chapter.presentation?.opener,
+      resolvedPreviousMission
+        ? this.missionSummaryFocus(resolvedPreviousMission)
+        : this.chapterOpenerFocus(chapter),
     );
   }
 
@@ -3118,10 +4147,7 @@ export class CityScene extends Phaser.Scene {
     if (!chapter || !mission) return;
     if (this.storyProgress.current.objectiveIndex >= 0) return;
     if (mission.id !== chapter.missions[0]?.id) return;
-    this.showStoryPanel(
-      `CHAPTER ${chapter.order}\n${chapter.title}\n\n${chapter.storyRole}\n\nGoal: ${chapter.combinedGoal}`,
-      4.8,
-    );
+    this.queueStoryPanelSequence(this.chapterOpenerSequence(chapter, mission));
     this.syncStoryStateText();
   }
 
@@ -3255,7 +4281,13 @@ export class CityScene extends Phaser.Scene {
         ? `Choose next lead: ${nextChoices.map((mission) => mission.title).join(' / ')}`
         : `Next: ${nextMission?.title ?? 'Continue story'}`
       : 'Story complete';
-    const startHealth = baseline.playerVehicleHealth;
+    const chapterId =
+      baseline.chapterId ?? nextProgress?.current?.chapterId ?? this.storyProgress?.current?.chapterId;
+    const chapter = chapterId ? this.storyChapterById(chapterId) : null;
+    const startHealth =
+      typeof baseline.playerVehicleHealth === 'number' || baseline.playerVehicleHealth === null
+        ? baseline.playerVehicleHealth
+        : null;
     const endHealth = this.currentPlayerVehicleHealth();
     const vehicleConditionText =
       startHealth === null && endHealth === null
@@ -3265,9 +4297,12 @@ export class CityScene extends Phaser.Scene {
           : endHealth === null
             ? `Vehicle lost • started at ${Math.round(startHealth)}%`
             : `${Math.round(startHealth)}% → ${Math.round(endHealth)}%`;
+    const beat = chapter ? this.missionSummaryBeat(chapter, previousMission) : undefined;
     return {
-      chapterTitle: this.storyChapterTitle(baseline.chapterId),
+      chapterTitle: chapter?.title ?? chapterId ?? 'Current chapter',
       title: previousMission.title,
+      voiceText: this.storyVoiceLine(beat),
+      beatText: this.storyBeatLine(beat),
       reward,
       outcome: previousMission.payoff,
       durationSeconds,
@@ -3276,6 +4311,12 @@ export class CityScene extends Phaser.Scene {
       vehicleConditionText,
       serviceLaneText: this.storyServiceLaneSummary(previousMission),
       factionEffectText: this.storyFactionEffectSummary(baseline, nextProgress),
+      cityStateText: formatStoryCityState(
+        summarizeStoryCityState(
+          STORY_MODE_PROTOTYPE,
+          nextProgress?.branchOutcomes ?? baseline.branchOutcomes,
+        ),
+      ),
       systemsText: this.storySystemsText(previousMission),
       unlockText: unlockLines.length > 0 ? unlockLines.join(' • ') : 'No new unlocks',
       nextText,
@@ -3292,44 +4333,59 @@ export class CityScene extends Phaser.Scene {
       card.title,
       '',
       `Chapter: ${card.chapterTitle}`,
-      `Reward: $${card.reward}`,
+      card.voiceText,
+      card.beatText,
       `Objective Outcome: ${card.outcome}`,
+      `Story Changes: ${card.unlockText}`,
+      `City Standing: ${card.cityStateText}`,
+      card.nextText,
+      '',
+      `Reward: $${card.reward}`,
       `Duration: ${card.durationSeconds}s`,
       `Damage / Collateral: ${collateralText}`,
       `Vehicle Condition: ${card.vehicleConditionText}`,
       `Service Lanes: ${card.serviceLaneText}`,
       `Faction Effects: ${card.factionEffectText}`,
       `Systems: ${card.systemsText}`,
-      `Story Changes: ${card.unlockText}`,
-      card.nextText,
-    ].join('\n');
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join('\n');
   }
 
-  private carTexture(index: number): string {
+  private carTexture(index: number): TextureRef {
     const kind = this.world.carKind(index);
-    if (kind === 'ambulance') return TEX.ambulance;
-    if (kind === 'tow') return TEX.tow;
-    if (kind === 'police') return TEX.policeCar;
-    if (kind === 'taxi') return TEX.taxi;
-    if (kind === 'sedan') return TEX.sedan;
-    if (kind === 'coupe') return TEX.coupe;
-    if (kind === 'muscle') return TEX.muscle;
-    if (kind === 'sports') return TEX.sports;
-    if (kind === 'pickup') return TEX.pickup;
-    if (kind === 'van') return TEX.van;
-    if (kind === 'limo') return TEX.limo;
-    return index === this.world.drivingCarIndex ? TEX.playerCar : TEX.npcCar;
+    if (kind === 'ambulance') return textureRef(TEX.ambulance);
+    if (kind === 'tow') return textureRef(TEX.tow);
+    if (kind === 'police') return textureRef(TEX.policeCar);
+    if (kind === 'taxi') return textureRef(TEX.taxi);
+    const seed = stableVisualSeed(index + 1, kind.length * 13);
+    if (kind === 'sedan') return pickVariantTexture(CIVILIAN_VEHICLE_TEXTURES.sedan, seed);
+    if (kind === 'coupe') return pickVariantTexture(CIVILIAN_VEHICLE_TEXTURES.coupe, seed);
+    if (kind === 'muscle') return pickVariantTexture(CIVILIAN_VEHICLE_TEXTURES.muscle, seed);
+    if (kind === 'sports') return pickVariantTexture(CIVILIAN_VEHICLE_TEXTURES.sports, seed);
+    if (kind === 'pickup') return pickVariantTexture(CIVILIAN_VEHICLE_TEXTURES.pickup, seed);
+    if (kind === 'van') return pickVariantTexture(CIVILIAN_VEHICLE_TEXTURES.van, seed);
+    if (kind === 'limo') return pickVariantTexture(CIVILIAN_VEHICLE_TEXTURES.limo, seed);
+    return index === this.world.drivingCarIndex
+      ? textureRef(TEX.playerCar)
+      : pickVariantTexture(CIVILIAN_VEHICLE_TEXTURES.car, seed);
+  }
+
+  private carDamageTint(healthRatio: number): number | null {
+    const severity = 1 - healthRatio;
+    if (severity < 0.2) return null;
+    const target = severity > 0.55 ? 0x8b5a3c : 0x94a3b8;
+    return blendColor(0xffffff, target, Math.min(0.6, severity * 0.8));
   }
 
   private syncSprites(): void {
     this.world.cars.forEach((car, i) => {
       const size = vehicleBodySpecForKind(this.world.carKind(i));
+      const healthRatio = this.world.carHealthRatio(i);
+      const liveTexture = this.carTexture(i);
       let sprite = this.carSprites[i];
       if (!sprite) {
-        sprite = this.add
-          .image(car.pos.x, car.pos.y, this.carTexture(i))
-          .setDisplaySize(size.spriteWidth, size.spriteHeight)
-          .setDepth(4);
+        sprite = this.spawnImage(car.pos.x, car.pos.y, liveTexture).setDisplaySize(size.spriteWidth, size.spriteHeight).setDepth(4);
         this.carSprites[i] = sprite;
       }
       if (this.world.towedCars[i] && this.world.wreckedCars[i]) {
@@ -3338,11 +4394,12 @@ export class CityScene extends Phaser.Scene {
       }
       if (this.world.wreckedCars[i]) {
         // A destroyed car is a charred, static wreck.
+        const wreckFrame = effectFrame(FX.wreck.frames, Math.floor(this.time.now / 260 + i));
         sprite
           .setVisible(true)
-          .setTexture(TEX.npcCar)
-          .setDisplaySize(size.spriteWidth, size.spriteHeight)
-          .setTint(0x3a3a3a)
+          .setTexture(FX.wreck.texture, wreckFrame)
+          .setDisplaySize(size.spriteWidth + 6, size.spriteHeight + 4)
+          .setTint(0xffffff)
           .setPosition(car.pos.x, car.pos.y)
           .setRotation(car.heading);
         return;
@@ -3350,30 +4407,37 @@ export class CityScene extends Phaser.Scene {
       if (this.world.carIsBurning(i)) {
         sprite
           .setVisible(true)
-          .setTexture(this.carTexture(i))
+          .setTexture(liveTexture.texture, liveTexture.frame)
           .setDisplaySize(size.spriteWidth, size.spriteHeight)
           .setTint(this.burningCarTint(i))
           .setPosition(car.pos.x, car.pos.y)
           .setRotation(car.heading);
         return;
       }
+      const damageTint = this.carDamageTint(healthRatio);
       sprite
-        .clearTint()
         .setVisible(true)
-        .setTexture(this.carTexture(i))
+        .setTexture(liveTexture.texture, liveTexture.frame)
         .setDisplaySize(size.spriteWidth, size.spriteHeight)
         .setPosition(car.pos.x, car.pos.y)
         .setRotation(car.heading);
+      if (damageTint === null) sprite.clearTint();
+      else sprite.setTint(damageTint);
     });
 
     // Pedestrians can be removed (run over): hide any surplus sprites.
     this.world.pedestrians.forEach((ped, i) => {
+      const pedTexture = this.pedTexture(ped, i);
       let sprite = this.pedSprites[i];
       if (!sprite) {
-        sprite = this.add.image(ped.pos.x, ped.pos.y, this.pedTexture(ped)).setDepth(5);
+        sprite = this.spawnImage(ped.pos.x, ped.pos.y, pedTexture).setDepth(5);
         this.pedSprites[i] = sprite;
       }
-      sprite.setTexture(this.pedTexture(ped)).setVisible(true).setPosition(ped.pos.x, ped.pos.y);
+      const moving = Math.hypot(ped.pos.x - sprite.x, ped.pos.y - sprite.y) > 0.12 && ped.state !== 'wait';
+      this.applyTextureFrame(sprite, pedTexture, this.animatedFrame(pedTexture, moving, 170))
+        .setVisible(true)
+        .setPosition(ped.pos.x, ped.pos.y)
+        .setRotation(ped.heading);
       if (ped.missionTarget) {
         sprite.setTint(COLORS.marker);
       } else if (ped.taxiPassengerRole === 'playerFare') {
@@ -3409,13 +4473,18 @@ export class CityScene extends Phaser.Scene {
     const flashBlue = Math.floor(this.time.now / 200) % 2 === 0;
     const lightTint = flashBlue ? 0x60a5fa : 0xf87171;
     this.world.police.forEach((cop, i) => {
+      const copTexture = cop.kind === 'car' ? textureRef(TEX.policeCar) : textureRef(TEX.policeFoot);
       let sprite = this.policeSprites[i];
       if (!sprite) {
-        sprite = this.add.image(cop.pos.x, cop.pos.y, TEX.policeFoot).setDepth(6);
+        sprite = this.spawnImage(cop.pos.x, cop.pos.y, textureRef(TEX.policeFoot)).setDepth(6);
         this.policeSprites[i] = sprite;
       }
-      sprite
-        .setTexture(cop.kind === 'car' ? TEX.policeCar : TEX.policeFoot)
+      const moving = Math.hypot(cop.pos.x - sprite.x, cop.pos.y - sprite.y) > 0.12;
+      this.applyTextureFrame(
+        sprite,
+        copTexture,
+        cop.kind === 'car' ? copTexture.frame : this.animatedFrame(copTexture, moving, 155),
+      )
         .setVisible(true)
         .setTint(lightTint)
         .setPosition(cop.pos.x, cop.pos.y)
@@ -3482,6 +4551,9 @@ export class CityScene extends Phaser.Scene {
     }
 
     const p = this.world.player;
+    const playerTexture = textureRef(TEX.player);
+    const playerMoving = Math.hypot(p.pos.x - this.playerSprite.x, p.pos.y - this.playerSprite.y) > 0.15;
+    this.applyTextureFrame(this.playerSprite, playerTexture, this.animatedFrame(playerTexture, playerMoving, 145));
     this.playerSprite.setPosition(p.pos.x, p.pos.y);
     this.playerSprite.setRotation(p.angle);
     this.playerSprite.setVisible(!this.world.isDriving);
@@ -3491,10 +4563,176 @@ export class CityScene extends Phaser.Scene {
     this.focusPoint.setPosition(focus.x, focus.y);
     // On a wrap the focus leaps the width/height of the map; recentre the camera
     // instantly so it doesn't sweep across everything in between.
-    if (jump > WRAP_SNAP_DISTANCE) this.cameras.main.centerOn(focus.x, focus.y);
+    if (jump > WRAP_SNAP_DISTANCE) {
+      const cameraFocus = this.storyPanelCinematicActive ? this.storyPanelFocusTarget ?? focus : focus;
+      this.cameras.main.centerOn(cameraFocus.x, cameraFocus.y);
+    }
 
     this.syncHudText();
     this.syncBustedText();
+  }
+
+
+  private syncVisualFeedback(dt: number): void {
+    this.currentAmmoPickups.clear();
+    for (const pickup of this.world.ammoPickups) {
+      this.currentAmmoPickups.add(pickup);
+    }
+    for (const pickup of this.prevAmmoPickups) {
+      if (!this.currentAmmoPickups.has(pickup)) this.emitPickupParticles(pickup.pos);
+    }
+    this.prevAmmoPickups.clear();
+    for (const pickup of this.currentAmmoPickups) this.prevAmmoPickups.add(pickup);
+
+    const carCount = this.world.cars.length;
+    for (let i = 0; i < carCount; i++) {
+      const car = this.world.cars[i];
+      const healthRatio = this.world.carHealthRatio(i);
+      const prevHealthRatio = this.prevCarHealth[i];
+      if (prevHealthRatio !== undefined && healthRatio < prevHealthRatio - 0.015 && !this.world.wreckedCars[i]) {
+        this.emitHitParticles(car.pos, car.heading, prevHealthRatio - healthRatio);
+      }
+
+      const prevHeading = this.prevCarHeadings[i];
+      if (
+        prevHeading !== undefined &&
+        Math.abs(Phaser.Math.Angle.Wrap(car.heading - prevHeading)) > 0.11 &&
+        Math.abs(car.speed) > 110 &&
+        !this.world.wreckedCars[i] &&
+        !this.world.carIsBurning(i)
+      ) {
+        this.emitSkidParticles(car);
+      }
+
+      this.prevCarHealth[i] = healthRatio;
+      this.prevCarHeadings[i] = car.heading;
+    }
+    this.prevCarHealth.length = carCount;
+    this.prevCarHeadings.length = carCount;
+
+    this.syncDamageOverlays();
+    this.syncFeedbackParticles(dt);
+  }
+
+  private emitHitParticles(pos: Vec2, heading: number, severity: number): void {
+    const forward = fromAngle(heading, 1);
+    const side = fromAngle(heading + Math.PI / 2, 1);
+    const count = Math.min(9, 4 + Math.round(severity * 20));
+    for (let i = 0; i < count; i++) {
+      const sideOffset = (i - (count - 1) / 2) * 1.8;
+      const drift = 60 + severity * 160 + i * 5;
+      this.visualParticles.push({
+        pos: { x: pos.x + side.x * sideOffset, y: pos.y + side.y * sideOffset },
+        vel: {
+          x: forward.x * (drift * 0.45) + side.x * sideOffset * 12,
+          y: forward.y * (drift * 0.45) + side.y * sideOffset * 12,
+        },
+        age: 0,
+        life: 0.28 + severity * 0.18,
+        radius: 1.5 + severity * 1.8,
+        color: i % 3 === 0 ? COLORS.sparkCore : COLORS.spark,
+        alpha: 0.85,
+        stretch: 10 + severity * 8,
+      });
+    }
+  }
+
+  private emitPickupParticles(pos: Vec2): void {
+    for (let i = 0; i < 8; i++) {
+      const heading = (Math.PI * 2 * i) / 8;
+      const burst = fromAngle(heading, 45 + i * 8);
+      this.visualParticles.push({
+        pos: { x: pos.x, y: pos.y },
+        vel: { x: burst.x, y: burst.y },
+        age: 0,
+        life: 0.45,
+        radius: i % 2 === 0 ? 2.4 : 1.8,
+        color: i % 2 === 0 ? COLORS.pickupCore : COLORS.pickupSpark,
+        alpha: 0.9,
+        stretch: 6,
+      });
+    }
+  }
+
+  private emitSkidParticles(car: Car): void {
+    const rear = fromAngle(car.heading + Math.PI, car.radius * 0.48);
+    const side = fromAngle(car.heading + Math.PI / 2, car.radius * 0.34);
+    const drift = fromAngle(car.heading + Math.PI, 28 + Math.min(60, Math.abs(car.speed) * 0.18));
+    for (const dir of [-1, 1] as const) {
+      this.visualParticles.push({
+        pos: { x: car.pos.x + rear.x + side.x * dir, y: car.pos.y + rear.y + side.y * dir },
+        vel: { x: drift.x + side.x * dir * 8, y: drift.y + side.y * dir * 8 },
+        age: 0,
+        life: 0.36,
+        radius: 2.2,
+        color: COLORS.skid,
+        alpha: 0.38,
+        stretch: 14,
+      });
+    }
+  }
+
+  private syncFeedbackParticles(dt: number): void {
+    const g = this.feedbackGfx;
+    g.clear();
+    const drag = Math.max(0, 1 - dt * 4.5);
+    const particleCount = this.visualParticles.length;
+    let activeCount = 0;
+    for (let readIndex = 0; readIndex < particleCount; readIndex++) {
+      const particle = this.visualParticles[readIndex];
+      const age = particle.age + dt;
+      if (age >= particle.life) continue;
+      particle.age = age;
+      particle.vel.x *= drag;
+      particle.vel.y *= drag;
+      particle.pos.x += particle.vel.x * dt;
+      particle.pos.y += particle.vel.y * dt;
+      const alpha = particle.alpha * (1 - age / particle.life);
+      g.lineStyle(Math.max(1, particle.radius * 0.65), particle.color, alpha * 0.85);
+      g.lineBetween(
+        particle.pos.x,
+        particle.pos.y,
+        particle.pos.x - particle.vel.x * 0.03 * particle.stretch,
+        particle.pos.y - particle.vel.y * 0.03 * particle.stretch,
+      );
+      g.fillStyle(particle.color, alpha);
+      g.fillCircle(particle.pos.x, particle.pos.y, particle.radius);
+      this.visualParticles[activeCount] = particle;
+      activeCount += 1;
+    }
+    this.visualParticles.length = activeCount;
+  }
+
+  private syncDamageOverlays(): void {
+    this.world.cars.forEach((car, i) => {
+      let sprite = this.damageSprites[i];
+      if (!sprite) {
+        sprite = this.add.image(car.pos.x, car.pos.y, FX.damage.texture, FX.damage.frames[0]).setDepth(4.6);
+        this.damageSprites[i] = sprite;
+      }
+
+      if (this.world.wreckedCars[i] || this.world.towedCars[i] || this.world.carIsBurning(i)) {
+        sprite.setVisible(false);
+        return;
+      }
+
+      const severity = 1 - this.world.carHealthRatio(i);
+      if (severity < 0.22) {
+        sprite.setVisible(false);
+        return;
+      }
+
+      this.applyTextureFrame(
+        sprite,
+        { texture: FX.damage.texture },
+        effectFrame(FX.damage.frames, severity > 0.58 ? 1 : 0),
+      )
+        .setVisible(true)
+        .setPosition(car.pos.x, car.pos.y)
+        .setRotation(car.heading)
+        .setScale(car.radius / 14)
+        .setAlpha(0.26 + severity * 0.45);
+    });
   }
 
   /** Build the multi-line HUD: wanted, health, money, weapon, and controls. */

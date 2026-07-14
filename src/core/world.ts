@@ -270,6 +270,12 @@ export const TAXI_SERVICE_SPEED_MAX = 18;
  * another lane, so a lane change is a natural diagonal swerve rather than a car
  * sliding straight sideways. */
 const LANE_CHANGE_SPEED_FACTOR = 0.6;
+/** Max acceleration (px/s^2) applied when NPC traffic speeds back up from a
+ * standstill (a red light releasing, an obstacle clearing, a parked car being
+ * driven off). Without this a car could otherwise jump from 0 straight to full
+ * cruise speed in a single tick, which is enough to instantly run over anyone
+ * standing right next to it, even though it never "sped past" them. */
+const TRAFFIC_ACCEL = 220;
 const TAXI_NPC_ASSIGN_CHANCE = 0.18;
 const TAXI_STOP_DWELL = 1.1;
 const TAXI_MIN_PICKUP_DISTANCE = 220;
@@ -833,8 +839,8 @@ export class World {
     );
     this.policeSpawns = opts.policeSpawns ?? [];
     this.bounds = opts.bounds ?? { width: 1600, height: 1600 };
-    this.water = opts.water ?? [];
     this.city = opts.city;
+    this.water = opts.water ?? this.city?.water ?? [];
     this.sidewalks = opts.sidewalks ?? this.city?.sidewalks ?? [];
     this.crosswalks = this.city?.crosswalks ?? [];
     this.wallSpatial = this.walls.length > 0 ? this.buildRectSpatialHash(this.walls) : undefined;
@@ -1030,6 +1036,23 @@ export class World {
     return this.drivingCarIndex === null ? null : this.cars[this.drivingCarIndex];
   }
 
+  /**
+   * Force the player out of their current vehicle (if any), placing them beside it exactly like a
+   * normal exit-vehicle action. Safe to call even when the player isn't driving (no-op). Used by
+   * story-actor despawn logic so a vehicle the player happens to be driving is never yanked out
+   * from under them (which would otherwise teleport the player off-map along with the car).
+   */
+  exitVehicle(): void {
+    if (this.drivingCarIndex === null) return;
+    const idx = this.drivingCarIndex;
+    const car = this.cars[idx];
+    const offset = fromAngle(car.heading + Math.PI / 2, car.radius + this.player.radius + EXIT_GAP);
+    this.player = { ...this.player, pos: add(car.pos, offset), angle: car.heading };
+    if (this.carKind(idx) === 'taxi') this.cancelPlayerTaxiMission(add(car.pos, offset));
+    this.cars[idx] = { ...car, speed: 0 };
+    this.drivingCarIndex = null;
+  }
+
   carKind(index: number): VehicleKind {
     return this.carKinds[index] ?? 'car';
   }
@@ -1037,6 +1060,13 @@ export class World {
   /** Whether a car slot is currently burning down toward an explosion. */
   carIsBurning(index: number): boolean {
     return !this.wreckedCars[index] && (this.carBurnTimers[index] ?? 0) > 0;
+  }
+
+  /** Remaining structural integrity of a car slot as a 0..1 ratio. */
+  carHealthRatio(index: number): number {
+    const health = this.carHealth[index];
+    if (health === undefined) return 1;
+    return Math.max(0, Math.min(1, health / CAR_MAX_HEALTH));
   }
 
   /** Current wanted-level star rating (0..6). */
@@ -1146,6 +1176,23 @@ export class World {
       tailSeconds: Math.max(0, progress?.tailSeconds ?? 0),
       captureSeconds: Math.max(0, progress?.captureSeconds ?? 0),
     };
+  }
+
+  /** Keep non-player scripted vehicles out of the river even when their
+   * movement is authored directly instead of going through the lane planner. */
+  keepNpcCarOutOfWater(currentPos: Vec2, nextPos: Vec2): Vec2 {
+    if (!this.city) return nextPos;
+    const dist = distance(currentPos, nextPos);
+    const steps = Math.max(1, Math.ceil(dist / Math.max(8, this.city.spec.tile / 2)));
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const sample = vec2(
+        currentPos.x + (nextPos.x - currentPos.x) * t,
+        currentPos.y + (nextPos.y - currentPos.y) * t,
+      );
+      if (this.isWaterAt(sample)) return currentPos;
+    }
+    return nextPos;
   }
 
   setStoryDistrictStateEffects(
@@ -1655,6 +1702,13 @@ export class World {
         blocked = 0; // path cleared
       }
 
+      // Ramp up toward the target speed instead of snapping to it, so a car
+      // that was stopped (parked, waiting at a light, blocked by an obstacle)
+      // gradually picks up speed like a real launch rather than instantly
+      // becoming a lethal hazard to anyone standing beside it. Slowing down
+      // stays immediate (braking safely never needs a ramp).
+      if (speed > car.speed) speed = Math.min(speed, car.speed + TRAFFIC_ACCEL * dt);
+
       const out = stepTraffic(
         car,
         { dir, blocked, laneTarget, escapeTarget, routeTarget },
@@ -1807,6 +1861,35 @@ export class World {
     opts: { health: number; wrecked?: boolean; respawnsAtTow?: boolean },
   ): number {
     const wrecked = opts.wrecked ?? false;
+    const reusableIndex = this.cars.findIndex(
+      (_, index) =>
+        this.wreckedCars[index] &&
+        this.towedCars[index] &&
+        index !== this.drivingCarIndex &&
+        !this.tows.some((tow) => tow.targetCar === index) &&
+        (this.playerServiceMission?.kind !== 'tow' ||
+          this.playerServiceMission.targetCar !== index),
+    );
+    if (reusableIndex !== -1) {
+      this.cars[reusableIndex] = car;
+      this.carDrivers[reusableIndex] = null;
+      this.carKinds[reusableIndex] = kind;
+      this.taxiStates[reusableIndex] = kind === 'taxi' ? this.createTaxiState() : null;
+      this.carRespawnsAtTow[reusableIndex] = opts.respawnsAtTow ?? false;
+      this.carHealth[reusableIndex] = wrecked ? 0 : opts.health;
+      this.carBurnTimers[reusableIndex] = 0;
+      this.carBurnByPlayer[reusableIndex] = false;
+      this.stolenServiceVehicles[reusableIndex] = false;
+      this.towDispatchCooldowns[reusableIndex] = 0;
+      this.wreckedCars[reusableIndex] = wrecked;
+      this.towedCars[reusableIndex] = false;
+      const prefix = `car:${reusableIndex}|`;
+      const suffix = `|car:${reusableIndex}`;
+      for (const key of this.vehicleImpactCooldowns.keys()) {
+        if (key.startsWith(prefix) || key.endsWith(suffix)) this.vehicleImpactCooldowns.delete(key);
+      }
+      return reusableIndex;
+    }
     this.cars.push(car);
     this.carDrivers.push(null);
     this.carKinds.push(kind);
@@ -2210,9 +2293,18 @@ export class World {
             prev,
             dt,
             (loaded) => {
-              this.towedCars[prev.targetCar] = true; // hooked up; removed from play
-              const slot = Math.max(0, this.tows.indexOf(prev));
-              this.respawnCarAtTowYard(prev.targetCar, slot);
+              // The wreck may already have been claimed and towed by someone
+              // else (e.g. the player completed their own tow side-mission on
+              // this exact car) while this crew was mid-animation walking out
+              // to it. Only hook up and respawn a car that is still actually
+              // a live wreck — otherwise this would re-run the full respawn
+              // on whatever now occupies that slot (a car already back in
+              // normal play), yanking it to the tow yard out of nowhere.
+              if (this.wreckedCars[prev.targetCar]) {
+                this.towedCars[prev.targetCar] = true; // hooked up; removed from play
+                const slot = Math.max(0, this.tows.indexOf(prev));
+                this.respawnCarAtTowYard(prev.targetCar, slot);
+              }
               return { ...loaded, completedWrecks: loaded.completedWrecks + 1 };
             },
             (boarded) => this.nextTowTruckJob(boarded),
@@ -3385,14 +3477,7 @@ export class World {
     const car = this.cars[idx];
 
     if (actionPressed) {
-      const offset = fromAngle(
-        car.heading + Math.PI / 2,
-        car.radius + this.player.radius + EXIT_GAP,
-      );
-      this.player = { ...this.player, pos: add(car.pos, offset), angle: car.heading };
-      if (this.carKind(idx) === 'taxi') this.cancelPlayerTaxiMission(add(car.pos, offset));
-      this.cars[idx] = { ...car, speed: 0 };
-      this.drivingCarIndex = null;
+      this.exitVehicle();
       return;
     }
 
@@ -3440,9 +3525,9 @@ export class World {
       }
       const homeTarget = (() => {
         if (!returningTo) return ped.target;
-        const sightBlocked = this.walls.some((wll) =>
-          segmentIntersectsRect(ped.pos, returningTo, wll),
-        );
+        const sightBlocked =
+          this.walls.some((wll) => segmentIntersectsRect(ped.pos, returningTo, wll)) ||
+          this.pathCrossesWater(ped.pos, returningTo);
         if (!sightBlocked || !this.navGrid) return returningTo;
         const route = this.routePedestrianTo(ped, this.navGrid, returningTo);
         routeCache = route.cache;
@@ -3558,6 +3643,16 @@ export class World {
     if (!this.city) return false;
     const { tx, ty } = tileCoord(this.city.spec, pos);
     return this.city.isWater(tx, ty);
+  }
+
+  /** Whether the straight segment a→b crosses any water rect. Used alongside a
+   * wall-sight check to decide whether a foot NPC (pedestrian, officer) needs
+   * to route via the water-excluding flow field instead of charging straight
+   * at its target — otherwise it walks right up to the river's edge, gets held
+   * there by `isWaterAt`, and re-aims at the exact same unreachable point every
+   * tick forever instead of ever finding a way around. */
+  private pathCrossesWater(a: Vec2, b: Vec2): boolean {
+    return this.water.some((w) => segmentIntersectsRect(a, b, w));
   }
 
   /** Whether a point is on an open road lane that is not a marked crossing, so a
@@ -4048,7 +4143,9 @@ export class World {
     const speed = policeSpeedFor(cop.kind, 1);
     const fireThreat = this.nearestThreat(cop.pos, this.burningCarThreats(), PANIC_RADIUS);
     const sightBlocked =
-      !fireThreat && this.walls.some((wll) => segmentIntersectsRect(cop.pos, home, wll));
+      !fireThreat &&
+      (this.walls.some((wll) => segmentIntersectsRect(cop.pos, home, wll)) ||
+        this.pathCrossesWater(cop.pos, home));
     const homeFlow =
       !fireThreat && sightBlocked && this.navGrid
         ? computeFlowField(this.navGrid, home)
@@ -4130,7 +4227,9 @@ export class World {
       // field-only officer is steered to a road tile and never quite reaches).
       const fireThreat = this.nearestThreat(cop.pos, this.burningCarThreats(), PANIC_RADIUS);
       const sightBlocked =
-        !fireThreat && this.walls.some((wll) => segmentIntersectsRect(cop.pos, this.focus, wll));
+        !fireThreat &&
+        (this.walls.some((wll) => segmentIntersectsRect(cop.pos, this.focus, wll)) ||
+          this.pathCrossesWater(cop.pos, this.focus));
       const waypoint = fireThreat
         ? this.panicTarget(cop.pos, fireThreat)
         : sightBlocked && this.navGrid && this.copFlow

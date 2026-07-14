@@ -18,6 +18,13 @@ export const METER_RUNNING: StoryChapter = {
     ['meter-burn'],
     ['farewell-signal'],
   ],
+  presentation: {
+    opener: {
+      speaker: 'Rook Vance',
+      role: 'Riding under borrowed names',
+      kicker: 'Fares After Midnight',
+    },
+  },
   missions: [
     {
       id: 'ghost-fare',
@@ -88,6 +95,22 @@ export const METER_RUNNING: StoryChapter = {
       branchOutcome: {
         branchId: 'double-booking',
         outcomeId: 'save-passenger-a',
+        effects: [
+          {
+            axis: 'faction',
+            id: 'informants',
+            label: 'Informant Network',
+            delta: 2,
+            note: "Passenger A's crew now vouches for Rook across the taxi net",
+          },
+          {
+            axis: 'service',
+            id: 'police-response',
+            label: 'Police Response',
+            delta: -1,
+            note: 'The overlap chase left uptown checkpoints twitchy',
+          },
+        ],
       },
     },
     {
@@ -103,6 +126,22 @@ export const METER_RUNNING: StoryChapter = {
       branchOutcome: {
         branchId: 'double-booking',
         outcomeId: 'save-passenger-b',
+        effects: [
+          {
+            axis: 'faction',
+            id: 'radio',
+            label: 'Pirate Radio',
+            delta: 2,
+            note: 'The nightlife host keeps Rook on the trusted broadcast list',
+          },
+          {
+            axis: 'district',
+            id: 'nightlife',
+            label: 'Nightlife Grid',
+            delta: -1,
+            note: 'Spooked bodyguards tightened the club-strip corners',
+          },
+        ],
       },
       requiredSystems: ['tail', 'scriptedEncounter', 'districtState'],
       prototypeRuntime: {

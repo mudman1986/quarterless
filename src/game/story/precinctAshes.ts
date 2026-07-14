@@ -8,6 +8,13 @@ export const PRECINCT_ASHES: StoryChapter = {
   storyRole: 'Rook learns corrupt police are renting response delays to the highest bidder.',
   combinedGoal:
     'Break into the precinct response chain, steal the records that show who is buying police delay, and survive the first direct strike against the internal archive.',
+  presentation: {
+    opener: {
+      speaker: 'Rook Vance',
+      role: 'Reading the paid delays',
+      kicker: 'Delays Are For Sale',
+    },
+  },
   missions: [
     {
       id: 'badge-borrower',

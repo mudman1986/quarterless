@@ -1,4 +1,5 @@
 import {
+  actorVehicleConditionFailRule,
   missionTargetSquadActor,
   vehicleRouteActor,
 } from './storyMode';
@@ -13,6 +14,13 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
     'Rook returns to the waterfront, learns Nia was moving evidence, and discovers someone is already cleaning up her trail.',
   combinedGoal:
     "Trace Nia's evidence trail from the waterfront lockers to the Pier 9 cleaners' office before the last physical proof is erased.",
+  presentation: {
+    opener: {
+      speaker: 'Rook Vance',
+      role: 'Returning wheelman',
+      kicker: 'Back At The Waterfront',
+    },
+  },
   missions: [
     {
       id: 'night-ferry-run',
@@ -110,7 +118,7 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
             description: 'Reach the 3 storage lockers in sequence before the trail goes cold',
             targets: [
               { x: 1024, y: 1472 },
-              { x: 1472, y: 1472 },
+              { x: 1152, y: 1472 },
               { x: 1920, y: 1472 },
             ],
             radius: 72,
@@ -289,7 +297,7 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
       title: 'False Ambulance',
       hook: 'Someone is using emergency livery to move witnesses without scrutiny.',
       primaryGoal:
-        'Stop the fake ambulance before it reaches the chop garage: pin it, force it to stop, or blow it up.',
+        'Stop the fake ambulance before it reaches the chop garage: pin it and force the crew to surrender the witness alive.',
       secondaryPressure:
         'The ambulance keeps moving unless Rook gets close enough to shut the lane down, so the chase still needs a real interception.',
       failureState:
@@ -312,6 +320,14 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
       prototypeScript: {
         primaryActorId: 'false-ambulance-van',
         actors: [],
+        failRules: [
+          actorVehicleConditionFailRule(
+            'false-ambulance-van',
+            1,
+            'The witness died in the fake ambulance wreck.',
+            0.25,
+          ),
+        ],
         stages: [
           {
             id: 'false-ambulance-stop',
@@ -320,7 +336,7 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
             districtState: {
               label: 'Stop the fake ambulance before it reaches the chop garage',
               summary:
-                'Box it in anywhere on the route or blow it up before the crew reaches the garage.',
+                'Box it in anywhere on the route and hold the crew there before they reach the garage.',
               serviceLaneBlocks: ['ambulance'],
             },
             actors: [
@@ -343,6 +359,7 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
                   captureMaxSpeed: 65,
                   tailDrainPerSecond: 2,
                   loseGraceSeconds: 2.5,
+                  captureOnDisable: false,
                 },
               ),
             ],
@@ -379,6 +396,7 @@ export const DEAD_DROP_DISTRICT: StoryChapter = {
                   captureMaxSpeed: 65,
                   tailDrainPerSecond: 2,
                   loseGraceSeconds: 2.5,
+                  captureOnDisable: false,
                 },
               ),
             ],

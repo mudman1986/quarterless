@@ -42,6 +42,15 @@ export interface CitySpec {
   sidewalkWidth?: number;
   /** Rivers of water cutting across the map, crossed by bridges. */
   rivers?: RiverSpec[];
+  /**
+   * When set, deterministically fuse some neighbouring blocks into larger
+   * super-blocks (2×1, 1×2 or 2×2), removing the interior roads between them so
+   * a single bigger building fills the merged footprint. This breaks up the
+   * monotonous every-block grid — fewer intersections, varied block sizes — while
+   * remaining fully reproducible (the layout is a pure function of tile position,
+   * not a stateful RNG). Off by default; the regular modulo grid is unchanged.
+   */
+  mergeBlocks?: boolean;
 }
 
 export interface City {
@@ -246,17 +255,105 @@ function buildFacilities(
   return facilities;
 }
 
+/** A rectangular group of block-cells fused into one super-block, measured in
+ * block units (not tiles). A plain `1×1` is an ordinary single block. */
+interface SuperBlock {
+  bcx: number;
+  bcy: number;
+  bcw: number;
+  bch: number;
+}
+
+/** Deterministic hash of a block-cell coordinate to a float in [0, 1). Pure and
+ * stateless, so the merged layout is identical on every load. */
+function blockHash01(x: number, y: number): number {
+  let h = Math.imul(x, 73856093) ^ Math.imul(y, 19349663);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  h = (h ^ (h >>> 16)) >>> 0;
+  return h / 4294967296;
+}
+
+/**
+ * Partition the block grid into super-blocks. With `mergeBlocks` off every cell
+ * is its own `1×1` block (the classic regular grid). With it on, a greedy
+ * row-major pass fuses free neighbours into `2×2`, `2×1` or `1×2` groups using a
+ * position hash, yielding a deterministic mix of block sizes at roughly a
+ * moderate merge rate. Always a valid tiling: every cell is covered exactly
+ * once, so the surviving roads still form a connected grid. Pure.
+ */
+function partitionSuperBlocks(spec: CitySpec): SuperBlock[] {
+  const { cols, rows, block } = spec;
+  const bcols = Math.ceil(cols / block);
+  const brows = Math.ceil(rows / block);
+  const result: SuperBlock[] = [];
+  if (!spec.mergeBlocks) {
+    for (let by = 0; by < brows; by++) {
+      for (let bx = 0; bx < bcols; bx++) result.push({ bcx: bx, bcy: by, bcw: 1, bch: 1 });
+    }
+    return result;
+  }
+  const taken = new Uint8Array(bcols * brows);
+  const idx = (x: number, y: number): number => y * bcols + x;
+  const free = (x: number, y: number): boolean =>
+    x >= 0 && y >= 0 && x < bcols && y < brows && taken[idx(x, y)] === 0;
+  for (let by = 0; by < brows; by++) {
+    for (let bx = 0; bx < bcols; bx++) {
+      if (taken[idx(bx, by)] === 1) continue;
+      const h = blockHash01(bx, by);
+      const canRight = free(bx + 1, by);
+      const canDown = free(bx, by + 1);
+      const canSquare = canRight && canDown && free(bx + 1, by + 1);
+      let bcw = 1;
+      let bch = 1;
+      if (canSquare && h < 0.15) {
+        bcw = 2;
+        bch = 2;
+      } else if (canRight && h < 0.34) {
+        bcw = 2;
+      } else if (canDown && h < 0.5) {
+        bch = 2;
+      }
+      for (let dy = 0; dy < bch; dy++) {
+        for (let dx = 0; dx < bcw; dx++) taken[idx(bx + dx, by + dy)] = 1;
+      }
+      result.push({ bcx: bx, bcy: by, bcw, bch });
+    }
+  }
+  return result;
+}
+
 /**
  * Build a city: roads run along every `block`-th row and column, and the
  * interior of each block is a single rectangular building. Any rivers carve a
  * band of water across the map, removing the buildings there and leaving
  * bridges (with side rails) where crossing roads continue across the water.
+ * When {@link CitySpec.mergeBlocks} is set, some neighbouring blocks fuse into
+ * larger super-blocks with their interior roads removed (see
+ * {@link partitionSuperBlocks}).
  */
 export function buildCity(spec: CitySpec = DEFAULT_CITY): City {
   const { cols, rows, tile, block } = spec;
   const roadWidth = roadWidthFor(spec);
   const margin = spec.margin ?? 0;
   const rivers = spec.rivers ?? [];
+
+  // Super-block partition, and the set of interior road tiles it swallows.
+  const superBlocks = partitionSuperBlocks(spec);
+  const removedRoad = new Uint8Array(cols * rows);
+  for (const sb of superBlocks) {
+    if (sb.bcw === 1 && sb.bch === 1) continue; // a plain block removes no roads
+    const x0 = sb.bcx * block + roadWidth;
+    const x1 = Math.min((sb.bcx + sb.bcw) * block, cols);
+    const y0 = sb.bcy * block + roadWidth;
+    const y1 = Math.min((sb.bcy + sb.bch) * block, rows);
+    for (let ty = y0; ty < y1; ty++) {
+      for (let tx = x0; tx < x1; tx++) {
+        if (tx % block < roadWidth || ty % block < roadWidth) removedRoad[ty * cols + tx] = 1;
+      }
+    }
+  }
+  const isInteriorRoad = (tx: number, ty: number): boolean =>
+    tx >= 0 && ty >= 0 && tx < cols && ty < rows && removedRoad[ty * cols + tx] === 1;
 
   const isRoadLane = (tx: number, ty: number): boolean => tx % block < roadWidth || ty % block < roadWidth;
   const inBand = (river: RiverSpec, tx: number, ty: number): boolean => {
@@ -276,19 +373,20 @@ export function buildCity(spec: CitySpec = DEFAULT_CITY): City {
     rivers.some((r) => inBand(r, tx, ty) && isBridgeFor(r, tx, ty));
   const isWater = (tx: number, ty: number): boolean =>
     rivers.some((r) => inBand(r, tx, ty)) && !isBridge(tx, ty);
-  const isRoad = (tx: number, ty: number): boolean => isRoadLane(tx, ty) && !isWater(tx, ty);
+  const isRoad = (tx: number, ty: number): boolean =>
+    isRoadLane(tx, ty) && !isWater(tx, ty) && !isInteriorRoad(tx, ty);
 
-  // Building blocks, then carve the rivers out of them.
-  let tileRects: TileRect[] = [];
-  for (let bx = 0; bx * block < cols; bx++) {
-    for (let by = 0; by * block < rows; by++) {
-      const tx = bx * block + roadWidth;
-      const ty = by * block + roadWidth;
-      const tw = Math.min((bx + 1) * block, cols) - tx;
-      const th = Math.min((by + 1) * block, rows) - ty;
-      if (tw > 0 && th > 0) tileRects.push({ tx, ty, tw, th });
-    }
-  }
+  // One building per super-block (its full merged footprint), then carve the
+  // rivers out of them.
+  let tileRects: TileRect[] = superBlocks
+    .map((sb) => {
+      const tx = sb.bcx * block + roadWidth;
+      const ty = sb.bcy * block + roadWidth;
+      const tw = Math.min((sb.bcx + sb.bcw) * block, cols) - tx;
+      const th = Math.min((sb.bcy + sb.bch) * block, rows) - ty;
+      return { tx, ty, tw, th };
+    })
+    .filter((r) => r.tw > 0 && r.th > 0);
   for (const river of rivers) tileRects = tileRects.flatMap((r) => subtractBand(r, river));
 
   const buildings = tileRects

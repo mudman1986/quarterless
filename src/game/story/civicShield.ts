@@ -15,6 +15,13 @@ export const CIVIC_SHIELD: StoryChapter = {
     'Rook identifies Civic Shield, the private security contractor that acts as the Switchboard\'s muscle, and starts pulling apart the roster that decides who gets rescued and who gets left.',
   combinedGoal:
     'Learn the contractor\'s patrol logic from the inside, expose the staged panics it profits from, and steal the live roster that proves which emergencies are delayed on purpose before the district turns its guns on Rook.',
+  presentation: {
+    opener: {
+      speaker: 'Rook Vance',
+      role: 'Cracking private response',
+      kicker: 'Paid Panic Response',
+    },
+  },
   missions: [
     {
       id: 'training-day',

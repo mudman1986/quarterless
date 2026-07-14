@@ -13,6 +13,13 @@ export const NEON_COURIERS: StoryChapter = {
   combinedGoal:
     'Win over the courier crews, learn how the Switchboard routes around surveillance, and steal the tape that maps the fast lanes no official dispatcher admits exist.',
   missionGroups: [['signal-sprint'], ['drop-stack', 'blind-corner'], ['rival-tape'], ['lamps-out']],
+  presentation: {
+    opener: {
+      speaker: 'Rook Vance',
+      role: 'Riding ahead of dispatch',
+      kicker: 'Faster Than Dispatch',
+    },
+  },
   missions: [
     {
       id: 'signal-sprint',

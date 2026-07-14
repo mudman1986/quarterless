@@ -27,7 +27,7 @@ import {
   type StoryLaunchRequest,
 } from './game/story/storyLaunchState';
 import { loadStoryMissionScorecards } from './game/story/storyMissionScorecards';
-import { chapterMissingSystems, formatStorySystem } from './game/story/storyMode';
+import { chapterMissingSystems, formatStorySystem, summarizeStoryCityState } from './game/story/storyMode';
 import { arcadeGames as games, type ArcadeGame, type LaunchMode } from './games/catalog';
 
 let activeGame: GameRuntime | null = null;
@@ -125,6 +125,7 @@ function missionScorecardItems(): string {
             <span class="story-scorecard-metric"><strong>Vehicle</strong><span>${card.vehicleConditionText}</span></span>
             <span class="story-scorecard-metric"><strong>Service</strong><span>${card.serviceLaneText}</span></span>
             <span class="story-scorecard-metric"><strong>Faction</strong><span>${card.factionEffectText}</span></span>
+            <span class="story-scorecard-metric"><strong>City</strong><span>${card.cityStateText}</span></span>
             <span class="story-scorecard-metric"><strong>Story</strong><span>${card.unlockText}</span></span>
           </div>
           <span class="story-scorecard-copy">${card.nextText}</span>
@@ -154,6 +155,29 @@ function activeConsequenceItems(progress = createStoryProgress(STORY_MODE_PROTOT
           <span class="story-archive-copy">${branchId}</span>
         </li>`,
     )
+    .join('');
+}
+
+function cityStandingItems(progress = createStoryProgress(STORY_MODE_PROTOTYPE)): string {
+  const state = summarizeStoryCityState(STORY_MODE_PROTOTYPE, progress.branchOutcomes);
+  if (state.standings.length === 0) {
+    return '<li class="story-archive-empty">No citywide shifts yet.</li>';
+  }
+  const axisLabel: Record<string, string> = {
+    district: 'District',
+    faction: 'Faction',
+    service: 'Service',
+  };
+  return state.standings
+    .map((standing) => {
+      const sign = standing.total > 0 ? '+' : '';
+      const notes = standing.notes.length > 0 ? standing.notes.join(' • ') : 'No recorded notes';
+      return `
+        <li class="story-archive-item">
+          <span class="story-archive-title">${standing.label} (${axisLabel[standing.axis] ?? standing.axis}) ${sign}${standing.total}</span>
+          <span class="story-archive-copy">${notes}</span>
+        </li>`;
+    })
     .join('');
 }
 
@@ -508,6 +532,12 @@ function renderStoryMenu(game: ArcadeGame): void {
               <h3>Active Consequences</h3>
               <ul class="story-archive-list">
                 ${activeConsequenceItems(progress)}
+              </ul>
+            </div>
+            <div class="story-scorecard-block" aria-label="City standing">
+              <h3>City Standing</h3>
+              <ul class="story-archive-list">
+                ${cityStandingItems(progress)}
               </ul>
             </div>
             <div class="story-scorecard-block" aria-label="Recent mission scorecards">

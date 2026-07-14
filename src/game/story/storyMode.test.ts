@@ -30,7 +30,11 @@ import {
   storyChapterPendingMissionGroup,
   storyMissionInitialObjectiveIndex,
   storyObjectiveIndexFromRuntime,
+  summarizeStoryCityState,
+  formatStoryCityState,
   validateStoryMode,
+  validateStoryBalance,
+  STORY_BALANCE_BOUNDS,
 } from './storyMode';
 import type { StoryChapter, StoryMissionPlan, StoryMode, StoryRuntimeScript } from './storyMode';
 
@@ -45,6 +49,15 @@ function fixedObjectiveTargets(runtime: ReturnType<typeof compileStoryMissionRun
 }
 
 function storyPlansForMarkerValidation() {
+  const branchSingletons = STORY_MODE_PROTOTYPE.acts.flatMap((act) =>
+    act.chapters.flatMap((chapter) =>
+      chapter.missions.flatMap((mission) =>
+        mission.branchOutcome
+          ? [{ [mission.branchOutcome.branchId]: mission.branchOutcome.outcomeId }]
+          : [],
+      ),
+    ),
+  );
   return STORY_MODE_PROTOTYPE.acts.flatMap((act) =>
     act.chapters.flatMap((chapter) =>
       chapter.missions.flatMap((mission) => {
@@ -52,10 +65,26 @@ function storyPlansForMarkerValidation() {
           label: `${act.id}/${chapter.id}/${mission.id}`,
           plan: mission,
         }];
-        const variantPlans = (mission.variants ?? []).map((variant) => ({
-          label: `${act.id}/${chapter.id}/${mission.id}:${variant.branchId}=${variant.outcomeId}`,
-          plan: resolveStoryMissionPlan(mission, { [variant.branchId]: variant.outcomeId }),
-        }));
+        const variantPlans = (mission.variants ?? []).flatMap((variant) => {
+          if (variant.branchId !== undefined && variant.outcomeId !== undefined) {
+            return [{
+              label: `${act.id}/${chapter.id}/${mission.id}:${variant.branchId}=${variant.outcomeId}`,
+              plan: resolveStoryMissionPlan(mission, { [variant.branchId]: variant.outcomeId }),
+            }];
+          }
+          // City-state gated variant: resolve against whichever recorded outcome selects it.
+          for (const branchOutcomes of branchSingletons) {
+            const cityState = summarizeStoryCityState(STORY_MODE_PROTOTYPE, branchOutcomes);
+            const resolved = resolveStoryMissionPlan(mission, branchOutcomes, cityState);
+            if (resolved !== mission) {
+              return [{
+                label: `${act.id}/${chapter.id}/${mission.id}:cityState`,
+                plan: resolved,
+              }];
+            }
+          }
+          return [];
+        });
         return [...basePlan, ...variantPlans];
       }),
     ),
@@ -151,8 +180,8 @@ function withFirstMission(story: StoryMode, mission: StoryMissionPlan): StoryMod
 describe('validateStoryMode', () => {
   it('accepts the first implemented story slice', () => {
     expect(validateStoryMode(STORY_MODE_PROTOTYPE)).toEqual([]);
-    expect(countStoryChapters(STORY_MODE_PROTOTYPE)).toBe(13);
-    expect(countStoryMissions(STORY_MODE_PROTOTYPE)).toBe(65);
+    expect(countStoryChapters(STORY_MODE_PROTOTYPE)).toBe(24);
+    expect(countStoryMissions(STORY_MODE_PROTOTYPE)).toBe(120);
   });
 
   it('accepts a minimal well-formed fixture', () => {
@@ -307,6 +336,141 @@ describe('validateStoryMode', () => {
   });
 });
 
+describe('validateStoryBalance', () => {
+  function missionWithRuntime(id: string, reward: number): StoryMissionPlan {
+    return {
+      ...minimalMission(id),
+      prototypeRuntime: {
+        id,
+        title: `${id} runtime`,
+        objectives: [{ kind: 'reach', description: 'Reach', target: { x: 0, y: 0 }, radius: 24 }],
+        reward,
+      },
+    };
+  }
+
+  it('accepts the shipped prototype economy and timings', () => {
+    expect(validateStoryBalance(STORY_MODE_PROTOTYPE)).toEqual([]);
+  });
+
+  it('accepts a minimal fixture with no runtime data', () => {
+    expect(validateStoryBalance(minimalStoryMode())).toEqual([]);
+  });
+
+  it('accepts a reward at the upper bound but rejects one above it', () => {
+    const atMax = missionWithRuntime('edge', STORY_BALANCE_BOUNDS.reward.max);
+    expect(validateStoryBalance(withFirstMission(minimalStoryMode(), atMax))).toEqual([]);
+    const above = missionWithRuntime('edge', STORY_BALANCE_BOUNDS.reward.max + 1);
+    expect(
+      validateStoryBalance(withFirstMission(minimalStoryMode(), above)).some((issue) =>
+        issue.message.includes('Reward'),
+      ),
+    ).toBe(true);
+  });
+
+  it('flags a mission that pays a trivially small reward', () => {
+    const mission = missionWithRuntime('cheap', 50);
+    expect(
+      validateStoryBalance(withFirstMission(minimalStoryMode(), mission)).some((issue) =>
+        issue.message.includes('outside the balance range'),
+      ),
+    ).toBe(true);
+  });
+
+  it('flags an impossible wanted-star objective', () => {
+    const mission: StoryMissionPlan = {
+      ...minimalMission('heat'),
+      prototypeRuntime: {
+        id: 'heat',
+        title: 'Heat runtime',
+        objectives: [{ kind: 'wanted', description: 'Survive the heat', stars: 9 }],
+        reward: 4000,
+      },
+    };
+    expect(
+      validateStoryBalance(withFirstMission(minimalStoryMode(), mission)).some((issue) =>
+        issue.message.includes('Wanted stars'),
+      ),
+    ).toBe(true);
+  });
+
+  it('flags a route objective with an impossibly tight time limit', () => {
+    const mission: StoryMissionPlan = {
+      ...minimalMission('dash'),
+      prototypeRuntime: {
+        id: 'dash',
+        title: 'Dash runtime',
+        objectives: [
+          {
+            kind: 'route',
+            description: 'Race the route',
+            targets: [{ x: 0, y: 0 }],
+            radius: 24,
+            timeLimitSeconds: 3,
+          },
+        ],
+        reward: 4000,
+      },
+    };
+    expect(
+      validateStoryBalance(withFirstMission(minimalStoryMode(), mission)).some((issue) =>
+        issue.message.includes('Route time limit'),
+      ),
+    ).toBe(true);
+  });
+
+  it('flags a script fail rule with an unreachable escort radius', () => {
+    const mission: StoryMissionPlan = {
+      ...missionWithRuntime('escort', 4000),
+      prototypeScript: {
+        primaryActorId: 'walker',
+        actors: [escortRouteActor('walker', [{ x: 0, y: 0 }], 100)],
+        failRules: [escortRadiusFailRule('walker', 'Lost the escort', 5)],
+      },
+    };
+    expect(
+      validateStoryBalance(withFirstMission(minimalStoryMode(), mission)).some((issue) =>
+        issue.message.includes('Escort-radius fail rule radius'),
+      ),
+    ).toBe(true);
+  });
+
+  it('flags a reward economy that regresses across acts', () => {
+    function actWithReward(actId: string, order: number, reward: number) {
+      const chapter = minimalChapter(`${actId}-c1`, actId, 1);
+      return {
+        id: actId,
+        order,
+        title: `Act ${order}`,
+        summary: 'Summary',
+        chapters: [
+          {
+            ...chapter,
+            missions: chapter.missions.map((mission) => ({
+              ...mission,
+              prototypeRuntime: {
+                id: mission.id,
+                title: `${mission.id} runtime`,
+                objectives: [
+                  { kind: 'reach' as const, description: 'Reach', target: { x: 0, y: 0 }, radius: 24 },
+                ],
+                reward,
+              },
+            })),
+          },
+        ],
+      };
+    }
+    const story: StoryMode = {
+      ...minimalStoryMode(),
+      acts: [actWithReward('act-1', 1, 10000), actWithReward('act-2', 2, 2000)],
+    };
+    expect(
+      validateStoryBalance(story).some((issue) => issue.message.includes('regresses below')),
+    ).toBe(true);
+  });
+});
+
 describe('chapter runtime readiness', () => {
   it('tracks which new systems still block the chapter from full runtime play', () => {
     expect(isChapterRuntimeReady(DEAD_DROP_DISTRICT)).toBe(true);
@@ -325,6 +489,106 @@ describe('chapter runtime readiness', () => {
   it('treats the Stage 5 reference chapter as fully scripted, not just runtime-compiled', () => {
     expect(DEAD_DROP_DISTRICT.missions.every((mission) => !!mission.prototypeRuntime)).toBe(true);
     expect(DEAD_DROP_DISTRICT.missions.every((mission) => !!mission.prototypeScript)).toBe(true);
+  });
+});
+
+describe('citywide reactivity (Stage 13)', () => {
+  it('accumulates branch-outcome effects into an ordered city-state summary', () => {
+    const state = summarizeStoryCityState(STORY_MODE_PROTOTYPE, { 'double-booking': 'save-passenger-a' });
+    expect(state.standings.length).toBeGreaterThan(0);
+    const informants = state.standings.find(
+      (standing) => standing.axis === 'faction' && standing.id === 'informants',
+    );
+    expect(informants?.total).toBe(2);
+    expect(informants?.notes.length).toBeGreaterThan(0);
+    // Ordered: districts before factions before services.
+    const axes = state.standings.map((standing) => standing.axis);
+    const factionIndex = axes.indexOf('faction');
+    const serviceIndex = axes.indexOf('service');
+    if (factionIndex !== -1 && serviceIndex !== -1) {
+      expect(factionIndex).toBeLessThan(serviceIndex);
+    }
+  });
+
+  it('returns an empty summary when no effect-bearing outcomes are recorded', () => {
+    const state = summarizeStoryCityState(STORY_MODE_PROTOTYPE, {});
+    expect(state.standings).toEqual([]);
+    expect(formatStoryCityState(state)).toContain('City steady');
+  });
+
+  it('records opposing citywide consequences for each double-booking outcome', () => {
+    const a = summarizeStoryCityState(STORY_MODE_PROTOTYPE, { 'double-booking': 'save-passenger-a' });
+    const b = summarizeStoryCityState(STORY_MODE_PROTOTYPE, { 'double-booking': 'save-passenger-b' });
+    expect(a.standings.map((standing) => standing.id)).not.toEqual(
+      b.standings.map((standing) => standing.id),
+    );
+    expect(formatStoryCityState(a)).not.toBe(formatStoryCityState(b));
+  });
+
+  it('lets a later mission variant resolve from accumulated city state, not a single branch key', () => {
+    const commissioner = STORY_MODE_PROTOTYPE.acts
+      .flatMap((act) => act.chapters)
+      .flatMap((chapter) => chapter.missions)
+      .find((mission) => mission.id === 'open-channel');
+    expect(commissioner).toBeDefined();
+    const radioOutcomes = { 'double-booking': 'save-passenger-b' };
+    const radioState = summarizeStoryCityState(STORY_MODE_PROTOTYPE, radioOutcomes);
+    const radioPlan = resolveStoryMissionPlan(commissioner!, radioOutcomes, radioState);
+    expect(radioPlan).not.toBe(commissioner);
+    expect(radioPlan.payoff).toContain('pirate-radio');
+
+    const informantOutcomes = { 'double-booking': 'save-passenger-a' };
+    const informantState = summarizeStoryCityState(STORY_MODE_PROTOTYPE, informantOutcomes);
+    const informantPlan = resolveStoryMissionPlan(commissioner!, informantOutcomes, informantState);
+    expect(informantPlan).not.toBe(commissioner);
+    expect(informantPlan.hook).toContain('informant');
+
+    // A city-state variant keeps runtime markers identical to the base plan.
+    expect(radioPlan.prototypeRuntime).toBe(commissioner!.prototypeRuntime);
+    expect(radioPlan.prototypeScript).toBe(commissioner!.prototypeScript);
+  });
+
+  it('does not resolve city-state variants when no city state is supplied', () => {
+    const commissioner = STORY_MODE_PROTOTYPE.acts
+      .flatMap((act) => act.chapters)
+      .flatMap((chapter) => chapter.missions)
+      .find((mission) => mission.id === 'open-channel');
+    expect(resolveStoryMissionPlan(commissioner!, {})).toBe(commissioner);
+  });
+
+  it('lets mission variants override presentation metadata without dropping runtime fields', () => {
+    const mission: StoryMissionPlan = {
+      ...minimalMission('chapter-1-m1'),
+      presentation: {
+        briefing: { speaker: 'Rook Vance', kicker: 'Base beat' },
+      },
+      prototypeRuntime: {
+        id: 'chapter-1-m1',
+        title: 'Runtime title',
+        objectives: [
+          { kind: 'reach', description: 'Reach', target: { x: 0, y: 0 }, radius: 24 },
+        ],
+        reward: 2500,
+      },
+      variants: [
+        {
+          branchId: 'briefing-voice',
+          outcomeId: 'nia',
+          presentation: {
+            briefing: { speaker: 'Nia Vance', role: 'Dispatcher', kicker: 'Live relay' },
+          },
+        },
+      ],
+    };
+
+    const resolved = resolveStoryMissionPlan(mission, { 'briefing-voice': 'nia' });
+
+    expect(resolved.presentation?.briefing).toEqual({
+      speaker: 'Nia Vance',
+      role: 'Dispatcher',
+      kicker: 'Live relay',
+    });
+    expect(resolved.prototypeRuntime).toBe(mission.prototypeRuntime);
   });
 });
 
@@ -426,9 +690,7 @@ describe('authored story capability coverage', () => {
     'loseActor', 'escortRadius', 'wantedPressure', 'actorVehicleCondition',
   ] as const;
 
-  // `wanted` is a core mission primitive covered by the sandbox campaign and
-  // mission.test.ts, but no authored story mission drives to a star rating.
-  const NON_STORY_OBJECTIVE_KINDS = new Set<string>(['wanted']);
+  const NON_STORY_OBJECTIVE_KINDS = new Set<string>();
   // `loseActor` is implemented and covered in runtimeActors.test.ts, but every
   // authored escort uses the `escortRadius` variant instead.
   const NON_STORY_FAIL_RULE_KINDS = new Set<string>(['loseActor']);
@@ -483,6 +745,74 @@ describe('authored story capability coverage', () => {
     for (const kind of NON_STORY_FAIL_RULE_KINDS) {
       expect(usedFailRuleKinds.has(kind)).toBe(false);
     }
+  });
+});
+
+describe('authored eliminate objectives spawn scripted mission targets', () => {
+  // An `eliminate` + `targetsOnly` objective only makes sense if scripted mission
+  // targets actually appear at the objective location: otherwise nothing shows on
+  // the minimap and the target squad may never spawn. Every such objective must be
+  // served by a `pedestrianSquad` with `missionTargets: true` in the stage that is
+  // active while that objective is live, holding at least as many members as the
+  // objective asks the player to take down. This guards the whole authored story so
+  // no future mission can regress into a targetless eliminate step.
+  type Stage = {
+    actors: readonly { kind: string; missionTargets?: boolean; count?: number }[];
+    nextWhen?: { kind: string; objectiveIndex?: number };
+  };
+
+  const scriptStages = (script: StoryRuntimeScript): Stage[] => {
+    if (script.stages && script.stages.length > 0) return script.stages as unknown as Stage[];
+    return [{ actors: script.actors ?? [] }];
+  };
+
+  // Which stage is live while authored objective `objectiveIndex` is the goal.
+  // Stages advance one at a time when their `storyObjective` transition is met
+  // (`storyObjectiveIndex >= objectiveIndex`), mirroring the runtime.
+  const activeStageIndex = (stages: Stage[], objectiveIndex: number): number => {
+    let index = 0;
+    while (index < stages.length - 1) {
+      const transition = stages[index].nextWhen;
+      if (transition?.kind === 'storyObjective' && objectiveIndex >= (transition.objectiveIndex ?? 0)) {
+        index += 1;
+      } else {
+        break;
+      }
+    }
+    return index;
+  };
+
+  it('places a sufficient missionTargets squad in the active stage of every eliminate objective', () => {
+    const failures: string[] = [];
+
+    for (const { label, plan } of storyPlansForMarkerValidation()) {
+      const objectives = plan.prototypeRuntime?.objectives ?? [];
+      const script = plan.prototypeScript;
+      objectives.forEach((objective, objectiveIndex) => {
+        if (objective.kind !== 'eliminate' || !objective.targetsOnly) return;
+        if (!script) {
+          failures.push(`${label} eliminate[${objectiveIndex}] has no prototypeScript`);
+          return;
+        }
+        const stages = scriptStages(script);
+        const stage = stages[activeStageIndex(stages, objectiveIndex)];
+        const squads = stage.actors.filter(
+          (actor) => actor.kind === 'pedestrianSquad' && actor.missionTargets === true,
+        );
+        if (squads.length === 0) {
+          failures.push(`${label} eliminate[${objectiveIndex}] has no missionTargets squad in its active stage`);
+          return;
+        }
+        const largest = Math.max(...squads.map((squad) => squad.count ?? 0));
+        if (largest < objective.count) {
+          failures.push(
+            `${label} eliminate[${objectiveIndex}] squad size ${largest} < required ${objective.count}`,
+          );
+        }
+      });
+    }
+
+    expect(failures).toEqual([]);
   });
 });
 

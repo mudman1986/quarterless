@@ -19,6 +19,13 @@ export const FREIGHT_UNION_MORNING: StoryChapter = {
     ['crane-jam'],
     ['the-long-manifest'],
   ],
+  presentation: {
+    opener: {
+      speaker: 'Rook Vance',
+      role: 'Courting the dock union',
+      kicker: 'Dockworkers Remember',
+    },
+  },
   missions: [
     {
       id: 'union-test-run',

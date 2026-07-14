@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { waitForCitySceneReady } from './helpers';
 
 const MANUAL_SAVE_KEY = 'sindicate.manualSave';
 const UNLOCKED_THROUGH_STATIC_ON_THE_HOSPITAL_BAND = [
@@ -127,6 +128,55 @@ async function acknowledgeStoryPanel(page: import('@playwright/test').Page): Pro
   });
 }
 
+async function advanceStoryPanelOnce(page: import('@playwright/test').Page): Promise<void> {
+  await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      acknowledgeStoryPanel?: () => void;
+    };
+    scene?.acknowledgeStoryPanel?.();
+  });
+}
+
+async function acknowledgeVisibleStoryPanels(
+  page: import('@playwright/test').Page,
+  maxSteps = 4,
+): Promise<void> {
+  for (let step = 0; step < maxSteps; step += 1) {
+    const visible = await page.evaluate(() => {
+      const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+        .__game;
+      const scene = game?.scene.getScene('City') as {
+        storyPanel?: { visible: boolean };
+        acknowledgeStoryPanel?: () => void;
+      };
+      if (!scene?.storyPanel?.visible) return false;
+      scene.acknowledgeStoryPanel?.();
+      return true;
+    });
+    if (!visible) return;
+    await page.waitForFunction(() => {
+      const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+        .__game;
+      const scene = game?.scene.getScene('City') as {
+        storyPanel?: { visible: boolean };
+      };
+      return scene !== undefined && scene.storyPanel !== undefined;
+    });
+  }
+
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      paused: boolean;
+      storyPanel?: { visible: boolean };
+    };
+    return scene?.paused === false && !scene?.storyPanel?.visible;
+  });
+}
+
 interface StoryRestartMetric {
   durationMs: number;
   pointerdownListeners: number;
@@ -204,9 +254,11 @@ async function launchStoryModeWithOptions(
   await page.getByRole('button', { name: 'Play Sindicate' }).click();
   await expect(page.getByRole('heading', { name: 'Story Mode' })).toBeVisible({ timeout: 10_000 });
   await page.getByRole('button', { name: /Start Story|Continue Story|Resume Current Run/ }).click();
+  await page.waitForURL(/\/quarterless\/\?mode=story&story=1$/, { timeout: 15_000 });
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
+  await waitForCitySceneReady(page);
   await page.locator('#game canvas').click();
-  if (options.acknowledgeBrief) await acknowledgeStoryPanel(page);
+  if (options.acknowledgeBrief) await acknowledgeVisibleStoryPanels(page);
 }
 
 test.afterEach(async ({ page }) => {
@@ -290,6 +342,7 @@ test('story menu surfaces active consequences and dense scorecards for later ref
           vehicleConditionText: '92% → 80%',
           serviceLaneText: 'Paused: tow',
           factionEffectText: 'Union route secured',
+          cityStateText: 'Informant Network +2 · Police Response -1',
           systemsText: 'Tail · Scripted Encounter · District State',
           recordedAt: Date.now(),
         },
@@ -300,10 +353,12 @@ test('story menu surfaces active consequences and dense scorecards for later ref
 
   await expect(page.getByRole('heading', { name: 'Active Consequences' })).toBeVisible();
   await expect(page.getByText('double-booking')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'City Standing' })).toBeVisible();
+  await expect(page.getByLabel('City standing').getByText('Informant Network', { exact: false })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Recent Scorecards' })).toBeVisible();
   await expect(page.getByText('Harbor Echo')).toBeVisible();
   await expect(page.getByText('Reward')).toBeVisible();
-  await expect(page.getByText('Service')).toBeVisible();
+  await expect(page.getByLabel('Recent mission scorecards').getByText('Service', { exact: true })).toBeVisible();
   await expect(page.getByLabel('Recent mission scorecards').getByText('Tail')).toBeVisible();
 });
 
@@ -412,27 +467,103 @@ test('story mode boots and restores saved story progress after refresh', async (
   expect(afterRefresh.objectiveIndex).toBe(beforeRefresh.objectiveIndex);
 });
 
-test('story mission briefing stays visible until Enter acknowledges it', async ({ page }) => {
+test('story chapter opener stages into a mission briefing that stays visible until Enter acknowledges it', async ({
+  page,
+}) => {
   await launchStoryModeWithOptions(page, { acknowledgeBrief: false });
 
-  const before = await page.evaluate(() => {
+  const opener = await page.evaluate(() => {
     const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
       .__game;
     const scene = game?.scene.getScene('City') as {
       paused: boolean;
       storyPanel?: { visible: boolean; text: string };
+      storyPanelCinematicActive?: boolean;
+      storyPanelBaseZoom?: number;
+      storyPanelFocusTarget?: { x: number; y: number } | null;
+      storyPortraitName?: { visible: boolean; text: string };
+      storyPortraitRole?: { visible: boolean; text: string };
+      storyPortraitMonogram?: { visible: boolean; text: string };
+      cameras?: { main?: { zoom: number } };
     };
     return {
       paused: !!scene?.paused,
       visible: !!scene?.storyPanel?.visible,
       text: scene?.storyPanel?.text ?? '',
+      cinematicActive: !!scene?.storyPanelCinematicActive,
+      baseZoom: scene?.storyPanelBaseZoom ?? 0,
+      zoom: scene?.cameras?.main?.zoom ?? 0,
+      focusTarget: scene?.storyPanelFocusTarget ?? null,
+      portraitName: scene?.storyPortraitName?.text ?? '',
+      portraitRole: scene?.storyPortraitRole?.text ?? '',
+      portraitMonogram: scene?.storyPortraitMonogram?.text ?? '',
+      portraitVisible: !!scene?.storyPortraitName?.visible,
     };
   });
 
-  expect(before.paused).toBe(true);
-  expect(before.visible).toBe(true);
-  expect(before.text).toContain('MISSION BRIEF');
-  expect(before.text).toContain('Press Enter or tap to continue');
+  expect(opener.paused).toBe(true);
+  expect(opener.visible).toBe(true);
+  expect(opener.cinematicActive).toBe(true);
+  expect(opener.zoom).toBeGreaterThan(opener.baseZoom);
+  expect(opener.focusTarget).toEqual({ x: 640, y: 1088 });
+  expect(opener.portraitVisible).toBe(true);
+  expect(opener.portraitName).toBe('Rook Vance');
+  expect(opener.portraitRole).toContain('Returning wheelman');
+  expect(opener.portraitMonogram).toBe('RV');
+  expect(opener.text).toContain('CHAPTER 1');
+  expect(opener.text).toContain('Dead Drop District');
+  expect(opener.text).toContain('City Standing:');
+  expect(opener.text).toContain('Press Enter or tap to continue');
+
+  await page.keyboard.press('Enter');
+
+  const before = await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      paused: boolean;
+      storyPanel?: { visible: boolean; text: string };
+      storyPanelCinematicActive?: boolean;
+      storyPanelBaseZoom?: number;
+      storyPanelFocusTarget?: { x: number; y: number } | null;
+      storyPortraitName?: { visible: boolean; text: string };
+      storyPortraitRole?: { visible: boolean; text: string };
+      storyPortraitMonogram?: { visible: boolean; text: string };
+      cameras?: { main?: { zoom: number } };
+    };
+    if (!scene?.storyPanel?.visible || !scene.storyPanel.text.includes('MISSION BRIEF')) return null;
+    return {
+      paused: !!scene.paused,
+      visible: !!scene.storyPanel.visible,
+      text: scene.storyPanel.text,
+      cinematicActive: !!scene.storyPanelCinematicActive,
+      baseZoom: scene.storyPanelBaseZoom ?? 0,
+      zoom: scene.cameras?.main?.zoom ?? 0,
+      focusTarget: scene.storyPanelFocusTarget ?? null,
+      portraitName: scene.storyPortraitName?.text ?? '',
+      portraitRole: scene.storyPortraitRole?.text ?? '',
+      portraitMonogram: scene.storyPortraitMonogram?.text ?? '',
+      portraitVisible: !!scene.storyPortraitName?.visible,
+    };
+  });
+  const briefing = (await before.jsonValue())!;
+
+  expect(briefing.paused).toBe(true);
+  expect(briefing.visible).toBe(true);
+  expect(briefing.cinematicActive).toBe(true);
+  expect(briefing.zoom).toBeGreaterThan(briefing.baseZoom);
+  expect(briefing.focusTarget).toEqual({ x: 640, y: 1088 });
+  expect(briefing.portraitVisible).toBe(true);
+  expect(briefing.portraitName).toBe('Rook Vance');
+  expect(briefing.portraitRole).toContain('Returning wheelman');
+  expect(briefing.portraitMonogram).toBe('RV');
+  expect(briefing.text).toContain('MISSION BRIEF');
+  expect(briefing.text).toContain('Voice: Rook Vance');
+  expect(briefing.text).toContain('Beat: Back At The Waterfront');
+  expect(briefing.text).toContain('Pressure:');
+  expect(briefing.text).toContain('Failure:');
+  expect(briefing.text).toContain('City Standing:');
+  expect(briefing.text).toContain('Press Enter or tap to continue');
 
   await page.keyboard.press('Enter');
 
@@ -1015,6 +1146,87 @@ test('scripted district-state missions still announce stage shifts without showi
   expect(shift.decoyCarPos).toEqual({ x: -100000, y: -100000 });
 });
 
+test('an actor that persists across a stage transition starts the new stage route fresh instead of a stale index', async ({
+  page,
+}) => {
+  // Regression: an actor that stays alive across a stage boundary (e.g.
+  // "empty-shell-sedan" continuing from "shell-breakaway" into
+  // "shell-yard-handoff") kept its OLD stage's route index, which could point
+  // past the end of (or partway into) the NEW stage's differently-authored
+  // route array, silently skipping its earlier waypoints. This went unnoticed
+  // in the empty-shell-sedan case only because that mission's stage-2 route
+  // happens to be collinear with where stage 1 left off, so skipping its
+  // middle waypoint produced an identical straight path by coincidence.
+  await launchStoryMode(page);
+
+  await restartIntoStoryProgress(page, {
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'spare-parts-gospel',
+      missionId: 'the-empty-shell',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: ['dead-drop-district', 'spare-parts-gospel'],
+    completedChapterIds: ['dead-drop-district'],
+    completedMissionIds: [
+      'night-ferry-run',
+      'burned-locker',
+      'wreck-before-dawn',
+      'false-ambulance',
+      'last-call-at-pier-9',
+      'yard-talk',
+    ],
+    branchOutcomes: {},
+  });
+
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      storyScript?: { actorCarIndices: Record<string, number> } | null;
+    };
+    return scene?.storyScript?.actorCarIndices?.['empty-shell-sedan'] !== undefined;
+  });
+
+  const result = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      storyScript?: {
+        actorCarIndices: Record<string, number>;
+        actorRouteIndices: Record<string, number>;
+        stageLabel: string;
+      } | null;
+      world: { cars: Array<{ pos: { x: number; y: number } }> };
+      syncStoryScript?: (dt?: number) => void;
+    };
+    const storyScript = scene?.storyScript;
+    const carIndex = storyScript?.actorCarIndices?.['empty-shell-sedan'];
+    if (!storyScript || carIndex === undefined || typeof scene?.syncStoryScript !== 'function') {
+      throw new Error('Missing scripted actor stage hooks');
+    }
+    // Simulate the sedan having just finished stage 1's route (as the
+    // "stage shift" test above does), triggering the transition into stage 2.
+    const car = scene.world.cars[carIndex];
+    scene.world.cars[carIndex] = { ...car, pos: { x: 2496, y: 2112 } };
+    storyScript.actorRouteIndices['empty-shell-sedan'] = 2;
+    scene.syncStoryScript(0);
+    scene.syncStoryScript(0);
+    return {
+      stageLabel: storyScript.stageLabel,
+      routeIndexAfterTransition: storyScript.actorRouteIndices['empty-shell-sedan'],
+    };
+  });
+
+  expect(result.stageLabel).toContain('The real shell is slipping through the salvage gate');
+  // The sedan must start stage 2's own route from its first waypoint, not
+  // carry over stage 1's leftover index into the new (differently authored)
+  // route array.
+  expect(result.routeIndexAfterTransition).toBe(0);
+});
+
 test('despawning then respawning the same story actor reuses a clean slot with no leaked state', async ({
   page,
 }) => {
@@ -1213,6 +1425,8 @@ test('scripted encounter mission summaries keep their authored objective outcome
   expect(result.visible).toBe(true);
   expect(result.text).toContain('MISSION SUMMARY');
   expect(result.text).toContain('False Ambulance');
+  expect(result.text).toContain('Voice: Rook Vance');
+  expect(result.text).toContain('Beat: Back At The Waterfront');
   expect(result.text).toContain(
     "Objective Outcome: The rescued contact confirms the cleaners are storing Nia's badge and paper trail in the Pier 9 office.",
   );
@@ -1710,6 +1924,20 @@ test('scripted escort fail rules restart the current story mission', async ({ pa
     visible: true,
   });
 
+  await page.evaluate(() => {
+    const game = (
+      window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }
+    ).__game;
+    const scene = game?.scene.getScene('City') as {
+      pendingStoryRestart?: unknown;
+      update?: (time: number, deltaMs: number) => void;
+    };
+    if (typeof scene?.update !== 'function') throw new Error('Missing story restart update hook');
+    for (let step = 0; step < 8 && scene.pendingStoryRestart; step += 1) {
+      scene.update(performance.now() + step * 1000, 1000);
+    }
+  });
+
   const restarted = await page.waitForFunction(
     () => {
       const game = (
@@ -2037,6 +2265,7 @@ test('story mode can complete a longer multi-objective encounter and roll into t
     scene.world.elapsed += 16;
     scene.world.updateMissionProgress?.();
     scene.handleEvents();
+
   });
 
   const completion = await page.waitForFunction(() => {
@@ -2054,7 +2283,20 @@ test('story mode can complete a longer multi-objective encounter and roll into t
 
   expect(completionText).toContain('CHAPTER COMPLETE');
   expect(completionText).toContain('Static On The Hospital Band');
-  expect(completionText).toContain('Next: Meter Running');
+
+  const nextChapterBeat = await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      pendingStoryRestart?: unknown;
+      storyPanel?: { text: string };
+    };
+    if (!scene?.pendingStoryRestart) return null;
+    const text = scene.storyPanel?.text ?? '';
+    return text.includes('NEXT CHAPTER') ? text : null;
+  });
+
+  expect((await nextChapterBeat.jsonValue()) as string).toContain('Opening lead: Ghost Fare');
 
   const result = await page.waitForFunction(
     () => {
@@ -2074,8 +2316,6 @@ test('story mode can complete a longer multi-objective encounter and roll into t
       if (scene?.pendingStoryRestart) return null;
       if (scene?.storyProgress?.current?.chapterId !== 'meter-running') return null;
       if (scene.storyProgress.current.missionId !== 'ghost-fare') return null;
-      if (scene.world.mission?.title !== 'Ghost Fare') return null;
-      if (!scene.storyPanel?.text.startsWith('MISSION BRIEF\nGhost Fare')) return null;
       return {
         missionTitle: scene.world.mission?.title ?? '',
         panel: scene.storyPanel?.text ?? '',
@@ -2095,7 +2335,6 @@ test('story mode can complete a longer multi-objective encounter and roll into t
   };
 
   expect(longEncounterValue).toMatchObject({
-    missionTitle: 'Ghost Fare',
     unlocked: [
       'dead-drop-district',
       'spare-parts-gospel',
@@ -2104,8 +2343,26 @@ test('story mode can complete a longer multi-objective encounter and roll into t
     ],
     completed: ['dead-drop-district', 'spare-parts-gospel', 'static-on-the-hospital-band'],
   });
-  expect(longEncounterValue.panel).toContain('MISSION BRIEF');
-  expect(longEncounterValue.panel).toContain('Ghost Fare');
+  expect(longEncounterValue.panel).toContain('NEXT CHAPTER • 4');
+  expect(longEncounterValue.panel).toContain('Opening lead: Ghost Fare');
+
+  await advanceStoryPanelOnce(page);
+
+  const missionBrief = await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      world: { mission?: { title: string } | null };
+      storyPanel?: { text: string };
+    };
+    if (scene?.world.mission?.title !== 'Ghost Fare') return null;
+    const text = scene.storyPanel?.text ?? '';
+    return text.startsWith('MISSION BRIEF\nGhost Fare') ? text : null;
+  });
+
+  const missionBriefText = (await missionBrief.jsonValue()) as string;
+  expect(missionBriefText).toContain('MISSION BRIEF');
+  expect(missionBriefText).toContain('Ghost Fare');
 });
 
 test('chapter completion preserves money, ammo, and health instead of resetting the run', async ({
@@ -2177,19 +2434,27 @@ test('chapter completion preserves money, ammo, and health instead of resetting 
     return !!scene?.pendingStoryRestart;
   });
 
-  const result = await page.waitForFunction(
+  await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      pendingStoryRestart?: unknown;
+      update(time: number, deltaMs: number): void;
+    };
+    if (!scene?.pendingStoryRestart) throw new Error('Expected a pending story restart');
+    for (let step = 0; step < 8 && scene.pendingStoryRestart; step += 1) {
+      scene.update(performance.now() + step * 1000, 1000);
+    }
+  });
+
+  const nextPanel = await page.waitForFunction(
     () => {
       const game = (
         window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }
       ).__game;
       const scene = game?.scene.getScene('City') as {
-        world: {
-          health: { current: number };
-          weapon: { ammo: number };
-          score: { current: number };
-          mission?: { title: string } | null;
-        };
         pendingStoryRestart?: unknown;
+        storyPanel?: { text: string };
         storyProgress?: {
           current: { chapterId: string; missionId: string } | null;
         } | null;
@@ -2197,19 +2462,51 @@ test('chapter completion preserves money, ammo, and health instead of resetting 
       if (scene?.pendingStoryRestart) return null;
       if (scene?.storyProgress?.current?.chapterId !== 'meter-running') return null;
       if (scene.storyProgress.current.missionId !== 'ghost-fare') return null;
-      // The in-world mission/campaign must also reflect the new chapter, not just the
-      // story-progress bookkeeping (a stale restored campaign would leave this null/wrong
-      // even though storyProgress itself already points at the new chapter).
-      if (scene.world.mission?.title !== 'Ghost Fare') return null;
-      return {
-        health: scene.world.health.current,
-        ammo: scene.world.weapon.ammo,
-        score: scene.world.score.current,
-      };
+      const text = scene.storyPanel?.text ?? '';
+      return text.includes('NEXT CHAPTER') || text.startsWith('CHAPTER 4\nMeter Running') ||
+        text.startsWith('MISSION BRIEF\nGhost Fare')
+        ? text
+        : null;
     },
     undefined,
     { timeout: 8_000 },
   );
+
+  const nextPanelText = (await nextPanel.jsonValue()) as string;
+  if (nextPanelText.includes('NEXT CHAPTER')) {
+    expect(nextPanelText).toContain('Opening lead: Ghost Fare');
+    await advanceStoryPanelOnce(page);
+  } else if (nextPanelText.startsWith('CHAPTER 4')) {
+    expect(nextPanelText).toContain('Meter Running');
+    await advanceStoryPanelOnce(page);
+  } else {
+    expect(nextPanelText).toContain('MISSION BRIEF');
+    expect(nextPanelText).toContain('Ghost Fare');
+  }
+
+  await waitForCitySceneReady(page, { requireCampaign: true });
+
+  const result = await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      world: {
+        health: { current: number };
+        weapon: { ammo: number };
+        score: { current: number };
+        mission?: { title: string } | null;
+      };
+      storyPanel?: { text: string };
+    };
+    if (scene?.world.mission?.title !== 'Ghost Fare') return null;
+    const text = scene.storyPanel?.text ?? '';
+    if (!text.startsWith('MISSION BRIEF\nGhost Fare')) return null;
+    return {
+      health: scene.world.health.current,
+      ammo: scene.world.weapon.ammo,
+      score: scene.world.score.current,
+    };
+  });
 
   const preserved = (await result.jsonValue()) as { health: number; ammo: number; score: number };
   // Health/ammo carry over untouched; score only grows (mission completion pays a reward),
@@ -2306,6 +2603,199 @@ test('False Ambulance can be completed from the start with its stop objective an
   expect(result.panel).toContain('Reward: $4200');
 });
 
+test('False Ambulance can be pinned from its live start state and advances into the boxed-in stage', async ({
+  page,
+}) => {
+  await launchStoryMode(page);
+
+  await restartIntoStoryProgress(page, {
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'dead-drop-district',
+      missionId: 'false-ambulance',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: ['dead-drop-district'],
+    completedChapterIds: [],
+    completedMissionIds: ['night-ferry-run', 'burned-locker', 'wreck-before-dawn'],
+    branchOutcomes: {},
+  });
+  await acknowledgeStoryPanel(page);
+
+  const result = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      storyScript?: {
+        actorCarIndices: Record<string, number>;
+        captureSeconds: number;
+        stageIndex: number;
+      } | null;
+      world: {
+        player: { pos: { x: number; y: number } };
+        cars: Array<{ pos: { x: number; y: number } }>;
+      };
+      update: (time: number, deltaMs: number) => void;
+    };
+    if (!scene?.storyScript) throw new Error('Missing story script');
+    const carIndex = scene.storyScript.actorCarIndices['false-ambulance-van'];
+    if (carIndex === undefined) throw new Error('Missing false ambulance actor');
+    const ambulance = scene.world.cars[carIndex];
+    if (!ambulance) throw new Error('Missing false ambulance car');
+
+    // Recreate the live interception condition directly from the real mission
+    // start state: player on foot, close enough to the ambulance, standing still.
+    scene.world.player = {
+      ...scene.world.player,
+      pos: { x: ambulance.pos.x - 40, y: ambulance.pos.y },
+    };
+
+    const before = {
+      captureSeconds: scene.storyScript.captureSeconds,
+      stageIndex: scene.storyScript.stageIndex,
+    };
+
+    for (let i = 0; i < 5; i += 1) {
+      scene.update(i * 1000, 1000);
+    }
+
+    return {
+      before,
+      after: {
+        captureSeconds: scene.storyScript.captureSeconds,
+        stageIndex: scene.storyScript.stageIndex,
+      },
+    };
+  });
+
+  expect(result.before.captureSeconds).toBe(0);
+  expect(result.after.captureSeconds).toBeGreaterThan(0);
+  expect(result.after.stageIndex).toBeGreaterThanOrEqual(1);
+});
+
+test('destroying False Ambulance fails the mission instead of counting as a capture', async ({
+  page,
+}) => {
+  await launchStoryMode(page);
+
+  await restartIntoStoryProgress(page, {
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'dead-drop-district',
+      missionId: 'false-ambulance',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: ['dead-drop-district'],
+    completedChapterIds: [],
+    completedMissionIds: ['night-ferry-run', 'burned-locker', 'wreck-before-dawn'],
+    branchOutcomes: {},
+  });
+  await acknowledgeStoryPanel(page);
+
+  const result = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      storyScript?: { actorCarIndices: Record<string, number> } | null;
+      world: {
+        mission?: { id: string } | null;
+        explodeCar?: (index: number, byPlayer: boolean) => void;
+      };
+      storyProgress?: { current: { missionId: string } | null } | null;
+      storyPanel?: { text: string };
+      pendingStoryRestart?: unknown;
+      syncStoryScript?: (dt?: number) => void;
+    };
+    const carIndex = scene?.storyScript?.actorCarIndices?.['false-ambulance-van'];
+    if (carIndex === undefined || typeof scene?.world.explodeCar !== 'function') {
+      throw new Error('Missing false ambulance actor hooks');
+    }
+    scene.world.explodeCar(carIndex, true);
+    scene.syncStoryScript?.(0.3);
+    return {
+      missionId: scene.storyProgress?.current?.missionId ?? null,
+      liveMissionId: scene.world.mission?.id ?? null,
+      pendingRestart: scene.pendingStoryRestart !== null,
+      panel: scene.storyPanel?.text ?? '',
+    };
+  });
+
+  expect(result.missionId).toBe('false-ambulance');
+  expect(result.liveMissionId).toBe('false-ambulance');
+  expect(result.pendingRestart).toBe(true);
+  expect(result.panel).toContain('MISSION FAILED');
+  expect(result.panel).toContain('The witness died in the fake ambulance wreck.');
+});
+
+test('clearing a destroyed story car drops its wreck state instead of leaving an off-map tow target', async ({
+  page,
+}) => {
+  await launchStoryMode(page);
+
+  await restartIntoStoryProgress(page, {
+    version: 1,
+    storyId: 'sindicate-story-mode',
+    current: {
+      actId: 'find-the-missing-dispatcher',
+      chapterId: 'dead-drop-district',
+      missionId: 'false-ambulance',
+      objectiveIndex: 0,
+    },
+    unlockedChapterIds: ['dead-drop-district'],
+    completedChapterIds: [],
+    completedMissionIds: ['night-ferry-run', 'burned-locker', 'wreck-before-dawn'],
+    branchOutcomes: {},
+  });
+  await acknowledgeStoryPanel(page);
+
+  const result = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      storyScript?: { actorCarIndices: Record<string, number> } | null;
+      world: {
+        cars: Array<{ pos: { x: number; y: number } }>;
+        explodeCar?: (index: number, byPlayer: boolean) => void;
+        wreckedCars?: boolean[];
+        towedCars?: boolean[];
+        carBurnTimers?: number[];
+        carHealth?: number[];
+      };
+      clearActiveStoryActors?: () => void;
+    };
+    const carIndex = scene?.storyScript?.actorCarIndices?.['false-ambulance-van'];
+    if (
+      carIndex === undefined ||
+      typeof scene?.world.explodeCar !== 'function' ||
+      typeof scene.clearActiveStoryActors !== 'function'
+    ) {
+      throw new Error('Missing story cleanup hooks');
+    }
+    scene.world.explodeCar(carIndex, true);
+    scene.clearActiveStoryActors();
+    const car = scene.world.cars[carIndex];
+    return {
+      pos: car?.pos ?? null,
+      wrecked: scene.world.wreckedCars?.[carIndex] ?? null,
+      towed: scene.world.towedCars?.[carIndex] ?? null,
+      burnTimer: scene.world.carBurnTimers?.[carIndex] ?? null,
+      health: scene.world.carHealth?.[carIndex] ?? null,
+    };
+  });
+
+  expect(result).toEqual({
+    pos: { x: -100000, y: -100000 },
+    wrecked: false,
+    towed: false,
+    burnTimer: 0,
+    health: 100,
+  });
+});
+
 test('pause routes into the integrated Sindicate launch page with the current objective visible', async ({
   page,
 }) => {
@@ -2340,6 +2830,7 @@ test('story mode persists manual save slots alongside story progress', async ({ 
 
   await page.getByRole('button', { name: /Resume Current Run|Continue Story|Start Story/ }).click();
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
+  await waitForCitySceneReady(page, { requireCampaign: true });
   await page.evaluate(() => {
     const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
       .__game;
@@ -2403,48 +2894,18 @@ test('story mode shows a prototype-complete panel when the current story slice f
     }
 
     scene.storyProgress.current = {
-      actId: 'expose-the-machine',
-      chapterId: 'civic-shield',
-      missionId: 'black-badge-mile',
+      actId: 'break-the-four-pillars',
+      chapterId: 'dawn-through-concrete',
+      missionId: 'first-light-exit',
       objectiveIndex: 0,
     };
     scene.storyProgress.completedMissionIds = [
-      'union-test-run',
-      'picket-line-breaker',
-      'harbor-echo',
-      'crane-jam',
-      'the-long-manifest',
-      'signal-sprint',
-      'drop-stack',
-      'blind-corner',
-      'rival-tape',
-      'lamps-out',
-      'tenant-warning',
-      'window-tax',
-      'lobby-flood',
-      'fire-sale-run',
-      'vacancy-notice',
-      'soup-line-watch',
-      'siren-swap',
-      'half-block-safehouse',
-      'medicine-debt',
-      'quiet-chapel',
-      'antenna-climb',
-      'open-mic-trap',
-      'jingle-bomb',
-      'studio-sweep',
-      'citywide-readout',
-      'missed-payment',
-      'three-stores-down',
-      'ledger-heat',
-      'storm-drain-exit',
-      'rain-of-receipts',
-      'training-day',
-      'panic-demo',
-      'armor-column',
-      'contract-burn',
+      'breach-window',
+      'live-wire',
+      'failsafe-fleet',
+      'heartbeat-zero',
     ];
-    scene.prevMissionId = 'black-badge-mile';
+    scene.prevMissionId = 'first-light-exit';
     scene.prevMissionComplete = false;
     scene.world.campaign.currentIndex = scene.world.campaign.missions.length;
     scene.handleEvents();

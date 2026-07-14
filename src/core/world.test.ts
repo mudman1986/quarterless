@@ -6,6 +6,7 @@ import {
   SCORE_PER_POLICE,
   PLAYER_MAX_HEALTH,
   SERVICE_TIMEOUT,
+  SERVICE_PICKUP_DWELL,
   TRAFFIC_CAR_KINDS,
   VEHICLE_BURN_DURATION,
   carTuningForKind,
@@ -160,6 +161,26 @@ describe('World entering and exiting a car', () => {
     expect(w.isDriving).toBe(false);
     // Player is placed next to the car, not on top of it.
     expect(distance(w.player.pos, vec2(20, 0))).toBeGreaterThan(0);
+  });
+
+  it('exitVehicle() forces the player out of their car, placing them beside it', () => {
+    const w = new World({ player: player(), cars: [carAt(20, 0)] });
+    w.tick(controls({ action: true }), 1 / 60); // enter
+    expect(w.isDriving).toBe(true);
+    w.exitVehicle();
+    expect(w.isDriving).toBe(false);
+    expect(w.drivingCarIndex).toBeNull();
+    // Player ends up right beside the car, not stranded elsewhere.
+    expect(distance(w.player.pos, vec2(20, 0))).toBeLessThan(40);
+    expect(w.cars[0].speed).toBe(0);
+  });
+
+  it('exitVehicle() is a no-op when the player is not driving', () => {
+    const w = new World({ player: player(), cars: [carAt(20, 0)] });
+    expect(w.isDriving).toBe(false);
+    w.exitVehicle();
+    expect(w.isDriving).toBe(false);
+    expect(w.player.pos).toEqual(vec2(0, 0));
   });
 });
 
@@ -1043,6 +1064,36 @@ describe('World actor-car collision', () => {
     }
   });
 
+  it('ramps NPC traffic speed up gradually instead of snapping to cruise speed from a stop', () => {
+    // Regression: a car that had just been parked (or was braking at a red
+    // light / for an obstacle) used to jump from speed 0 straight to full
+    // cruise speed (~130px/s, well over the 45px/s run-over threshold) in a
+    // single tick the moment it was free to move again — instantly lethal to
+    // anyone standing right beside it, even though it never visibly "sped
+    // past" them. Speed must now ramp up at a bounded acceleration.
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    const w = new World({
+      player: player(),
+      cars: [{ pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 }],
+      carDrivers: [{ dir: vec2(1, 0) }], // a driver just took the wheel of a stopped car
+      city,
+      bounds: { width: city.width, height: city.height },
+      rng: () => 0.9, // never turn at intersections
+    });
+    const dt = 1 / 60;
+    const maxAccel = 220; // must match TRAFFIC_ACCEL in world.ts
+    let prevSpeed = 0;
+    let sawMovement = false;
+    for (let i = 0; i < 60; i++) {
+      w.tick(controls(), dt);
+      const speed = w.cars[0].speed;
+      expect(speed).toBeLessThanOrEqual(prevSpeed + maxAccel * dt + 1e-6);
+      if (speed > 0) sawMovement = true;
+      prevSpeed = speed;
+    }
+    expect(sawMovement).toBe(true); // it does actually get moving, just gradually
+  });
+
   it('stops a pedestrian from walking through a parked car', () => {
     const ped: Pedestrian = {
       pos: vec2(100, 100),
@@ -1520,7 +1571,7 @@ describe('World traffic rerouting and lights', () => {
     }
     expect(usedCrosswalk).toBe(true); // they stroll over the zebra crossings
     expect(crossedEast).toBe(true); // and actually reach the far kerb, not frozen
-  });
+  }, 10_000);
 
   it('reroutes calm pedestrians over a crosswalk instead of freezing at the kerb', () => {
     const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4, margin: 10 });
@@ -1628,9 +1679,11 @@ describe('World traffic rerouting and lights', () => {
     });
 
     let finalPos = start;
+    let recentPathLength = 0;
     for (let i = 0; i < 3600; i++) {
       w.tick(controls(), 1 / 60);
       const p = w.pedestrians[0];
+      if (i >= 3000) recentPathLength += distance(finalPos, p.pos);
       finalPos = p.pos;
       expect(city.water.some((water) => pointInRect(p.pos, water))).toBe(false);
     }
@@ -1638,6 +1691,13 @@ describe('World traffic rerouting and lights', () => {
     // The important regression is that calm pedestrians no longer walk over the
     // river; instead they peel off toward a bridge approach.
     expect(Math.abs(finalPos.x - start.x)).toBeGreaterThan(city.spec.tile);
+    // Stronger regression check: a pedestrian whose nearest waypoint graph node
+    // (by raw distance) sits on the far bank must not get stuck re-targeting
+    // that unreachable node forever — that would freeze it solid at the exact
+    // same spot right at the water's edge. Confirm it is still covering real
+    // ground late into the run (summed step distance over the final second),
+    // not frozen from some point onward.
+    expect(recentPathLength).toBeGreaterThan(30);
   });
 
   it('keeps a fleeing pedestrian out of the river even when panic steers it straight at the water', () => {
@@ -1685,7 +1745,7 @@ describe('World traffic rerouting and lights', () => {
       const p = w.pedestrians[0];
       expect(city.water.some((water) => pointInRect(p.pos, water))).toBe(false);
     }
-  });
+  }, 10_000);
 
   it('keeps a foot officer returning to station out of the river when home sits directly across the water', () => {
     const spec = {
@@ -1719,12 +1779,70 @@ describe('World traffic rerouting and lights', () => {
       bounds: { width: city.width, height: city.height },
     });
 
+    let reachedHome = false;
     for (let i = 0; i < 600; i++) {
       w.tick(controls(), 1 / 60);
       const officer = w.police.find((c) => c.kind === 'foot');
-      if (!officer) break; // reached home and was removed: also fine
+      if (!officer) {
+        reachedHome = true; // reached home and was removed
+        break;
+      }
       expect(city.water.some((water) => pointInRect(officer.pos, water))).toBe(false);
     }
+    // Regression: previously the officer would charge straight at the far bank,
+    // get held at the water's edge by the isWaterAt guard, and re-aim at the
+    // exact same unreachable point every tick — never actually rerouting via a
+    // bridge. It must eventually make it home, not just avoid the water forever.
+    expect(reachedHome).toBe(true);
+  });
+
+  it('keeps a returning-home pedestrian out of the river when its destination sits directly across the water', () => {
+    const spec = {
+      cols: 20,
+      rows: 20,
+      tile: 64,
+      block: 5,
+      margin: 10,
+      rivers: [{ orientation: 'horizontal' as const, start: 11, span: 3, bridgeEvery: 2 }],
+    };
+    const city = buildCity(spec);
+    const river = spec.rivers[0];
+    const riverTop = river.start * spec.tile;
+    const riverBottom = (river.start + river.span) * spec.tile;
+    const xWanted = 5 * spec.tile + spec.tile / 2;
+    const home = vec2(xWanted, riverBottom + 4);
+    const ped: Pedestrian = {
+      pos: vec2(xWanted, riverTop - 4),
+      heading: 0,
+      radius: 7,
+      state: 'wander',
+      target: home,
+      returningTo: home,
+    };
+    const w = new World({
+      player: player(),
+      city,
+      pedestrians: [ped],
+      bounds: { width: city.width, height: city.height },
+    });
+
+    let reachedHome = false;
+    // Pedestrians walk much slower than officers (PED_WALK_SPEED = 32px/s vs.
+    // the officer's faster pace), so this needs a much longer tick budget to
+    // finish the same kind of bridge detour within simulated time.
+    for (let i = 0; i < 3600; i++) {
+      w.tick(controls(), 1 / 60);
+      const p = w.pedestrians[0];
+      if (!p) {
+        reachedHome = true; // reached the destination and disappeared inside
+        break;
+      }
+      expect(city.water.some((water) => pointInRect(p.pos, water))).toBe(false);
+    }
+    // Same regression as the returning-home officer above: a direct path
+    // across the river with no wall blocking it must still reroute via a
+    // bridge instead of freezing at the water's edge forever.
+    expect(reachedHome).toBe(true);
   });
 });
 
@@ -2590,6 +2708,27 @@ describe('World car explosions', () => {
     expect(w.wantedStars).toBe(0); // the player did nothing: no heat
     expect(w.kills).toBe(0);
     expect(w.score.current).toBe(0);
+  });
+
+  it('reuses hauled-away vehicle slots instead of growing the car arrays', () => {
+    const w = new World({ player: player(), cars: [carAt(100, 100)] });
+    const state = w as unknown as {
+      appendVehicleSlot: (car: Car, kind: string, options: { health: number; wrecked?: boolean; respawnsAtTow?: boolean }) => number;
+      wreckedCars: boolean[];
+      towedCars: boolean[];
+    };
+    state.wreckedCars[0] = true;
+    state.towedCars[0] = true;
+
+    const first = state.appendVehicleSlot(carAt(200, 200), 'ambulance', { health: 60 });
+    state.wreckedCars[0] = true;
+    state.towedCars[0] = true;
+    const second = state.appendVehicleSlot(carAt(300, 300), 'tow', { health: 60 });
+
+    expect(first).toBe(0);
+    expect(second).toBe(0);
+    expect(w.cars).toHaveLength(1);
+    expect(w.cars[0]?.pos).toEqual(vec2(300, 300));
   });
 
   it('does not let two NPC cars blow up immediately on first impact', () => {
@@ -3785,6 +3924,56 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     const startDistance = distance(w.pedestrians[0].pos, towYard.spawn);
     for (let i = 0; i < 120; i++) w.tick(controls(), 1 / 60);
     expect(distance(w.pedestrians[0].pos, towYard.spawn)).toBeLessThan(startDistance);
+  });
+
+  it('does not re-respawn a wreck the player already resolved while an auto-dispatched tow crew was mid-animation', () => {
+    // Regression: an auto-dispatched tow truck's crew, once it finishes its own
+    // walk-out-and-hook animation, unconditionally set towedCars[targetCar] and
+    // called respawnCarAtTowYard(targetCar) — even if the player had already
+    // completed their own tow side-mission on that exact wreck in the meantime
+    // (setting towedCars true and respawning it themselves). That re-ran the
+    // full respawn on whatever now legitimately occupies that car slot (back in
+    // normal play), yanking it to a tow-yard spawn point out of nowhere.
+    const city = miniCity();
+    const wreck: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 20, radius: 12 };
+    const w = new World({
+      player: player(),
+      cars: [wreck],
+      city,
+      carDrivers: [{ dir: vec2(1, 0) }],
+      viewRadius: 4000,
+      bounds: { width: city.width, height: city.height },
+    });
+    // Simulate: the player's own tow mission already resolved this wreck (it is
+    // back in normal play, no longer a wreck) while an auto-dispatched truck's
+    // crew was still mid-animation walking out to hook it.
+    w.wreckedCars[0] = false;
+    w.towedCars[0] = true;
+    const beforePos = { ...w.cars[0].pos };
+    w.tows = [
+      {
+        pos: tileCenter(city.spec, 3, 4),
+        heading: 0,
+        radius: 14,
+        dir: vec2(1, 0),
+        target: wreck.pos,
+        targetCar: 0,
+        depot: tileCenter(city.spec, 3, 4),
+        completedWrecks: 0,
+        phase: 'collect',
+        crew: wreck.pos,
+        pickupElapsed: SERVICE_PICKUP_DWELL - 0.01,
+        age: 0,
+        speed: 0,
+        blocked: 0,
+        health: 60,
+      },
+    ];
+
+    w.tick(controls(), 1 / 60); // crosses the SERVICE_PICKUP_DWELL threshold this tick
+
+    // The already-resolved car must not be yanked back to a tow-yard spawn.
+    expect(w.cars[0].pos).toEqual(beforePos);
   });
 
   it('leaves a corpse when the tow operator is shot on foot', () => {

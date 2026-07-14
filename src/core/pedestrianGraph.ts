@@ -197,33 +197,53 @@ export function buildPedestrianGraph(city: City): PedestrianGraph {
     adjacency,
     nearestNode(pos: Vec2): number {
       if (nodes.length === 0) return -1;
-      // Outside the node bounds: pick the globally nearest node directly. This
-      // is exact and O(nodes), avoiding a runaway cell scan for far-off points.
-      if (pos.x < minX || pos.x > maxX || pos.y < minY || pos.y > maxY) {
-        let best = 0;
+      // Prefer a node the pedestrian can actually walk straight to (no water,
+      // road, or building in between). A pure nearest-by-distance pick can
+      // return a node that is geometrically close but unreachable in a
+      // straight line — e.g. a ring node just across a river — which would
+      // otherwise send the pedestrian straight at the water forever, getting
+      // blocked and re-picking the exact same unreachable node every tick.
+      const nearestReachable = (candidates: readonly number[]): number => {
+        let best = -1;
         let bestD = Infinity;
-        for (let i = 0; i < nodes.length; i++) {
-          const d = distance(pos, nodes[i]);
-          if (d < bestD) {
+        for (const ni of candidates) {
+          const d = distance(pos, nodes[ni]);
+          if (d < bestD && segmentWalkable(city, pos, nodes[ni])) {
             bestD = d;
-            best = i;
+            best = ni;
           }
         }
         return best;
-      }
-      for (let r = city.spec.tile; r <= city.width + city.height; r *= 2) {
+      };
+      const nearestAny = (candidates: readonly number[]): number => {
         let best = -1;
         let bestD = Infinity;
-        for (const ni of index.near(pos, r)) {
+        for (const ni of candidates) {
           const d = distance(pos, nodes[ni]);
           if (d < bestD) {
             bestD = d;
             best = ni;
           }
         }
-        if (best !== -1) return best;
+        return best;
+      };
+      // Outside the node bounds: pick the globally nearest reachable node
+      // directly. This is exact and O(nodes), avoiding a runaway cell scan for
+      // far-off points.
+      if (pos.x < minX || pos.x > maxX || pos.y < minY || pos.y > maxY) {
+        const all = nodes.map((_, i) => i);
+        const reachable = nearestReachable(all);
+        return reachable !== -1 ? reachable : nearestAny(all);
       }
-      return 0;
+      for (let r = city.spec.tile; r <= city.width + city.height; r *= 2) {
+        const candidates = index.near(pos, r);
+        const reachable = nearestReachable(candidates);
+        if (reachable !== -1) return reachable;
+      }
+      // No reachable node found anywhere on the map (should not normally
+      // happen): fall back to the nearest node overall so callers always get
+      // a valid index instead of getting stuck with -1.
+      return nearestAny(nodes.map((_, i) => i));
     },
   };
 }

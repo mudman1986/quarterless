@@ -13,6 +13,17 @@ import { SAINTS_OF_THE_SIDE_STREET } from './saintsOfTheSideStreet';
 import { BROADCAST_TEETH } from './broadcastTeeth';
 import { DEBT_COLLECTION_WEATHER } from './debtCollectionWeather';
 import { CIVIC_SHIELD } from './civicShield';
+import { THE_MISSING_SHIFT } from './theMissingShift';
+import { LOW_WATER_MARK } from './lowWaterMark';
+import { THE_GARDEN_DISTRICT_LIE } from './theGardenDistrictLie';
+import { BLUE_LIGHT_AUCTION } from './blueLightAuction';
+import { BONE_WHITE_MORNING } from './boneWhiteMorning';
+import { THE_BROKER } from './theBroker';
+import { THE_COMMISSIONER } from './theCommissioner';
+import { THE_DEVELOPER } from './theDeveloper';
+import { THE_MINISTER_OF_CARE } from './theMinisterOfCare';
+import { CITY_WITHOUT_PERMISSION } from './cityWithoutPermission';
+import { DAWN_THROUGH_CONCRETE } from './dawnThroughConcrete';
 
 export const FIND_THE_MISSING_DISPATCHER: StoryAct = {
   id: 'find-the-missing-dispatcher',
@@ -50,7 +61,29 @@ export const EXPOSE_THE_MACHINE: StoryAct = {
   title: 'Expose The Machine',
   summary:
     'Rook stops chasing the Switchboard\'s evidence and starts dismantling the private machinery that runs it, beginning with the security contractor that decides which emergencies are answered.',
-  chapters: [CIVIC_SHIELD],
+  chapters: [
+    CIVIC_SHIELD,
+    THE_MISSING_SHIFT,
+    LOW_WATER_MARK,
+    THE_GARDEN_DISTRICT_LIE,
+    BLUE_LIGHT_AUCTION,
+    BONE_WHITE_MORNING,
+  ],
+};
+export const BREAK_THE_FOUR_PILLARS: StoryAct = {
+  id: 'break-the-four-pillars',
+  order: 4,
+  title: 'Break The Four Pillars',
+  summary:
+    'With Nia alive and the Board named, Rook tears down the four private pillars that kept the Switchboard profitable before breaking the core itself open.',
+  chapters: [
+    THE_BROKER,
+    THE_COMMISSIONER,
+    THE_DEVELOPER,
+    THE_MINISTER_OF_CARE,
+    CITY_WITHOUT_PERMISSION,
+    DAWN_THROUGH_CONCRETE,
+  ],
 };
 export const STORY_MODE_PROTOTYPE: StoryMode = {
   schemaVersion: STORY_MODE_SCHEMA_VERSION,
@@ -58,5 +91,10 @@ export const STORY_MODE_PROTOTYPE: StoryMode = {
   title: 'Sindicate Story Mode',
   premise:
     'Rook Vance returns to the city to find their missing sister Nia and uncovers the Switchboard, a shadow system that sells control of emergency movement.',
-  acts: [FIND_THE_MISSING_DISPATCHER, COURT_THE_CITYS_MIDDLE_POWERS, EXPOSE_THE_MACHINE],
+  acts: [
+    FIND_THE_MISSING_DISPATCHER,
+    COURT_THE_CITYS_MIDDLE_POWERS,
+    EXPOSE_THE_MACHINE,
+    BREAK_THE_FOUR_PILLARS,
+  ],
 };

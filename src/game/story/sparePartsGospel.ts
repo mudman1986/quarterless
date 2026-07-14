@@ -18,6 +18,13 @@ export const SPARE_PARTS_GOSPEL: StoryChapter = {
     ['crusher-feed'],
     ['towline-oath'],
   ],
+  presentation: {
+    opener: {
+      speaker: 'Rook Vance',
+      role: 'Following the wreck trail',
+      kicker: 'Wrecks Keep Their Secrets',
+    },
+  },
   missions: [
     {
       id: 'yard-talk',

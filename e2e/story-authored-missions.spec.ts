@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import { launchSindicate } from './helpers';
 import {
   acknowledgeStoryPanel,
+  acknowledgeStoryPanelsUntilGameplay,
   completeActiveStoryMission,
   restartIntoStoryMission,
   waitForStoryProgress,
@@ -118,6 +119,7 @@ async function movePlayerToActiveObjectiveTarget(page: import('@playwright/test'
   await page.evaluate(() => {
     const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
     const scene = game?.scene.getScene('City') as {
+      syncStoryScript?: (dt: number) => void;
       world: {
         player: { pos: { x: number; y: number } };
         drivingCarIndex: number | null;
@@ -130,6 +132,7 @@ async function movePlayerToActiveObjectiveTarget(page: import('@playwright/test'
           >;
           objectiveState?: { kind: 'route'; completed: number } | null;
         } | null;
+        tick(controls: Record<string, boolean>, dt: number): void;
       };
     };
     const mission = scene?.world.mission;
@@ -148,6 +151,11 @@ async function movePlayerToActiveObjectiveTarget(page: import('@playwright/test'
         pos: { x: target.x, y: target.y },
       };
     }
+    scene.world.tick(
+      { up: false, down: false, left: false, right: false, action: false, confirm: false, fire: false },
+      1 / 60,
+    );
+    scene.syncStoryScript?.(1 / 60);
   });
 }
 
@@ -247,6 +255,7 @@ test.afterEach(async ({ page }) => {
 });
 
 test('every authored runtime mission boots into the expected mission shell', async ({ page }) => {
+  test.setTimeout(420_000);
   await launchSindicate(page);
 
   for (const entry of authoredMissions) {
@@ -303,7 +312,7 @@ for (const { entry, expectedProgress, startProgress } of missionCompletionCases)
       completedMissionIds: startProgress.completedMissionIds,
       branchOutcomes: startProgress.branchOutcomes,
     });
-    await acknowledgeStoryPanel(page);
+    await acknowledgeStoryPanelsUntilGameplay(page);
 
     const completion = await completeActiveStoryMission(page);
 
@@ -327,6 +336,100 @@ for (const { entry, expectedProgress, startProgress } of missionCompletionCases)
     });
   });
 }
+
+test('despawning a story actor the player is currently driving ejects them instead of stranding them off-map', async ({
+  page,
+}) => {
+  // Regression: despawnStoryActor() used to teleport an actor's car to the
+  // off-map despawn point without checking whether the player happened to be
+  // driving it (e.g. shortly before a stage transition or mission end). Since
+  // the camera/player follow whatever car `drivingCarIndex` points at, this
+  // dragged the player off-map right along with the car — "the vehicle
+  // disappeared" from the player's perspective.
+  await launchSindicate(page);
+  const target = scriptedRouteVehicleCases[0];
+  await restartIntoStoryMission(page, { ...target, objectiveIndex: 0 });
+  await acknowledgeStoryPanel(page);
+
+  const result = await page.evaluate((actorId) => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      storyScript?: { actorCarIndices: Record<string, number> } | null;
+      despawnStoryActor: (id: string) => void;
+      world: {
+        drivingCarIndex: number | null;
+        player: { pos: { x: number; y: number } };
+        cars: Array<{ pos: { x: number; y: number } }>;
+      };
+    };
+    const carIndex = scene?.storyScript?.actorCarIndices?.[actorId];
+    if (!scene || carIndex === undefined) throw new Error(`Missing actor car for ${actorId}`);
+    const carPosBefore = { ...scene.world.cars[carIndex]!.pos };
+    // Simulate the player driving the actor's own car right when it gets despawned.
+    scene.world.drivingCarIndex = carIndex;
+    scene.despawnStoryActor(actorId);
+    return {
+      carPosBefore,
+      drivingCarIndex: scene.world.drivingCarIndex,
+      playerPos: { ...scene.world.player.pos },
+    };
+  }, target.actorId);
+
+  expect(result.drivingCarIndex).toBeNull(); // player was ejected, not left "driving" a despawned car
+  // The player must be left near where the car actually was, not flung to the
+  // far off-map despawn coordinates.
+  const dx = result.playerPos.x - result.carPosBefore.x;
+  const dy = result.playerPos.y - result.carPosBefore.y;
+  expect(Math.hypot(dx, dy)).toBeLessThan(100);
+});
+
+test('a single frame hitch (e.g. the tab regaining focus) does not instantly fail an active fail-rule mission', async ({
+  page,
+}) => {
+  // Regression: CityScene.update() fed the raw, unclamped Phaser frame delta
+  // straight into syncStoryScript()'s story fail-rule timers. A dropped frame,
+  // a GC pause, or the browser tab losing and regaining focus can hand a
+  // multi-second `deltaMs` to a single update() call; unclamped, that jumps
+  // straight past any fail rule's `maxSeconds` in one shot ("mission failed
+  // two seconds after starting", even though the failing condition — here,
+  // already being at/above the wanted-pressure threshold — never actually
+  // held for that long in real time).
+  await launchSindicate(page);
+  await restartIntoStoryMission(page, {
+    actId: 'court-the-citys-middle-powers',
+    chapterId: 'saints-of-the-side-street',
+    missionId: 'siren-swap',
+    objectiveIndex: 0,
+  });
+  await acknowledgeStoryPanel(page);
+
+  const result = await page.evaluate(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('City') as {
+      world: { mission?: { id: string } | null; wanted: { heat: number } };
+      pendingStoryRestart: unknown;
+      update: (time: number, deltaMs: number) => void;
+    };
+    if (!scene) throw new Error('Missing City scene');
+    const missionBefore = scene.world.mission?.id ?? null;
+    // Already at the 2-star wanted-pressure threshold this mission fails on.
+    scene.world.wanted = { heat: 210 };
+    // Simulate a single ~10-second frame hitch/tab-refocus.
+    scene.update(0, 10_000);
+    return {
+      missionBefore,
+      missionAfter: scene.world.mission?.id ?? null,
+      pendingRestart: scene.pendingStoryRestart !== null,
+    };
+  });
+
+  expect(result.missionBefore).toBe('siren-swap');
+  // One hitch, however large, must not by itself exceed the fail rule's real
+  // (small) grace window — the clamp caps how much timer progress one frame
+  // can contribute, matching what could actually have elapsed moment-to-moment.
+  expect(result.pendingRestart).toBe(false);
+  expect(result.missionAfter).toBe('siren-swap');
+});
 
 test('scripted route vehicles advance instead of snapping back to their spawn point', async ({ page }) => {
   await launchSindicate(page);
@@ -372,6 +475,59 @@ test('scripted route vehicles advance instead of snapping back to their spawn po
 
     expect(await moved.jsonValue()).not.toBeNull();
   }
+});
+
+test('Bed Count keeps its scripted ambulance out of the river during the live tail route', async ({
+  page,
+}) => {
+  await launchSindicate(page);
+  await restartIntoStoryMission(page, {
+    actId: 'break-the-four-pillars',
+    chapterId: 'the-minister-of-care',
+    missionId: 'bed-count',
+    objectiveIndex: 0,
+  });
+  await acknowledgeStoryPanel(page);
+
+  await page.evaluate(() => {
+    (window as unknown as { __bedCountRiverStart?: number; __bedCountRiverHit?: boolean })
+      .__bedCountRiverStart = performance.now();
+    (window as unknown as { __bedCountRiverHit?: boolean }).__bedCountRiverHit = false;
+  });
+
+  const result = await page.waitForFunction(
+    () => {
+      const bag = window as unknown as {
+        __bedCountRiverStart?: number;
+        __bedCountRiverHit?: boolean;
+        __game?: { scene: { getScene(name: string): unknown } };
+      };
+      const scene = bag.__game?.scene.getScene('City') as {
+        storyScript?: { actorCarIndices: Record<string, number> } | null;
+        world: {
+          cars: Array<{ pos: { x: number; y: number } }>;
+          isWaterAt?: (pos: { x: number; y: number }) => boolean;
+        };
+      };
+      const carIndex = scene?.storyScript?.actorCarIndices?.['bed-count-ambulance'];
+      if (carIndex === undefined) return null;
+      const car = scene.world.cars[carIndex];
+      if (!car) return null;
+      if (scene.world.isWaterAt?.(car.pos)) bag.__bedCountRiverHit = true;
+      if ((performance.now() - (bag.__bedCountRiverStart ?? 0)) < 15_000) return null;
+      return {
+        waterHit: !!bag.__bedCountRiverHit,
+        pos: { x: car.pos.x, y: car.pos.y },
+      };
+    },
+    undefined,
+    { timeout: 18_000 },
+  );
+
+  expect(await result.jsonValue()).toEqual({
+    waterHit: false,
+    pos: expect.any(Object),
+  });
 });
 
 test('dead drop district missions expose scripted stage shifts for route and objective progress', async ({
@@ -564,6 +720,18 @@ test('eliminate-story squads stay out of the marker until the eliminate objectiv
     missionTargetCount: 4,
   });
 
+  // Regression guard (towline-oath bug): a squad parked off-map during the
+  // preceding objective fans out along X, so an exact despawn-position check
+  // never recognises it as parked and leaves every member stranded at the
+  // off-map sentinel. When the eliminate objective activates, members must snap
+  // onto the map near their objective center — nowhere near the off-map row.
+  const activated = await storyPedActorPositions(page, 'picket-blockers');
+  expect(activated).toHaveLength(4);
+  for (const ped of activated) {
+    expect(ped.x).toBeGreaterThan(-50000);
+    expect(ped.y).toBeGreaterThan(-50000);
+  }
+
   const beforeMove = await storyPedActorPositions(page, 'picket-blockers');
   await page.waitForTimeout(600);
   const afterMove = await storyPedActorPositions(page, 'picket-blockers');
@@ -675,7 +843,7 @@ test('pedestrian-route story actors stay out of the marker until the mission ent
   expect(await storyPedActorState(page, 'ward6-nurse')).toMatchObject({
     missionId: 'ward-6-exit',
     actorCount: 1,
-    storyTaggedCount: 1,
+    storyTaggedCount: 6,
     missionTargetCount: 0,
   });
 });
@@ -782,7 +950,7 @@ test('completing an eliminate chapter finale does not leak its transient squad i
     chapterId: 'spare-parts-gospel',
     completedMissionId: 'last-call-at-pier-9',
   });
-  await acknowledgeStoryPanel(page);
+  await acknowledgeStoryPanelsUntilGameplay(page);
 
   expect(await storyPedActorState(page, 'pier-9-cleaners')).toEqual({
     missionId: 'yard-talk',

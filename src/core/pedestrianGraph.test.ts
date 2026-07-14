@@ -126,6 +126,78 @@ describe('buildPedestrianGraph', () => {
     expect(distance(graph.nodes[got], probe)).toBeLessThanOrEqual(distance(target, probe) + 1e-6);
   });
 
+  it('never returns a node only reachable by crossing water, even when it is the geometric nearest', () => {
+    // Regression: a pure nearest-by-distance pick can return a node that sits
+    // just across a river — geometrically close, but physically unreachable
+    // in a straight line. A pedestrian steered at it gets blocked by the
+    // water guard and (before this fix) re-picked the exact same unreachable
+    // node every tick forever.
+    //
+    // This exact geometric trap is layout-dependent: it does NOT occur with
+    // every block/margin/river combination (e.g. the live game's wide
+    // CITY_SPEC margins keep same-side nodes close enough that a cross-river
+    // node is never nearest) — confirmed by brute-force search across several
+    // configs before writing this test. This spec (narrow blocks/margins,
+    // dense node rings) is one where the adversarial case is confirmed to
+    // occur, so this test actually exercises the fix instead of passing
+    // vacuously regardless of it.
+    const spec = {
+      cols: 30,
+      rows: 30,
+      tile: 48,
+      block: 4,
+      margin: 8,
+      rivers: [{ orientation: 'horizontal' as const, start: 14, span: 2, bridgeEvery: 3 }],
+    };
+    const city = buildCity(spec);
+    const graph = buildPedestrianGraph(city);
+    const riverTop = spec.rivers[0].start * spec.tile;
+    const riverBottom = (spec.rivers[0].start + spec.rivers[0].span) * spec.tile;
+
+    const crossesWater = (a: Vec2, b: Vec2): boolean => {
+      const steps = Math.max(2, Math.ceil(distance(a, b) / 6));
+      for (let k = 0; k <= steps; k++) {
+        const t = k / steps;
+        const p = vec2(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
+        const tx = Math.floor(p.x / spec.tile);
+        const ty = Math.floor(p.y / spec.tile);
+        if (city.isWater(tx, ty)) return true;
+      }
+      return false;
+    };
+    const bruteNearest = (pos: Vec2): number => {
+      let best = -1;
+      let bestD = Infinity;
+      graph.nodes.forEach((node, i) => {
+        const d = distance(pos, node);
+        if (d < bestD) {
+          bestD = d;
+          best = i;
+        }
+      });
+      return best;
+    };
+
+    // Search a grid of points near both riverbanks for a probe point whose raw
+    // nearest node (by distance alone) is only reachable by crossing the
+    // river — the exact trap the fix closes.
+    let probe: Vec2 | null = null;
+    outer: for (const y of [riverTop - 4, riverTop - 20, riverBottom + 4, riverBottom + 20]) {
+      for (let x = 0; x < city.width; x += 6) {
+        const candidate = vec2(x, y);
+        const nearest = bruteNearest(candidate);
+        if (nearest >= 0 && crossesWater(candidate, graph.nodes[nearest])) {
+          probe = candidate;
+          break outer;
+        }
+      }
+    }
+    expect(probe).not.toBeNull(); // sanity: confirms this trap genuinely exists in this city
+
+    const got = graph.nearestNode(probe!);
+    expect(crossesWater(probe!, graph.nodes[got])).toBe(false);
+  });
+
   it('returns the truly nearest node for a point far outside the city', () => {
     // A parked/despawned story actor can sit far off the map. The search must
     // still return the genuinely nearest node (not an arbitrary fallback) and

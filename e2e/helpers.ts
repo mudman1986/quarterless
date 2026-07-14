@@ -13,6 +13,40 @@ type TangramTestHook = {
   };
 };
 
+interface WaitForCitySceneOptions {
+  requireCampaign?: boolean;
+  requireUnpaused?: boolean;
+  timeout?: number;
+}
+
+export async function waitForCitySceneReady(
+  page: Page,
+  options: WaitForCitySceneOptions = {},
+): Promise<void> {
+  await page.waitForFunction(
+    ({ requireCampaign, requireUnpaused }) => {
+      const game = (
+        window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }
+      ).__game;
+      const scene = game?.scene.getScene('City') as {
+        paused?: boolean;
+        hud?: { text: string };
+        world?: { campaign?: unknown };
+        scene?: { restart(data: unknown): void };
+      };
+      if (!scene?.world || !scene.hud || !scene.scene) return false;
+      if (requireCampaign && !scene.world.campaign) return false;
+      if (requireUnpaused && scene.paused !== false) return false;
+      return true;
+    },
+    {
+      requireCampaign: options.requireCampaign ?? false,
+      requireUnpaused: options.requireUnpaused ?? false,
+    },
+    { timeout: options.timeout ?? 15_000 },
+  );
+}
+
 export async function launchSindicate(page: Page): Promise<void> {
   await page.goto('/quarterless/');
   await expect(page.getByRole('heading', { name: 'Retro Arcade' })).toBeVisible({
@@ -21,23 +55,40 @@ export async function launchSindicate(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Play Sindicate' }).click();
   await expect(page.getByRole('heading', { name: 'Story Mode' })).toBeVisible({ timeout: 10_000 });
   await page.getByRole('button', { name: /Start Story|Continue Story|Resume Current Run/ }).click();
+  await page.waitForURL(/\/quarterless\/\?mode=story&story=1$/, { timeout: 15_000 });
   const canvas = page.locator('#game canvas');
   await expect(canvas).toBeVisible({ timeout: 15_000 });
+  await waitForCitySceneReady(page);
   await canvas.click();
-  await page.evaluate(() => {
-    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
-    const scene = game?.scene.getScene('City') as {
-      acknowledgeStoryPanel?: () => void;
-    };
-    scene?.acknowledgeStoryPanel?.();
-  });
+  for (let step = 0; step < 4; step += 1) {
+    const visible = await page.evaluate(() => {
+      const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+        .__game;
+      const scene = game?.scene.getScene('City') as {
+        storyPanel?: { visible: boolean };
+        acknowledgeStoryPanel?: () => void;
+      };
+      if (!scene?.storyPanel?.visible) return false;
+      scene.acknowledgeStoryPanel?.();
+      return true;
+    });
+    if (!visible) break;
+    await page.waitForFunction(() => {
+      const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+        .__game;
+      const scene = game?.scene.getScene('City') as {
+        storyPanel?: { visible: boolean };
+      };
+      return scene !== undefined && scene.storyPanel !== undefined;
+    });
+  }
+  await waitForCitySceneReady(page, { requireUnpaused: true });
   await page.waitForFunction(() => {
     const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
     const scene = game?.scene.getScene('City') as {
-      paused: boolean;
       storyPanel?: { visible: boolean };
     };
-    return scene?.paused === false && !scene?.storyPanel?.visible;
+    return !scene?.storyPanel?.visible;
   });
 }
 

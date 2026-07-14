@@ -8,6 +8,7 @@ function config(parent: HTMLElement): Phaser.Types.Core.GameConfig {
     parent,
     backgroundColor: '#111111',
     pixelArt: true,
+    render: { powerPreference: 'high-performance' },
     scale: {
       mode: Phaser.Scale.RESIZE,
       autoCenter: Phaser.Scale.CENTER_BOTH,
