@@ -545,6 +545,24 @@ describe('World police and wanted level', () => {
     expect(after).toBeLessThan(before); // the cop closed the distance
   });
 
+  it('reuses the foot-police flow field while the player stays in one tile', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    const w = new World({
+      player: { pos: tileCenter(city.spec, 2, 2), angle: 0, radius: 8 },
+      city,
+      police: [{ pos: tileCenter(city.spec, 8, 8), heading: 0, radius: 12, kind: 'foot' }],
+      bounds: { width: city.width, height: city.height },
+    });
+    w.wanted = { heat: 200 };
+
+    w.tick(controls(), 1 / 60);
+    const firstBuilds = w.policeFlowFieldComputations;
+    w.tick(controls(), 1 / 60);
+
+    expect(firstBuilds).toBe(1);
+    expect(w.policeFlowFieldComputations).toBe(firstBuilds);
+  });
+
   it('sends a foot officer back to the station instead of dispersing when clear', () => {
     const w = new World({
       player: player(),
@@ -1762,11 +1780,16 @@ describe('World traffic rerouting and lights', () => {
     w.tick(controls(), 1 / 60);
     expect(w.pedestrians).toHaveLength(1);
     expect(w.pedestrians[0].state).toBe('flee');
+    let recentPathLength = 0;
+    let previous = start;
     for (let i = 0; i < 600; i++) {
       w.tick(controls(), 1 / 60);
       const p = w.pedestrians[0];
+      recentPathLength += distance(previous, p.pos);
+      previous = p.pos;
       expect(city.water.some((water) => pointInRect(p.pos, water))).toBe(false);
     }
+    expect(recentPathLength).toBeGreaterThan(30);
   }, 10_000);
 
   it('keeps a foot officer returning to station out of the river when home sits directly across the water', () => {

@@ -25,6 +25,8 @@ export interface Pedestrian {
   navNode?: number;
   /** Index of the waypoint-graph node it came from, to avoid immediate U-turns. */
   navFrom?: number;
+  /** Temporary escape mode for a fleeing pedestrian stranded on a road. */
+  navRecovery?: boolean;
   /** Stable story-runtime actor id, used so scripted pedestrians survive array compaction. */
   storyActorId?: string;
   /** Stable position within a multi-pedestrian scripted actor squad. */
@@ -98,7 +100,7 @@ export function stepPedestrian(
 
   const threat = nearestThreat(ped.pos, ctx.threats);
   if (threat && distance(ped.pos, threat) < PANIC_RADIUS) {
-    let dir = sub(ped.pos, threat);
+    let dir = ctx.steerTarget ? sub(ctx.steerTarget, ped.pos) : sub(ped.pos, threat);
     if (length(dir) === 0) dir = fromAngle(ped.heading);
     dir = normalize(dir);
     return {

@@ -34,6 +34,7 @@ import { type OnFootActor, walk } from './entity';
 import {
   ARRIVE_RADIUS,
   PANIC_RADIUS,
+  PED_FLEE_SPEED,
   type Pedestrian,
   stepPedestrian,
   wanderTarget,
@@ -729,10 +730,13 @@ export class World {
   private readonly navGrid?: NavGrid;
   /** Waypoint network calm pedestrians stroll along (built once from the city). */
   private readonly pedestrianGraph?: PedestrianGraph;
-  /** Flow field to the player, recomputed each tick and shared by all foot cops. */
+  /** Flow field to the player, shared by all foot cops until the target tile changes. */
   private copFlow?: FlowField;
+  private copFlowTargetTile?: { tx: number; ty: number };
   /** Count of expensive pedestrian flow-field computations; a perf-regression guard. */
   pedestrianFlowFieldComputations = 0;
+  /** Count of police flow-field builds; stays low while the player remains in one tile. */
+  policeFlowFieldComputations = 0;
   /** Reuse a pedestrian's last route field until its destination tile changes. */
   private readonly pedestrianRouteCache = new WeakMap<Pedestrian, PedestrianRouteCache>();
   /** Candidate city locations at which ammo crates may respawn. */
@@ -3554,9 +3558,13 @@ export class World {
       // per-tick routing search. Worlds without a city keep the free-roam wander.
       let navNode = ped.navNode;
       let navFrom = ped.navFrom;
+      let navRecovery = ped.navRecovery ?? false;
       // Fleeing is direct movement; graph recovery here repeats an expensive
       // nearest-node search when a frightened NPC is pinned by an obstacle.
-      const graph = !returningTo && !fleeing ? this.pedestrianGraph : undefined;
+      const graph =
+        !returningTo && !fleeing && !navRecovery && ped.navNode !== -1
+          ? this.pedestrianGraph
+          : undefined;
       const steerPoint = (() => {
         if (!graph) return undefined;
         if (navNode === undefined || navNode < 0 || navNode >= graph.nodes.length) {
@@ -3571,7 +3579,7 @@ export class World {
         }
         return graph.nodes[navNode];
       })();
-      const stepped = stepPedestrian(
+      let nextStepped = stepPedestrian(
         { ...ped, target: steerPoint ?? homeTarget },
         { threats, bounds: this.bounds, sidewalks: this.sidewalks, steerTarget: steerPoint },
         dt,
@@ -3579,19 +3587,59 @@ export class World {
       );
       // Pedestrians cannot walk through cars too slow to have run them over
       // (handled above); buildings are resolved last so they stay authoritative.
-      const offCars = resolveCircleCircles(stepped.pos, stepped.radius, blockers);
+      const offCars = resolveCircleCircles(nextStepped.pos, nextStepped.radius, blockers);
       let pos = resolveCircleRects(
         offCars,
-        stepped.radius,
-        this.nearbyWalls(offCars, stepped.radius),
+        nextStepped.radius,
+        this.nearbyWalls(offCars, nextStepped.radius),
       );
+      const fleeThreat = fleeing ? this.nearestThreat(ped.pos, threats, PANIC_RADIUS) : null;
+      if (
+        fleeThreat &&
+        (this.isWaterAt(pos) || distance(pos, nextStepped.pos) > 1e-6)
+      ) {
+        navRecovery = true;
+        const delta = sub(ped.pos, fleeThreat);
+        const away = length(delta) > 1e-6 ? normalize(delta) : fromAngle(ped.heading);
+        const candidates = [
+          away,
+          vec2(-away.y, away.x),
+          vec2(away.y, -away.x),
+        ];
+        for (const direction of candidates) {
+          const candidate = add(ped.pos, scale(direction, PED_FLEE_SPEED * dt));
+          const resolved = resolveCircleRects(
+            resolveCircleCircles(candidate, nextStepped.radius, blockers),
+            nextStepped.radius,
+            this.nearbyWalls(candidate, nextStepped.radius),
+          );
+          if (
+            !this.isWaterAt(resolved) &&
+            distance(resolved, ped.pos) > 1e-6
+          ) {
+            pos = resolved;
+            nextStepped = { ...nextStepped, heading: angle(sub(resolved, ped.pos)) };
+            break;
+          }
+        }
+      }
+      if (fleeing && this.onForbiddenRoad(pos)) {
+        navRecovery = true;
+      }
+      if (
+        navRecovery &&
+        this.nearbySidewalks(pos).some((sidewalk) => pointInRect(pos, sidewalk))
+      ) {
+        navRecovery = false;
+      }
       // A pedestrian may never end up standing in the river, no matter which
       // steering behavior (wander, flee, panic-exit) chose the raw target.
       if (this.isWaterAt(pos)) {
         pos = ped.pos; // never let a pedestrian step into the water
       } else if (
         !returningTo &&
-        stepped.state === 'wander' &&
+        nextStepped.state === 'wander' &&
+        !navRecovery &&
         this.onForbiddenRoad(pos) &&
         !ped.missionTarget
       ) {
@@ -3599,7 +3647,7 @@ export class World {
         // road at a crosswalk; a fleeing pedestrian will bolt across anywhere.
         pos = ped.pos; // hold at the kerb instead of jaywalking
       }
-      const blocked = pos.x !== stepped.pos.x || pos.y !== stepped.pos.y;
+      const blocked = pos.x !== nextStepped.pos.x || pos.y !== nextStepped.pos.y;
       // A blocked graph walker re-acquires the nearest reachable node so it
       // never grinds against an obstacle; a blocked free-roamer turns around.
       if (graph && blocked && navNode !== undefined && navNode >= 0) {
@@ -3608,7 +3656,7 @@ export class World {
       }
       const target = (() => {
         if (graph && navNode !== undefined && navNode >= 0) return graph.nodes[navNode];
-        if (blocked && stepped.state === 'wander') {
+        if (blocked && nextStepped.state === 'wander') {
           return returningTo
             ? returningTo
             : wanderTarget(
@@ -3617,12 +3665,12 @@ export class World {
                 this.rng,
               );
         }
-        return stepped.target;
+        return nextStepped.target;
       })();
       if (returningTo && distance(pos, returningTo) <= ARRIVE_RADIUS) {
         continue;
       }
-      const survivor = { ...stepped, pos, target, returningTo, navNode, navFrom };
+      const survivor = { ...nextStepped, pos, target, returningTo, navNode, navFrom, navRecovery };
       if (routeCache) this.pedestrianRouteCache.set(survivor, routeCache);
       survivors.push(survivor);
     }
@@ -4188,6 +4236,8 @@ export class World {
 
     if (!isWanted(this.wanted)) {
       this.policeBullets = []; // chase over: stop any remaining incoming fire
+      this.copFlow = undefined;
+      this.copFlowTargetTile = undefined;
       this.police = this.police.flatMap((cop) => {
         const next = this.returnPoliceToStation(cop, dt);
         return next ? [next] : [];
@@ -4222,10 +4272,25 @@ export class World {
     // officer it dropped closes in to make the arrest.
     const arrestable = this.arrestable;
     // One BFS toward the player, shared by every officer on foot this tick.
-    this.copFlow =
-      this.navGrid && this.police.some((c) => c.kind === 'foot' && !c.returningHome)
-        ? computeFlowField(this.navGrid, this.focus)
-        : undefined;
+    const hasActiveFootOfficer = this.police.some((c) => c.kind === 'foot' && !c.returningHome);
+    if (this.navGrid && hasActiveFootOfficer) {
+      const targetTile = {
+        tx: Math.floor(this.focus.x / this.navGrid.tile),
+        ty: Math.floor(this.focus.y / this.navGrid.tile),
+      };
+      if (
+        !this.copFlow ||
+        this.copFlowTargetTile?.tx !== targetTile.tx ||
+        this.copFlowTargetTile?.ty !== targetTile.ty
+      ) {
+        this.copFlow = computeFlowField(this.navGrid, this.focus);
+        this.copFlowTargetTile = targetTile;
+        this.policeFlowFieldComputations += 1;
+      }
+    } else {
+      this.copFlow = undefined;
+      this.copFlowTargetTile = undefined;
+    }
     this.police = this.police.flatMap((cop) => {
       if (cop.returningHome) {
         const next = this.returnPoliceToStation(cop, dt);
