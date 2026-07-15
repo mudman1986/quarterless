@@ -3651,6 +3651,7 @@ export class World {
       // A blocked graph walker re-acquires the nearest reachable node so it
       // never grinds against an obstacle; a blocked free-roamer turns around.
       if (graph && blocked && navNode !== undefined && navNode >= 0) {
+        navRecovery = true;
         navNode = graph.nearestNode(pos);
         navFrom = -1;
       }

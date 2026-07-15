@@ -4741,4 +4741,51 @@ describe('World pedestrian navigation performance', () => {
     // have tripped the runner's per-test timeout.
     expect(elapsed).toBeLessThan(3000);
   });
+
+  it('does not repeatedly search from scripted squad or route pedestrians blocked on a road', () => {
+    const city = buildCity(CITY_SPEC);
+    const crusherLane = tileCenter(city.spec, 49, 36);
+    const peds = [
+      ...Array.from({ length: 5 }, (_, i) => ({
+        ...pedAt(crusherLane.x + (i - 2) * 26, crusherLane.y),
+        target: vec2(3115, 2261),
+        storyActorId: 'crusher-squad',
+        storyActorOrder: i,
+      })),
+      {
+        ...pedAt(640, 1088),
+        target: vec2(736, 1088),
+        storyActorId: 'dock-motel-runner',
+        storyActorOrder: 0,
+      },
+    ];
+    const w = new World({
+      player: player(),
+      city,
+      pedestrians: peds,
+      walls: [...city.buildings, ...city.fences],
+      water: city.water,
+      bounds: { width: city.width, height: city.height },
+    });
+    const graph = (
+      w as unknown as {
+        pedestrianGraph: { nearestNode: (pos: { x: number; y: number }) => number };
+      }
+    ).pedestrianGraph;
+    const nearestNode = graph.nearestNode.bind(graph);
+    let nearestNodeCalls = 0;
+    graph.nearestNode = (pos) => {
+      nearestNodeCalls++;
+      return nearestNode(pos);
+    };
+    w.pedestrians = w.pedestrians.map((ped) => ({
+      ...ped,
+      navNode: nearestNode(ped.pos),
+    }));
+
+    for (let i = 0; i < 60; i++) w.tick(controls(), 1 / 60);
+
+    expect(w.pedestrians).toHaveLength(6);
+    expect(nearestNodeCalls).toBeLessThanOrEqual(12);
+  });
 });
