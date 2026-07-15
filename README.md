@@ -7,7 +7,7 @@ small.
 Current lineup:
 
 - **Sindicate** - the main playable game, now launched through a dedicated story-mode front end.
-- **Penguins of Tangram** - a cartoony Phaser platformer with a five-zone school map, light character perks, secrets, checkpoints, and a school-festival finish.
+- **Penguins of Tangram** - a cartoony Phaser platformer with a five-zone school map, light character perks, secrets, checkpoints, a school-festival finish, and Dutch/English language modes (Dutch by default).
 - **Pixel Sprint** - a small canvas runner, **Work in progress**.
 - **Void Sweep** - a small canvas shooter, **Work in progress**.
 
@@ -107,7 +107,8 @@ Story-mode unit coverage also checks that fixed authored mission markers stay on
 Live city-render coverage also checks that every NPC-driven car starts on an authoritative road tile, including when merged building blocks remove interior road bands.
 The exhaustive live-city nearest-road comparison in the city tests carries its own higher per-test timeout because coverage instrumentation makes that brute-force cross-check materially slower than the rest of the unit suite.
 Story-mode Playwright helpers now wait for the Phaser City scene itself to rebuild after launcher transitions and `scene.restart(...)` calls; for save/load assertions, waiting on `window.__game` alone is not a strong enough readiness signal.
-The browser performance regressions in [e2e/performance.spec.ts](e2e/performance.spec.ts) verify that both Phaser games drop stale fixed-step accumulator backlog after long frames, and that Sindicate full-world autosaves stay below the synchronous-storage hitch budget. Sindicate also reuses hauled-away transient vehicle slots instead of growing its collision and render arrays indefinitely. Procedural tones release their Web Audio nodes when they end, preventing the active audio registry from growing during long sessions. Penguins coverage verifies that unchanged power state causes no render-frequency hook writes while pickup and expiry update both hook state and the visible HUD.
+The browser performance regressions in [e2e/performance.spec.ts](e2e/performance.spec.ts) verify that both Phaser games drop stale fixed-step accumulator backlog after long frames, that Sindicate's live render cadence stays above a severe-stall floor, and that full-world autosaves stay below the synchronous-storage hitch budget. The Sindicate Story Mode launch/pause menu toggles the FPS counter, and `F3` remains its keyboard shortcut. Sindicate also keeps transient combat effects and hauled-away vehicle slots bounded instead of growing its render and collision arrays indefinitely. Procedural tones release their Web Audio nodes when they end, preventing the active audio registry from growing during long sessions. Penguins coverage verifies that unchanged power state causes no render-frequency hook writes while pickup and expiry update both hook state and the visible HUD.
+Penguins of Tangram is designed for children ages 4–10: Arrow keys or WASD move, Space/Up jumps, and P or Escape pauses. The game starts in Dutch and the in-game How to play panel can switch to English; the choice is saved on the device. The same panel explains keyboard and touch controls, sound, reduced motion, route notes, and the parent-confirmed reset action. Progress and optional route notes stay on the device; no account, network service, advertising, chat, or tracking is required.
 
 Recommended local check before pushing:
 

@@ -1,5 +1,12 @@
 import { type Vec2, vec2, add, sub, scale, dot, angle } from './vector';
-import { type City, type CitySpec, tileCenter } from './city';
+import {
+  isHorizontalRoadTile,
+  isVerticalRoadTile,
+  roadBandStart as cityRoadBandStart,
+  type City,
+  type CitySpec,
+  tileCenter,
+} from './city';
 
 /**
  * Shared "drive along the road grid" model used by every AI-controlled vehicle
@@ -44,9 +51,7 @@ export function roadAt(city: City, tx: number, ty: number): boolean {
 }
 
 function intersectionAt(city: City, tx: number, ty: number): boolean {
-  const { block } = city.spec;
-  const width = roadWidth(city.spec);
-  return roadAt(city, tx, ty) && tx % block < width && ty % block < width;
+  return roadAt(city, tx, ty) && isVerticalRoadTile(city.spec, tx) && isHorizontalRoadTile(city.spec, ty);
 }
 
 function exitsIntersection(city: City, tx: number, ty: number, dir: Vec2): boolean {
@@ -69,8 +74,8 @@ function lanesPerDirection(spec: CitySpec): number {
   return Math.max(1, Math.floor(roadWidth(spec) / 2));
 }
 
-function roadBandStart(spec: CitySpec, tileIndex: number): number {
-  return Math.floor(tileIndex / spec.block) * spec.block;
+function roadBandStart(spec: CitySpec, tileIndex: number, axis: 'horizontal' | 'vertical'): number {
+  return cityRoadBandStart(spec, tileIndex, axis);
 }
 
 function laneCenterPx(spec: CitySpec, bandStart: number, lane: number): number {
@@ -89,10 +94,10 @@ function laneIndicesForDirection(spec: CitySpec, dir: Vec2): number[] {
 function lanePosition(spec: CitySpec, pos: Vec2, dir: Vec2, lane: number): Vec2 {
   const tile = tileCoord(spec, pos);
   if (dir.x !== 0) {
-    const bandStart = roadBandStart(spec, tile.ty);
+    const bandStart = roadBandStart(spec, tile.ty, 'horizontal');
     return vec2(pos.x, laneCenterPx(spec, bandStart, lane));
   }
-  const bandStart = roadBandStart(spec, tile.tx);
+  const bandStart = roadBandStart(spec, tile.tx, 'vertical');
   return vec2(laneCenterPx(spec, bandStart, lane), pos.y);
 }
 
@@ -100,7 +105,7 @@ function nearestLane(spec: CitySpec, pos: Vec2, dir: Vec2): number {
   const candidates = laneIndicesForDirection(spec, dir);
   const lateral = dir.x !== 0 ? pos.y : pos.x;
   const tile = tileCoord(spec, pos);
-  const bandStart = roadBandStart(spec, dir.x !== 0 ? tile.ty : tile.tx);
+  const bandStart = roadBandStart(spec, dir.x !== 0 ? tile.ty : tile.tx, dir.x !== 0 ? 'horizontal' : 'vertical');
   return candidates.reduce((best, lane) => {
     const bestDelta = Math.abs(lateral - laneCenterPx(spec, bandStart, best));
     const laneDelta = Math.abs(lateral - laneCenterPx(spec, bandStart, lane));

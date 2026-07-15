@@ -6,6 +6,14 @@ interface ArcadeGameTestHook {
 
 type TangramTestHook = {
   state?: string;
+  language?: 'nl' | 'en';
+  audioMuted?: boolean;
+  reducedMotion?: boolean;
+  playtestEnabled?: boolean;
+  bossActive?: boolean;
+  bossHitsRemaining?: number;
+  bossWarning?: boolean;
+  bossCharging?: boolean;
   completeCurrentLevel?: () => void;
   jumpAudit?: {
     allCriticalPlatformsReachable?: boolean;
@@ -105,16 +113,21 @@ export async function launchPenguinsOfTangram(
   character: 'Penguin' | 'Crocodile' | 'Monkey' | 'Turtle' | 'Kangaroo' | 'Lion' = 'Penguin',
   level: string = 'School Gate Morning Run',
 ): Promise<void> {
+  void level;
   await page.goto('/quarterless/');
+  await page.evaluate(() => {
+    const key = 'penguins-of-tangram.progress';
+    const raw = localStorage.getItem(key);
+    const progress = raw ? JSON.parse(raw) as Record<string, unknown> : { version: 1 };
+    localStorage.setItem(key, JSON.stringify({ ...progress, version: 1, language: 'en' }));
+  });
   await expect(page.getByRole('heading', { name: 'Retro Arcade' })).toBeVisible({ timeout: 10_000 });
   await page.getByRole('button', { name: 'Play Penguins of Tangram' }).click();
   await expect(page.getByRole('heading', { name: 'Penguins of Tangram' })).toBeVisible({
     timeout: 10_000,
   });
   await page.getByRole('button', { name: new RegExp(`^${character}`) }).click();
-  await page.getByRole('button', { name: 'Open school map' }).click();
-  await expect(page.getByRole('heading', { name: 'Five-zone adventure' })).toBeVisible({ timeout: 10_000 });
-  await page.getByRole('button', { name: `Play ${level}` }).click();
+  await page.getByRole('button', { name: 'Start adventure' }).click();
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
   await page.waitForFunction(
     () => (window as unknown as { __penguinsOfTangram?: TangramTestHook }).__penguinsOfTangram?.state === 'running',
@@ -122,10 +135,16 @@ export async function launchPenguinsOfTangram(
 }
 
 export async function completeTangramLevel(page: Page): Promise<void> {
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game?.scene.getScene('PenguinsOfTangram') as { sys?: { isActive?: () => boolean } } | undefined;
+    return scene?.sys?.isActive?.() === true;
+  });
   await page.evaluate(() => {
     const hook = (window as unknown as { __penguinsOfTangram?: TangramTestHook }).__penguinsOfTangram;
     hook?.completeCurrentLevel?.();
   });
+  await expect(page.locator('.tangram-platformer-overlay--complete')).toBeVisible();
 }
 
 export async function tangramJumpAudit(page: Page): Promise<{ reachable: boolean; unreachable: string[] }> {

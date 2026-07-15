@@ -34,6 +34,7 @@ import { type OnFootActor, walk } from './entity';
 import {
   ARRIVE_RADIUS,
   PANIC_RADIUS,
+  PED_FLEE_SPEED,
   type Pedestrian,
   stepPedestrian,
   wanderTarget,
@@ -95,6 +96,7 @@ import {
   type ObjectiveProgress,
   type ServiceCompletionCounts,
   type ServiceObjectiveKind,
+  mapMissionPositions,
   currentObjective,
   updateMission,
   isComplete,
@@ -112,6 +114,8 @@ import type { Controls } from './types';
 
 export interface WorldOptions {
   player: OnFootActor;
+  /** Re-map persisted mission coordinates when the active map layout changes. */
+  mapMissionPosition?: (position: Vec2) => Vec2;
   cars?: Car[];
   walls?: Rect[];
   pedestrians?: Pedestrian[];
@@ -208,6 +212,8 @@ export const PIN_GAP = 12;
 export const POLICE_DEPLOY_RANGE = 72;
 /** Hit points a car has before it is destroyed. */
 export const CAR_MAX_HEALTH = 60;
+/** Vehicles absorb half of incoming damage so ordinary traffic is not destroyed too quickly. */
+export const VEHICLE_DAMAGE_MULTIPLIER = 0.5;
 /** Seconds a destroyed vehicle burns before it finally explodes. */
 export const VEHICLE_BURN_DURATION = 5;
 /** Radius (px) of a car explosion's blast. */
@@ -215,7 +221,7 @@ export const EXPLOSION_RADIUS = 72;
 /** Damage an explosion does to the player caught in the blast. */
 export const EXPLOSION_DAMAGE = 65;
 /** Damage an explosion does to other cars (enough to chain-detonate them). */
-export const EXPLOSION_CAR_DAMAGE = CAR_MAX_HEALTH;
+export const EXPLOSION_CAR_DAMAGE = CAR_MAX_HEALTH / VEHICLE_DAMAGE_MULTIPLIER;
 /** Seconds an explosion's visual lingers (drives rendering). */
 export const EXPLOSION_LIFE = 1.3;
 /** Closing speed (px/s) below which a car-on-car bump does no damage. */
@@ -726,10 +732,13 @@ export class World {
   private readonly navGrid?: NavGrid;
   /** Waypoint network calm pedestrians stroll along (built once from the city). */
   private readonly pedestrianGraph?: PedestrianGraph;
-  /** Flow field to the player, recomputed each tick and shared by all foot cops. */
+  /** Flow field to the player, shared by all foot cops until the target tile changes. */
   private copFlow?: FlowField;
+  private copFlowTargetTile?: { tx: number; ty: number };
   /** Count of expensive pedestrian flow-field computations; a perf-regression guard. */
   pedestrianFlowFieldComputations = 0;
+  /** Count of police flow-field builds; stays low while the player remains in one tile. */
+  policeFlowFieldComputations = 0;
   /** Reuse a pedestrian's last route field until its destination tile changes. */
   private readonly pedestrianRouteCache = new WeakMap<Pedestrian, PedestrianRouteCache>();
   /** Candidate city locations at which ammo crates may respawn. */
@@ -993,7 +1002,16 @@ export class World {
     world.bustedTimer = snapshot.bustedTimer;
     world.prevAction = snapshot.prevAction;
     world.prevConfirm = snapshot.prevConfirm;
-    world.campaign = cloneJson(snapshot.campaign);
+    world.campaign = snapshot.campaign
+      ? {
+          ...cloneJson(snapshot.campaign),
+          missions: snapshot.campaign.missions.map((mission) =>
+            opts.mapMissionPosition
+              ? mapMissionPositions(mission, opts.mapMissionPosition)
+              : cloneJson(mission),
+          ),
+        }
+      : null;
     world.campaignIndex = snapshot.campaignIndex;
     world.vehicleImpactCooldowns = new Map(cloneJson(snapshot.vehicleImpactCooldowns));
     world.objectiveBaseline = cloneJson(snapshot.objectiveBaseline);
@@ -1317,6 +1335,7 @@ export class World {
       if (idx !== null) {
         if (this.carKind(idx) === 'taxi') this.clearNpcTaxiFare(idx, this.cars[idx].pos);
         this.markServiceVehicleTheft(idx);
+        this.evacuateNpcDriver(idx);
         this.drivingCarIndex = idx;
         this.cars[idx] = { ...this.cars[idx], speed: 0 };
         this.carDrivers[idx] = null; // any NPC driver bails out
@@ -1567,7 +1586,7 @@ export class World {
     return best;
   }
 
-  private buildBulletSpatialIndex(): BulletSpatialIndex {
+  private buildBulletSpatialIndex(includePlayerCar = false): BulletSpatialIndex {
     const pedestrians = new Map<string, Pedestrian[]>();
     const police = new Map<string, Police[]>();
     const cars = new Map<string, number[]>();
@@ -1577,7 +1596,7 @@ export class World {
     for (const ped of this.pedestrians) this.addToSpatialHash(pedestrians, ped, ped.pos);
     for (const cop of this.police) this.addToSpatialHash(police, cop, cop.pos);
     for (let i = 0; i < this.cars.length; i++) {
-      if (this.wreckedCars[i] || i === this.drivingCarIndex) continue;
+      if (this.wreckedCars[i] || (!includePlayerCar && i === this.drivingCarIndex)) continue;
       this.addToSpatialHash(cars, i, this.cars[i].pos);
     }
     for (const tow of this.tows) {
@@ -1784,9 +1803,9 @@ export class World {
     this.corpses.push({ pos, offscreenFor: 0, inFrameFor: 0 });
   }
 
-  private sendServiceCrewHome(crew: Vec2, kind: 'ambulance' | 'tow', near: Vec2): void {
+  private sendServiceCrewHome(crew: Vec2, kind: 'ambulance' | 'tow', depot: Vec2): void {
     const facilityKind = kind === 'ambulance' ? 'hospital' : 'towYard';
-    const home = this.nearestFacility(facilityKind, near)?.spawn ?? this.spawn;
+    const home = this.nearestFacility(facilityKind, depot)?.spawn ?? this.spawn;
     this.pedestrians.push({
       pos: crew,
       heading: angle(sub(home, crew)),
@@ -2022,7 +2041,7 @@ export class World {
     }
     if (ref.kind === 'ambulance') {
       if (this.ambulance !== ref.vehicle) return;
-      const health = ref.vehicle.health - amount;
+      const health = ref.vehicle.health - amount * VEHICLE_DAMAGE_MULTIPLIER;
       if (health <= 0) {
         this.igniteServiceVehicle(ref, byPlayer);
       } else {
@@ -2035,7 +2054,7 @@ export class World {
     if (ref.kind === 'tow') {
       const idx = this.tows.indexOf(ref.vehicle);
       if (idx === -1) return;
-      const health = ref.vehicle.health - amount;
+      const health = ref.vehicle.health - amount * VEHICLE_DAMAGE_MULTIPLIER;
       if (health <= 0) {
         this.igniteServiceVehicle(ref, byPlayer);
       } else {
@@ -2047,7 +2066,8 @@ export class World {
     }
     const idx = this.police.indexOf(ref.vehicle);
     if (idx === -1 || ref.vehicle.kind !== 'car') return;
-    const health = (ref.vehicle.health ?? CAR_MAX_HEALTH) - amount;
+    const health =
+      (ref.vehicle.health ?? CAR_MAX_HEALTH) - amount * VEHICLE_DAMAGE_MULTIPLIER;
     if (health <= 0) {
       this.ignitePatrolCar(ref, byPlayer);
     } else {
@@ -2079,7 +2099,7 @@ export class World {
       if (idx === -1) return;
       this.tows.splice(idx, 1);
     }
-    this.sendServiceCrewHome(crew, ref.kind, vehicle.pos);
+    this.sendServiceCrewHome(crew, ref.kind, vehicle.depot ?? vehicle.pos);
     const idx = this.materializeServiceVehicle(vehicle, ref.kind, false);
     this.igniteCar(idx, byPlayer);
   }
@@ -2325,7 +2345,7 @@ export class World {
         alive.push(this.nextTowTruckJob(tow));
         continue;
       }
-      if (distance(tow.pos, this.cars[tow.targetCar].pos) <= tow.radius + AMBULANCE_PICKUP_RADIUS) {
+      if (distance(tow.pos, this.cars[tow.targetCar].pos) <= this.serviceStopRadius(tow.radius)) {
         // Pull up beside the wreck and send the operator out on foot to hook it.
         alive.push({
           ...tow,
@@ -2639,12 +2659,12 @@ export class World {
   }
 
   /** How close a service vehicle must get to its chosen road-side stop point to
-   * park and send the crew out. Wide multi-lane roads allow stopping from the
-   * opposite half of the band; narrow roads keep the original pickup radius. */
+   * park and send the crew out. The stop point may be at the edge of a wide
+   * perimeter road while the vehicle is travelling in its opposite lane. */
   private serviceStopRadius(vehicleRadius: number): number {
     const roadWidth = Math.max(1, Math.min(this.city!.spec.block, this.city!.spec.roadWidth ?? 1));
     return (
-      vehicleRadius + Math.max(AMBULANCE_PICKUP_RADIUS, (roadWidth * this.city!.spec.tile) / 2)
+      vehicleRadius + Math.max(AMBULANCE_PICKUP_RADIUS, roadWidth * this.city!.spec.tile)
     );
   }
 
@@ -3511,6 +3531,8 @@ export class World {
         : playerCarThreat
           ? [playerCarThreat, ...civilianThreats]
           : civilianThreats;
+      const fleeing =
+        !returningTo && threats.some((threat) => distance(ped.pos, threat) < PANIC_RADIUS);
       let routeCache: PedestrianRouteCache | undefined;
       if (returningTo && distance(ped.pos, returningTo) <= ARRIVE_RADIUS) {
         continue; // reached the building entrance: disappear inside
@@ -3540,7 +3562,13 @@ export class World {
       // per-tick routing search. Worlds without a city keep the free-roam wander.
       let navNode = ped.navNode;
       let navFrom = ped.navFrom;
-      const graph = !returningTo ? this.pedestrianGraph : undefined;
+      let navRecovery = ped.navRecovery ?? false;
+      // Fleeing is direct movement; graph recovery here repeats an expensive
+      // nearest-node search when a frightened NPC is pinned by an obstacle.
+      const graph =
+        !returningTo && !fleeing && !navRecovery && ped.navNode !== -1
+          ? this.pedestrianGraph
+          : undefined;
       const steerPoint = (() => {
         if (!graph) return undefined;
         if (navNode === undefined || navNode < 0 || navNode >= graph.nodes.length) {
@@ -3555,7 +3583,7 @@ export class World {
         }
         return graph.nodes[navNode];
       })();
-      const stepped = stepPedestrian(
+      let nextStepped = stepPedestrian(
         { ...ped, target: steerPoint ?? homeTarget },
         { threats, bounds: this.bounds, sidewalks: this.sidewalks, steerTarget: steerPoint },
         dt,
@@ -3563,19 +3591,59 @@ export class World {
       );
       // Pedestrians cannot walk through cars too slow to have run them over
       // (handled above); buildings are resolved last so they stay authoritative.
-      const offCars = resolveCircleCircles(stepped.pos, stepped.radius, blockers);
+      const offCars = resolveCircleCircles(nextStepped.pos, nextStepped.radius, blockers);
       let pos = resolveCircleRects(
         offCars,
-        stepped.radius,
-        this.nearbyWalls(offCars, stepped.radius),
+        nextStepped.radius,
+        this.nearbyWalls(offCars, nextStepped.radius),
       );
+      const fleeThreat = fleeing ? this.nearestThreat(ped.pos, threats, PANIC_RADIUS) : null;
+      if (
+        fleeThreat &&
+        (this.isWaterAt(pos) || distance(pos, nextStepped.pos) > 1e-6)
+      ) {
+        navRecovery = true;
+        const delta = sub(ped.pos, fleeThreat);
+        const away = length(delta) > 1e-6 ? normalize(delta) : fromAngle(ped.heading);
+        const candidates = [
+          away,
+          vec2(-away.y, away.x),
+          vec2(away.y, -away.x),
+        ];
+        for (const direction of candidates) {
+          const candidate = add(ped.pos, scale(direction, PED_FLEE_SPEED * dt));
+          const resolved = resolveCircleRects(
+            resolveCircleCircles(candidate, nextStepped.radius, blockers),
+            nextStepped.radius,
+            this.nearbyWalls(candidate, nextStepped.radius),
+          );
+          if (
+            !this.isWaterAt(resolved) &&
+            distance(resolved, ped.pos) > 1e-6
+          ) {
+            pos = resolved;
+            nextStepped = { ...nextStepped, heading: angle(sub(resolved, ped.pos)) };
+            break;
+          }
+        }
+      }
+      if (fleeing && this.onForbiddenRoad(pos)) {
+        navRecovery = true;
+      }
+      if (
+        navRecovery &&
+        this.nearbySidewalks(pos).some((sidewalk) => pointInRect(pos, sidewalk))
+      ) {
+        navRecovery = false;
+      }
       // A pedestrian may never end up standing in the river, no matter which
       // steering behavior (wander, flee, panic-exit) chose the raw target.
       if (this.isWaterAt(pos)) {
         pos = ped.pos; // never let a pedestrian step into the water
       } else if (
         !returningTo &&
-        stepped.state === 'wander' &&
+        nextStepped.state === 'wander' &&
+        !navRecovery &&
         this.onForbiddenRoad(pos) &&
         !ped.missionTarget
       ) {
@@ -3583,16 +3651,17 @@ export class World {
         // road at a crosswalk; a fleeing pedestrian will bolt across anywhere.
         pos = ped.pos; // hold at the kerb instead of jaywalking
       }
-      const blocked = pos.x !== stepped.pos.x || pos.y !== stepped.pos.y;
+      const blocked = pos.x !== nextStepped.pos.x || pos.y !== nextStepped.pos.y;
       // A blocked graph walker re-acquires the nearest reachable node so it
       // never grinds against an obstacle; a blocked free-roamer turns around.
       if (graph && blocked && navNode !== undefined && navNode >= 0) {
+        navRecovery = true;
         navNode = graph.nearestNode(pos);
         navFrom = -1;
       }
       const target = (() => {
         if (graph && navNode !== undefined && navNode >= 0) return graph.nodes[navNode];
-        if (blocked && stepped.state === 'wander') {
+        if (blocked && nextStepped.state === 'wander') {
           return returningTo
             ? returningTo
             : wanderTarget(
@@ -3601,12 +3670,12 @@ export class World {
                 this.rng,
               );
         }
-        return stepped.target;
+        return nextStepped.target;
       })();
       if (returningTo && distance(pos, returningTo) <= ARRIVE_RADIUS) {
         continue;
       }
-      const survivor = { ...stepped, pos, target, returningTo, navNode, navFrom };
+      const survivor = { ...nextStepped, pos, target, returningTo, navNode, navFrom, navRecovery };
       if (routeCache) this.pedestrianRouteCache.set(survivor, routeCache);
       survivors.push(survivor);
     }
@@ -3842,7 +3911,7 @@ export class World {
    * own havoc earns them heat (NPC pile-ups do not). */
   private damageCar(idx: number, amount: number, byPlayer: boolean): void {
     if (this.wreckedCars[idx] || this.carIsBurning(idx)) return;
-    this.carHealth[idx] -= amount;
+    this.carHealth[idx] -= amount * VEHICLE_DAMAGE_MULTIPLIER;
     if (this.carHealth[idx] <= 0) this.igniteCar(idx, byPlayer);
   }
 
@@ -4172,6 +4241,8 @@ export class World {
 
     if (!isWanted(this.wanted)) {
       this.policeBullets = []; // chase over: stop any remaining incoming fire
+      this.copFlow = undefined;
+      this.copFlowTargetTile = undefined;
       this.police = this.police.flatMap((cop) => {
         const next = this.returnPoliceToStation(cop, dt);
         return next ? [next] : [];
@@ -4206,10 +4277,25 @@ export class World {
     // officer it dropped closes in to make the arrest.
     const arrestable = this.arrestable;
     // One BFS toward the player, shared by every officer on foot this tick.
-    this.copFlow =
-      this.navGrid && this.police.some((c) => c.kind === 'foot' && !c.returningHome)
-        ? computeFlowField(this.navGrid, this.focus)
-        : undefined;
+    const hasActiveFootOfficer = this.police.some((c) => c.kind === 'foot' && !c.returningHome);
+    if (this.navGrid && hasActiveFootOfficer) {
+      const targetTile = {
+        tx: Math.floor(this.focus.x / this.navGrid.tile),
+        ty: Math.floor(this.focus.y / this.navGrid.tile),
+      };
+      if (
+        !this.copFlow ||
+        this.copFlowTargetTile?.tx !== targetTile.tx ||
+        this.copFlowTargetTile?.ty !== targetTile.ty
+      ) {
+        this.copFlow = computeFlowField(this.navGrid, this.focus);
+        this.copFlowTargetTile = targetTile;
+        this.policeFlowFieldComputations += 1;
+      }
+    } else {
+      this.copFlow = undefined;
+      this.copFlowTargetTile = undefined;
+    }
     this.police = this.police.flatMap((cop) => {
       if (cop.returningHome) {
         const next = this.returnPoliceToStation(cop, dt);
@@ -4290,7 +4376,7 @@ export class World {
   private updatePoliceBullets(dt: number): void {
     if (this.policeBullets.length === 0) return;
     const surviving: Bullet[] = [];
-    const spatial = this.buildBulletSpatialIndex();
+    const spatial = this.buildBulletSpatialIndex(true);
     for (const current of this.policeBullets) {
       const stepped = stepBullet(current, dt);
       if (!stepped) continue; // expired
@@ -4303,7 +4389,6 @@ export class World {
         MAX_BULLET_TARGET_RADIUS,
         (i) =>
           !this.wreckedCars[i] &&
-          i !== this.drivingCarIndex &&
           bulletHits(stepped, this.cars[i].pos, this.cars[i].radius),
       );
       if (carIdx !== -1) {

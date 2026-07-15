@@ -37,7 +37,7 @@ import {
   type TouchLayout,
   type TouchSnapshot,
 } from '../input/touchControls';
-import { Sound } from '../audio/Sound';
+import { shouldPlaySiren, Sound } from '../audio/Sound';
 import {
   CIVILIAN_VEHICLE_TEXTURES,
   cycleFrame,
@@ -74,6 +74,7 @@ import {
   compileStoryChapterRuntimeCampaign,
   formatStoryCityState,
   formatStorySystem,
+  mapStoryMissionPlanPositions,
   resolveStoryMissionPlan,
   STORY_MISSION_GROUP_SELECTION_INDEX,
   storyMissionStartPosition,
@@ -298,6 +299,7 @@ const TOUCH_ACTION = 0xf59e0b;
 const TOUCH_FIRE = 0xef4444;
 const TOUCH_CONFIRM = 0x22d3ee;
 const TOUCH_PREF_KEY = 'sindicate.touchEnabled';
+const FPS_PREF_KEY = 'sindicate.fpsVisible';
 const PARKED_TRAFFIC_MIX: readonly VehicleKind[] = [
   'sedan',
   'car',
@@ -447,6 +449,7 @@ export class CityScene extends Phaser.Scene {
   private intersectionCenters: Vec2[] = [];
   private focusPoint!: Phaser.GameObjects.Rectangle;
   private hud!: Phaser.GameObjects.Text;
+  private fpsText!: Phaser.GameObjects.Text;
   private bustedText!: Phaser.GameObjects.Text;
   private banner!: Phaser.GameObjects.Text;
   private bannerCloseButton!: Phaser.GameObjects.Text;
@@ -471,9 +474,12 @@ export class CityScene extends Phaser.Scene {
   private accumulator = 0;
   private minimapAccumulator = MINIMAP_REFRESH_INTERVAL;
   private saveAccumulator = 0;
+  private fpsAccumulator = 0;
 
   private paused = false;
   private pauseKey!: Phaser.Input.Keyboard.Key;
+  private fpsKey!: Phaser.Input.Keyboard.Key;
+  private fpsVisible = false;
   private storyAcknowledgeKey!: Phaser.Input.Keyboard.Key;
   private newGameKey!: Phaser.Input.Keyboard.Key;
   private pauseTouchButton!: Phaser.GameObjects.Text;
@@ -615,6 +621,8 @@ export class CityScene extends Phaser.Scene {
     this.accumulator = 0;
     this.minimapAccumulator = MINIMAP_REFRESH_INTERVAL;
     this.saveAccumulator = 0;
+    this.fpsAccumulator = 0;
+    this.fpsVisible = this.store.getItem(FPS_PREF_KEY) === '1';
     this.visualParticles = [];
     this.prevCarHeadings = [];
     this.prevCarHealth = [];
@@ -720,6 +728,7 @@ export class CityScene extends Phaser.Scene {
     // Menu keys: P pauses/resumes, N starts a fresh game.
     const kb = this.input.keyboard!;
     this.pauseKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.P);
+    this.fpsKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.F3);
     this.storyAcknowledgeKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER);
     this.newGameKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.N);
     const handleStoryAcknowledge = (): void => {
@@ -756,6 +765,7 @@ export class CityScene extends Phaser.Scene {
     const storyMissions = this.buildStoryCampaign();
     return {
       player: { pos: spawn, angle: 0, radius: PLAYER_SIZE / 2 },
+      mapMissionPosition: (position) => this.mapStoryPosition(position),
       cars: traffic.cars,
       carDrivers: traffic.drivers,
       carKinds: traffic.kinds,
@@ -789,7 +799,12 @@ export class CityScene extends Phaser.Scene {
       this.storyProgress.current.objectiveIndex,
       this.storyProgress.branchOutcomes,
       summarizeStoryCityState(STORY_MODE_PROTOTYPE, this.storyProgress.branchOutcomes),
+      (position) => this.mapStoryPosition(position),
     );
+  }
+
+  private mapStoryPosition(position: Vec2): Vec2 {
+    return nearestRoadTileCenter(this.city, position) ?? position;
   }
 
   private selectingStoryMission(): boolean {
@@ -803,7 +818,12 @@ export class CityScene extends Phaser.Scene {
 
   private storyMissionChoiceTargets(): Array<{ mission: StoryMissionPlan; target: Vec2 }> {
     return this.storyMissionChoices()
-      .map((mission) => ({ mission, target: storyMissionStartPosition(mission) }))
+      .map((mission) => ({
+        mission,
+        target: storyMissionStartPosition(mission)
+          ? this.mapStoryPosition(storyMissionStartPosition(mission)!)
+          : null,
+      }))
       .filter((choice): choice is { mission: StoryMissionPlan; target: Vec2 } => !!choice.target);
   }
 
@@ -831,7 +851,10 @@ export class CityScene extends Phaser.Scene {
     }
 
     const chapter = currentStoryChapter(STORY_MODE_PROTOTYPE, this.storyProgress);
-    const mission = currentStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress);
+    const authoredMission = currentStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress);
+    const mission = authoredMission
+      ? mapStoryMissionPlanPositions(authoredMission, (position) => this.mapStoryPosition(position))
+      : null;
     if (!chapter || !mission) {
       this.storyScript = null;
       this.world.setStoryObjectiveProgress(null);
@@ -1790,14 +1813,20 @@ export class CityScene extends Phaser.Scene {
 
     // Lane markings between every lane, with a stronger divider between the two directions.
     const lines = this.add.graphics();
-    for (let tx = 0; tx < spec.cols; tx += spec.block) {
+    const verticalRoadStarts = new Set<number>();
+    for (let tx = 0; tx < spec.cols; tx += spec.block) verticalRoadStarts.add(tx);
+    if (spec.edgeRoads?.right) verticalRoadStarts.add(spec.cols - roadWidth);
+    for (const tx of verticalRoadStarts) {
       for (let lane = 1; lane < roadWidth; lane++) {
         const divider = (tx + lane) * spec.tile;
         lines.lineStyle(2, COLORS.roadLine, lane === roadWidth / 2 ? 0.85 : 0.45);
         lines.lineBetween(divider, 0, divider, height);
       }
     }
-    for (let ty = 0; ty < spec.rows; ty += spec.block) {
+    const horizontalRoadStarts = new Set<number>();
+    for (let ty = 0; ty < spec.rows; ty += spec.block) horizontalRoadStarts.add(ty);
+    if (spec.edgeRoads?.bottom) horizontalRoadStarts.add(spec.rows - roadWidth);
+    for (const ty of horizontalRoadStarts) {
       for (let lane = 1; lane < roadWidth; lane++) {
         const divider = (ty + lane) * spec.tile;
         lines.lineStyle(2, COLORS.roadLine, lane === roadWidth / 2 ? 0.85 : 0.45);
@@ -1812,11 +1841,14 @@ export class CityScene extends Phaser.Scene {
 
     // Buildings with rooftops and lit windows for a denser city look.
     const g = this.add.graphics();
+    const buildingDetailG = this.add.graphics().setDepth(1.0);
     const emblemG = this.add.graphics().setDepth(1.2);
     const shades = [0x3f4654, 0x4b5563, 0x434b59, 0x515b6b, 0x3a4150];
     const facilities = new Map(this.city.facilities.map((f) => [f.buildingIndex, f]));
     this.city.buildings.forEach((b, i) => {
       const facility = facilities.get(i);
+      const largeBuilding =
+        Math.max(b.w, b.h) >= Math.max(128, (spec.block - roadWidth) * spec.tile * 1.5);
       const bodyColor =
         facility?.kind === 'policeStation'
           ? COLORS.policeBuilding
@@ -1847,11 +1879,93 @@ export class CityScene extends Phaser.Scene {
         .setOrigin(0)
         .setDepth(0.8)
         .setTint(bodyColor);
-      this.add
-        .tileSprite(b.x + 5, b.y + 5, b.w - 10, b.h - 10, TILE.roof.texture, TILE.roof.frame)
-        .setOrigin(0)
-        .setDepth(0.9)
-        .setTint(roofColor);
+      if (!largeBuilding) {
+        this.add
+          .tileSprite(b.x + 5, b.y + 5, b.w - 10, b.h - 10, TILE.roof.texture, TILE.roof.frame)
+          .setOrigin(0)
+          .setDepth(0.9)
+          .setTint(roofColor);
+      } else {
+        const inset = Math.min(16, Math.max(9, Math.round(Math.min(b.w, b.h) * 0.035)));
+        const roofX = b.x + inset;
+        const roofY = b.y + inset;
+        const roofW = b.w - inset * 2;
+        const roofH = b.h - inset * 2;
+        const roofDark = blendColor(roofColor, COLORS.buildingEdge, 0.2);
+        const roofLine = blendColor(roofColor, COLORS.buildingEdge, 0.45);
+
+        // Large footprints get a modular roof instead of a repeated small-tile pattern.
+        buildingDetailG.fillStyle(roofDark, 1);
+        buildingDetailG.fillRect(roofX, roofY, roofW, roofH);
+        buildingDetailG.lineStyle(4, COLORS.buildingEdge, 0.95);
+        buildingDetailG.strokeRect(roofX, roofY, roofW, roofH);
+        const columns = roofW >= roofH * 1.35 ? 3 : 2;
+        const rows = roofH >= roofW * 1.35 ? 3 : 2;
+        const gap = 12;
+        const moduleW = (roofW - gap * (columns + 1)) / columns;
+        const moduleH = (roofH - gap * (rows + 1)) / rows;
+        for (let row = 0; row < rows; row++) {
+          for (let column = 0; column < columns; column++) {
+            const moduleX = roofX + gap + column * (moduleW + gap);
+            const moduleY = roofY + gap + row * (moduleH + gap);
+            const moduleColor = blendColor(
+              roofColor,
+              column % 2 === row % 2 ? 0xffffff : COLORS.buildingEdge,
+              0.12,
+            );
+            buildingDetailG.fillStyle(moduleColor, 1);
+            buildingDetailG.fillRect(moduleX, moduleY, moduleW, moduleH);
+            buildingDetailG.lineStyle(2, roofLine, 0.8);
+            buildingDetailG.strokeRect(moduleX, moduleY, moduleW, moduleH);
+          }
+        }
+
+        const feature = stableVisualSeed(i + 1, b.x, b.y) % 4;
+        const cx = roofX + roofW / 2;
+        const cy = roofY + roofH / 2;
+        if (feature === 0) {
+          buildingDetailG.fillStyle(blendColor(roofColor, COLORS.buildingEdge, 0.35), 1);
+          buildingDetailG.fillRoundedRect(cx - 24, cy - 15, 48, 30, 4);
+          buildingDetailG.fillStyle(blendColor(roofColor, 0xffffff, 0.18), 1);
+          buildingDetailG.fillRect(cx - 5, cy - 20, 10, 5);
+          buildingDetailG.lineStyle(2, COLORS.buildingEdge, 0.9);
+          buildingDetailG.lineBetween(cx, cy - 20, cx, cy - 32);
+        } else if (feature === 1) {
+          buildingDetailG.fillStyle(blendColor(roofColor, 0xffffff, 0.3), 0.9);
+          for (const offset of [-22, 0, 22]) {
+            buildingDetailG.fillRect(cx + offset - 8, cy - 7, 16, 14);
+            buildingDetailG.lineStyle(2, COLORS.buildingEdge, 0.75);
+            buildingDetailG.strokeRect(cx + offset - 8, cy - 7, 16, 14);
+          }
+        } else if (feature === 2) {
+          buildingDetailG.fillStyle(blendColor(roofColor, COLORS.buildingEdge, 0.35), 1);
+          buildingDetailG.fillCircle(cx, cy - 5, 18);
+          buildingDetailG.lineStyle(3, blendColor(roofColor, 0xffffff, 0.22), 0.9);
+          buildingDetailG.strokeCircle(cx, cy - 5, 18);
+          buildingDetailG.lineBetween(cx - 13, cy + 11, cx - 13, cy + 22);
+          buildingDetailG.lineBetween(cx + 13, cy + 11, cx + 13, cy + 22);
+        } else {
+          buildingDetailG.fillStyle(blendColor(roofColor, COLORS.buildingEdge, 0.28), 1);
+          buildingDetailG.fillRect(cx - 28, cy - 18, 56, 36);
+          buildingDetailG.lineStyle(2, blendColor(roofColor, 0xffffff, 0.18), 0.8);
+          for (let lane = -16; lane <= 16; lane += 16) {
+            buildingDetailG.lineBetween(cx + lane, cy - 14, cx + lane, cy + 14);
+          }
+        }
+
+        // A single street-facing bay gives the block an obvious front door/loading side.
+        const bay = Math.min(72, Math.max(34, Math.min(b.w, b.h) * 0.28));
+        buildingDetailG.fillStyle(COLORS.garageApron, 0.95);
+        if (b.w >= b.h) {
+          buildingDetailG.fillRect(cx - bay / 2, roofY - 2, bay, 10);
+          buildingDetailG.lineStyle(2, COLORS.garageStripe, 0.8);
+          buildingDetailG.lineBetween(cx - bay / 2 + 8, roofY + 1, cx + bay / 2 - 8, roofY + 1);
+        } else {
+          buildingDetailG.fillRect(roofX - 2, cy - bay / 2, 10, bay);
+          buildingDetailG.lineStyle(2, COLORS.garageStripe, 0.8);
+          buildingDetailG.lineBetween(roofX + 1, cy - bay / 2 + 8, roofX + 1, cy + bay / 2 - 8);
+        }
+      }
       g.lineStyle(2, COLORS.buildingEdge, 1);
       g.strokeRect(b.x, b.y, b.w, b.h);
 
@@ -2624,6 +2738,7 @@ export class CityScene extends Phaser.Scene {
     };
 
     place(this.hud, 10, 10); // top-left status readout
+    place(this.fpsText, width - 10, MINIMAP_SIZE + 24);
     const bannerTop = 18 + this.hud.height;
     place(this.banner, 10, bannerTop);
     place(this.bannerCloseButton, 24 + this.banner.width, bannerTop + 6);
@@ -2670,6 +2785,19 @@ export class CityScene extends Phaser.Scene {
       })
       .setScrollFactor(0)
       .setDepth(1000);
+
+    this.fpsText = this.add
+      .text(0, 0, '', {
+        fontFamily: 'monospace',
+        fontSize: '14px',
+        color: '#86efac',
+        backgroundColor: '#000000b0',
+        padding: { x: 8, y: 6 },
+      })
+      .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setDepth(1000)
+      .setVisible(this.fpsVisible);
 
     this.bustedText = this.add
       .text(this.scale.width / 2, this.scale.height / 2, '', {
@@ -3033,6 +3161,7 @@ export class CityScene extends Phaser.Scene {
       }
     }
 
+    const scriptedTargetIndices = this.storyMissionTargetIndices();
     const taxiTarget = this.world.taxiTarget;
     if (taxiTarget) {
       markers.push({
@@ -3056,8 +3185,9 @@ export class CityScene extends Phaser.Scene {
       });
     }
 
-    for (const ped of this.world.pedestrians) {
-      if (!ped.missionTarget) continue;
+    for (let i = 0; i < this.world.pedestrians.length; i++) {
+      const ped = this.world.pedestrians[i];
+      if (!ped.missionTarget && !scriptedTargetIndices.has(i)) continue;
       markers.push({
         kind: 'mission-target',
         x: ped.pos.x,
@@ -3068,6 +3198,26 @@ export class CityScene extends Phaser.Scene {
       });
     }
     return markers;
+  }
+
+  /** Include authored target squads even if the simulation has not yet completed
+   * its one-frame mission-target synchronization pass. */
+  private storyMissionTargetIndices(): Set<number> {
+    const objective = this.world.missionObjective;
+    if (objective?.kind !== 'eliminate' || !objective.targetsOnly) return new Set();
+    if (!this.storyScript || !this.storyProgress) return new Set();
+    const mission = currentStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress);
+    const runtime = mission?.prototypeScript;
+    if (!runtime) return new Set();
+    const stage = this.activeStoryStage(runtime);
+    if (!stage) return new Set();
+
+    const indices = new Set<number>();
+    for (const actor of stage.actors) {
+      if (actor.kind !== 'pedestrianSquad' || !actor.missionTargets) continue;
+      for (const index of this.storyPedIndices(actor.actorId)) indices.add(index);
+    }
+    return indices;
   }
 
   private maybeStartSelectedStoryMission(): boolean {
@@ -3096,6 +3246,19 @@ export class CityScene extends Phaser.Scene {
       touchSnapshot.confirmPressed &&
       !this.prevTouchConfirm;
     const acknowledgePressed = Phaser.Input.Keyboard.JustDown(this.storyAcknowledgeKey);
+    if (Phaser.Input.Keyboard.JustDown(this.fpsKey)) {
+      this.fpsVisible = !this.fpsVisible;
+      this.store.setItem(FPS_PREF_KEY, this.fpsVisible ? '1' : '0');
+      this.fpsAccumulator = 0;
+      this.fpsText.setVisible(this.fpsVisible);
+    }
+    if (this.fpsVisible) {
+      this.fpsAccumulator += deltaMs / 1000;
+      if (this.fpsAccumulator >= 0.25) {
+        this.fpsText.setText(`FPS ${Math.round(this.game.loop.actualFps)}`);
+        this.fpsAccumulator = 0;
+      }
+    }
     this.syncTouchControls(touchSnapshot);
 
     if (this.storyPanelRequiresAcknowledge && (acknowledgePressed || touchConfirmPressed)) {
@@ -3229,16 +3392,16 @@ export class CityScene extends Phaser.Scene {
       .setAlpha(darkness * 0.8);
   }
 
-  /** Wail the siren on a steady cadence whenever a chase is on. */
+  /** Play the soft siren pulse whenever a chase is on. */
   private updateSiren(dt: number): void {
-    if (this.world.status !== 'playing' || this.world.police.length === 0) {
+    if (!shouldPlaySiren(this.world.status, this.world.wantedStars, this.world.police.length)) {
       this.sirenTimer = 0;
       return;
     }
     this.sirenTimer -= dt;
     if (this.sirenTimer <= 0) {
       this.sfx.siren();
-      this.sirenTimer = 0.42; // matches the two-tone wail length
+      this.sirenTimer = 0.6; // leaves a small breath between the two-note pulses
     }
   }
 
@@ -3728,7 +3891,7 @@ export class CityScene extends Phaser.Scene {
 
   private storyMissionFocus(plan: Pick<StoryMissionPlan, 'prototypeRuntime' | 'prototypeScript'>): Vec2 | null {
     const focus = storyMissionStartPosition(plan);
-    return focus ? { x: focus.x, y: focus.y } : null;
+    return focus ? this.mapStoryPosition(focus) : null;
   }
 
   private chapterOpenerFocus(chapter: StoryChapter): Vec2 | null {

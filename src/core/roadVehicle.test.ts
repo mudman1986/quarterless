@@ -50,6 +50,23 @@ describe('direction helpers', () => {
     expect(lanes[0]!.y).toBeCloseTo(tileCenter(wide.spec, 6, 2).y);
     expect(lanes[1]!.y).toBeCloseTo(tileCenter(wide.spec, 6, 3).y);
   });
+
+  it('aligns vehicles to the bottom perimeter road band', () => {
+    const edgeCity = buildCity({
+      cols: 18,
+      rows: 18,
+      tile: 64,
+      block: 6,
+      roadWidth: 4,
+      edgeRoads: { right: true, bottom: true },
+    });
+    const start = tileCenter(edgeCity.spec, 8, 16);
+    const lanes = laneCentersForRoad(edgeCity, start, vec2(1, 0));
+    expect(lanes.map((lane) => lane.y)).toEqual([
+      tileCenter(edgeCity.spec, 8, 16).y,
+      tileCenter(edgeCity.spec, 8, 17).y,
+    ]);
+  });
 });
 
 describe('stepRoadVehicle on wide roads', () => {

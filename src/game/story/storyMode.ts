@@ -289,6 +289,71 @@ export interface StoryRuntimeScript {
   stages?: readonly StoryRuntimeStage[];
 }
 
+function mapStoryObjectivePosition(objective: Objective, mapPosition: (position: Vec2) => Vec2): Objective {
+  if (objective.kind === 'reach' || objective.kind === 'defend') {
+    return { ...objective, target: mapPosition(objective.target) };
+  }
+  if (objective.kind === 'route' || objective.kind === 'sabotage') {
+    return { ...objective, targets: objective.targets.map(mapPosition) };
+  }
+  return objective;
+}
+
+function mapStoryActorPosition(
+  actor: StoryActorScript,
+  mapPosition: (position: Vec2) => Vec2,
+): StoryActorScript {
+  if (actor.kind === 'vehicleRoute' || actor.kind === 'pedestrianRoute') {
+    return { ...actor, route: actor.route.map(mapPosition) };
+  }
+  return { ...actor, center: mapPosition(actor.center) };
+}
+
+function mapStoryScriptPositions(
+  script: StoryRuntimeScript,
+  mapPosition: (position: Vec2) => Vec2,
+): StoryRuntimeScript {
+  const mapStage = (stage: StoryRuntimeStage): StoryRuntimeStage => ({
+    ...stage,
+    actors: stage.actors.map((actor) => mapStoryActorPosition(actor, mapPosition)),
+    districtState: stage.districtState
+      ? {
+          ...stage.districtState,
+          reservedRoutes: stage.districtState.reservedRoutes?.map((route) => ({
+            ...route,
+            points: route.points.map(mapPosition),
+          })),
+        }
+      : undefined,
+  });
+  return {
+    ...script,
+    actors: script.actors.map((actor) => mapStoryActorPosition(actor, mapPosition)),
+    stages: script.stages?.map(mapStage),
+  };
+}
+
+/** Project authored story coordinates onto the active map's walkable road grid. */
+export function mapStoryMissionPlanPositions(
+  plan: StoryMissionPlan,
+  mapPosition: (position: Vec2) => Vec2,
+): StoryMissionPlan {
+  return {
+    ...plan,
+    prototypeRuntime: plan.prototypeRuntime
+      ? {
+          ...plan.prototypeRuntime,
+          objectives: plan.prototypeRuntime.objectives.map((objective) =>
+            mapStoryObjectivePosition(objective, mapPosition),
+          ),
+        }
+      : undefined,
+    prototypeScript: plan.prototypeScript
+      ? mapStoryScriptPositions(plan.prototypeScript, mapPosition)
+      : undefined,
+  };
+}
+
 /**
  * Reusable authoring helpers for the escort-route pattern: a pedestrian actor walks a route
  * while an escort-radius fail rule restarts the mission if the player drifts too far away.
@@ -815,12 +880,14 @@ export function compileStoryChapterRuntimeCampaign(
   startObjectiveIndex?: number,
   branchOutcomes: Record<string, string> = {},
   cityState?: StoryCityState,
+  mapPosition?: (position: Vec2) => Vec2,
 ): Mission[] | null {
   const startIndex = chapter.missions.findIndex((mission) => mission.id === startMissionId);
   if (startIndex === -1) return null;
   const plans = chapter.missions
     .slice(startIndex)
-    .map((mission) => resolveStoryMissionPlan(mission, branchOutcomes, cityState));
+    .map((mission) => resolveStoryMissionPlan(mission, branchOutcomes, cityState))
+    .map((mission) => (mapPosition ? mapStoryMissionPlanPositions(mission, mapPosition) : mission));
   if (plans.some((mission) => !mission.prototypeRuntime)) return null;
 
   return plans.map((plan, index) => {

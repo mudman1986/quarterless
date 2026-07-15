@@ -1,4 +1,5 @@
-import { buildCity } from '../../core/city';
+import { buildCity, nearestRoadTileCenter } from '../../core/city';
+import { pointInRect } from '../../core/collision';
 import { currentObjective } from '../../core/mission';
 import { describe, expect, it } from 'vitest';
 import { CITY_SPEC } from '../citySpec';
@@ -22,6 +23,7 @@ import {
   actorVehicleConditionFailRule,
   createProtectedVehicleTailScript,
   formatStorySystem,
+  mapStoryMissionPlanPositions,
   missionTargetSquadActor,
   vehicleRouteActor,
   wantedPressureFailRule,
@@ -673,6 +675,42 @@ describe('compileStoryChapterRuntimeCampaign', () => {
 
     expect(checkedTargets).toBeGreaterThan(0);
     expect([...invalidTargets]).toEqual([]);
+  });
+
+  it('projects Last Call At Pier 9 onto walkable tiles on changed map layouts', () => {
+    const mission = DEAD_DROP_DISTRICT.missions.find((candidate) => candidate.id === 'last-call-at-pier-9');
+    expect(mission).toBeDefined();
+
+    const maps = [
+      CITY_SPEC,
+      { ...CITY_SPEC, block: 5, roadWidth: 2, margin: 24, sidewalkWidth: 24, mergeBlocks: false },
+    ];
+    for (const spec of maps) {
+      const city = buildCity(spec);
+      const mapPosition = (position: { x: number; y: number }) =>
+        nearestRoadTileCenter(city, position) ?? position;
+      const mapped = mapStoryMissionPlanPositions(mission!, mapPosition);
+      const objective = compileStoryMissionRuntime(mapped)?.objectives[0];
+      expect(objective?.kind).toBe('reach');
+      if (objective?.kind !== 'reach') continue;
+
+      const insideBuilding = city.buildings.some((building) => pointInRect(objective.target, building));
+      expect(insideBuilding).toBe(false);
+      expect(city.isRoad(
+        Math.floor(objective.target.x / city.spec.tile),
+        Math.floor(objective.target.y / city.spec.tile),
+      )).toBe(true);
+
+      const squad = mapped.prototypeScript?.stages?.[1]?.actors.find(
+        (actor) => actor.kind === 'pedestrianSquad' && actor.actorId === 'pier-9-cleaners',
+      );
+      expect(squad?.kind).toBe('pedestrianSquad');
+      if (squad?.kind !== 'pedestrianSquad') continue;
+      expect(city.isRoad(
+        Math.floor(squad.center.x / city.spec.tile),
+        Math.floor(squad.center.y / city.spec.tile),
+      )).toBe(true);
+    }
   });
 });
 

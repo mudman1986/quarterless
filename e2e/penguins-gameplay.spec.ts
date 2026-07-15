@@ -19,8 +19,6 @@ test('Penguins of Tangram campaign unlocks every zone and keeps jump routes reac
     await completeTangramLevel(page);
 
     if (index < ZONES.length - 1) {
-      await expect(page.getByText(`${zone} cleared!`)).toBeVisible();
-      await page.getByRole('button', { name: /Next:/ }).click();
       await page.waitForFunction(
         (expectedZone) => {
           const hook = (window as unknown as { __penguinsOfTangram?: { state?: string; currentLevelId?: string } }).__penguinsOfTangram;
@@ -32,7 +30,6 @@ test('Penguins of Tangram campaign unlocks every zone and keeps jump routes reac
   }
 
   await expect(page.getByText('School festival complete!')).toBeVisible();
-  await page.getByRole('button', { name: 'Back to school map' }).click();
-  await expect(page.getByRole('heading', { name: 'Five-zone adventure' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Play Sports Day Finale' })).toBeVisible();
+  await page.getByRole('button', { name: 'Choose class' }).click();
+  await expect(page.getByRole('heading', { name: 'Penguins of Tangram' })).toBeVisible();
 });

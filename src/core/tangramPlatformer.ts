@@ -15,6 +15,26 @@ export interface TangramRect {
   height: number;
 }
 
+export interface TangramMovingPlatform extends TangramRect {
+  axis: 'x' | 'y';
+  distance: number;
+  speed: number;
+}
+
+export interface TangramBreakableBlock extends TangramRect {
+  label: string;
+}
+
+export interface TangramBossDefinition extends TangramRect {
+  minX: number;
+  maxX: number;
+  speed: number;
+  hits: number;
+  label: string;
+  warningSeconds: number;
+  chargeSpeed: number;
+}
+
 export interface TangramMovementSpec {
   maxSpeed: number;
   poweredMaxSpeed: number;
@@ -32,6 +52,9 @@ export interface TangramSimulationLevel {
   start: { x: number; y: number; label: string };
   hint: string;
   platforms: readonly TangramRect[];
+  breakableBlocks?: readonly TangramBreakableBlock[];
+  movingPlatforms?: readonly TangramMovingPlatform[];
+  boss?: TangramBossDefinition;
   collectibles: ReadonlyArray<{ x: number; y: number; label: string; secret?: boolean }>;
   hazards: ReadonlyArray<TangramRect & { label: string }>;
   enemies: ReadonlyArray<
@@ -41,6 +64,41 @@ export interface TangramSimulationLevel {
   checkpoint: TangramRect & { label: string };
   goal: TangramRect;
   powerup: TangramRect & { label: string };
+  requiredBadges?: number;
+}
+
+export function getTangramCheckpointSupport(
+  level: TangramSimulationLevel,
+): TangramRect | null {
+  const checkpointCenter = level.checkpoint.x + level.checkpoint.width / 2;
+  const platforms = level.platforms;
+  return (
+    platforms
+      .filter(
+        (platform) =>
+          checkpointCenter > platform.x &&
+          checkpointCenter < platform.x + platform.width &&
+          platform.y >= level.checkpoint.y &&
+          platform.y <= level.checkpoint.y + level.checkpoint.height + TANGRAM_PLAYER_HEIGHT,
+      )
+      .sort((a, b) => a.y - b.y)[0] ?? null
+  );
+}
+
+export function getTangramCheckpointRespawn(
+  level: TangramSimulationLevel,
+): { x: number; y: number; label: string } | null {
+  const support = getTangramCheckpointSupport(level);
+  if (!support) return null;
+  return {
+    x: clamp(
+      level.checkpoint.x + 12,
+      support.x,
+      support.x + support.width - TANGRAM_PLAYER_WIDTH,
+    ),
+    y: support.y - TANGRAM_PLAYER_HEIGHT,
+    label: level.checkpoint.label,
+  };
 }
 
 export interface TangramPlayerState {
@@ -58,9 +116,28 @@ export interface TangramEnemyState {
   active: boolean;
 }
 
+export interface TangramMovingPlatformState extends TangramMovingPlatform {
+  direction: 1 | -1;
+  velocityX: number;
+  velocityY: number;
+}
+
+export interface TangramBossState {
+  x: number;
+  direction: 1 | -1;
+  hitsRemaining: number;
+  active: boolean;
+  stunRemaining: number;
+  warningRemaining: number;
+  charging: boolean;
+  chargeCooldown: number;
+}
+
 export interface TangramPlatformerState {
   player: TangramPlayerState;
   enemies: TangramEnemyState[];
+  movingPlatforms: TangramMovingPlatformState[];
+  boss: TangramBossState | null;
   collected: boolean[];
   badgesCollected: number;
   checkpointActivated: boolean;
@@ -68,10 +145,14 @@ export interface TangramPlatformerState {
   falls: number;
   powerRemaining: number;
   powerSnackAvailable: boolean;
+  powerBlockHit: boolean;
+  breakableBlocksBroken: boolean[];
   invulnerableRemaining: number;
   hint: string;
   hintRemaining: number;
   elapsedSeconds: number;
+  goalPhase: 'none' | 'grab' | 'slide';
+  goalFlagY: number;
   finished: boolean;
 }
 
@@ -95,6 +176,10 @@ export interface TangramJumpAudit {
 export function createTangramPlatformerState(
   level: TangramSimulationLevel,
 ): TangramPlatformerState {
+  const checkpointRespawn = getTangramCheckpointRespawn(level);
+  if (!checkpointRespawn) {
+    throw new Error(`Tangram checkpoint has no supporting platform: ${level.title}`);
+  }
   return {
     player: {
       x: level.start.x,
@@ -109,6 +194,24 @@ export function createTangramPlatformerState(
       direction: index % 2 === 0 ? 1 : -1,
       active: true,
     })),
+    movingPlatforms: (level.movingPlatforms ?? []).map((platform) => ({
+      ...platform,
+      direction: 1,
+      velocityX: 0,
+      velocityY: 0,
+    })),
+    boss: level.boss
+      ? {
+          x: level.boss.x,
+          direction: 1,
+          hitsRemaining: level.boss.hits,
+          active: true,
+          stunRemaining: 0,
+          warningRemaining: 0,
+          charging: false,
+          chargeCooldown: 0,
+        }
+      : null,
     collected: level.collectibles.map(() => false),
     badgesCollected: 0,
     checkpointActivated: false,
@@ -116,10 +219,14 @@ export function createTangramPlatformerState(
     falls: 0,
     powerRemaining: 0,
     powerSnackAvailable: true,
+    powerBlockHit: false,
+    breakableBlocksBroken: (level.breakableBlocks ?? []).map(() => false),
     invulnerableRemaining: 0,
     hint: level.hint,
     hintRemaining: 0,
     elapsedSeconds: 0,
+    goalPhase: 'none',
+    goalFlagY: level.goal.y,
     finished: false,
   };
 }
@@ -207,7 +314,18 @@ function updateEnemies(
     const enemy = state.enemies[index];
     const definition = level.enemies[index];
     if (!enemy.active) continue;
-    enemy.x += definition.speed * enemy.direction * dt;
+    const nextX = enemy.x + definition.speed * enemy.direction * dt;
+    const supported = platformRects(state, level).some(
+      (platform) =>
+        Math.abs(platform.y - (definition.y + definition.height)) <= 4 &&
+        nextX < platform.x + platform.width &&
+        nextX + definition.width > platform.x,
+    );
+    if (!supported) {
+      enemy.direction = enemy.direction === 1 ? -1 : 1;
+      continue;
+    }
+    enemy.x = nextX;
     if (enemy.x <= definition.minX) {
       enemy.x = definition.minX;
       enemy.direction = 1;
@@ -219,13 +337,121 @@ function updateEnemies(
   }
 }
 
+function updateMovingPlatforms(
+  state: TangramPlatformerState,
+  level: TangramSimulationLevel,
+  dt: number,
+): void {
+  for (let index = 0; index < state.movingPlatforms.length; index += 1) {
+    const platform = state.movingPlatforms[index];
+    const definition = level.movingPlatforms?.[index];
+    if (!definition) continue;
+    const previousX = platform.x;
+    const previousY = platform.y;
+    const distance = platform.speed * platform.direction * dt;
+    if (platform.axis === 'x') platform.x += distance;
+    else platform.y += distance;
+
+    const offset = platform.axis === 'x' ? platform.x - definition.x : platform.y - definition.y;
+    if (offset <= 0) {
+      platform.x = definition.x;
+      platform.y = definition.y;
+      platform.direction = 1;
+    } else if (offset >= definition.distance) {
+      if (platform.axis === 'x') platform.x = definition.x + definition.distance;
+      else platform.y = definition.y + definition.distance;
+      platform.direction = -1;
+    }
+    platform.velocityX = (platform.x - previousX) / dt;
+    platform.velocityY = (platform.y - previousY) / dt;
+  }
+}
+
+function updateBoss(
+  state: TangramPlatformerState,
+  level: TangramSimulationLevel,
+  dt: number,
+  events: TangramPlatformerEvent[],
+): void {
+  const boss = state.boss;
+  const definition = level.boss;
+  if (!boss || !definition || !boss.active) return;
+  boss.stunRemaining = Math.max(0, boss.stunRemaining - dt);
+  boss.chargeCooldown = Math.max(0, boss.chargeCooldown - dt);
+  if (boss.stunRemaining > 0) return;
+  if (boss.warningRemaining > 0) {
+    boss.warningRemaining = Math.max(0, boss.warningRemaining - dt);
+    if (boss.warningRemaining === 0) {
+      boss.charging = true;
+      events.push({ type: 'hud' });
+    }
+    return;
+  }
+  if (boss.charging) {
+    boss.x += definition.chargeSpeed * boss.direction * dt;
+    if (boss.x <= definition.minX || boss.x >= definition.maxX) {
+      boss.x = clamp(boss.x, definition.minX, definition.maxX);
+      boss.charging = false;
+      boss.chargeCooldown = 1.4;
+      events.push({ type: 'hud' });
+    }
+    return;
+  }
+  boss.x += definition.speed * boss.direction * dt;
+  if (boss.x <= definition.minX) {
+    boss.x = definition.minX;
+    boss.direction = 1;
+  } else if (boss.x >= definition.maxX) {
+    boss.x = definition.maxX;
+    boss.direction = -1;
+  }
+  if (
+    boss.chargeCooldown === 0 &&
+    Math.abs(state.player.x - boss.x) < 280 &&
+    Math.abs(state.player.y - definition.y) < TANGRAM_PLAYER_HEIGHT
+  ) {
+    boss.direction = state.player.x >= boss.x ? 1 : -1;
+    boss.warningRemaining = definition.warningSeconds;
+    events.push({ type: 'hud' });
+  }
+}
+
+function platformRects(
+  state: TangramPlatformerState,
+  level: TangramSimulationLevel,
+): readonly TangramRect[] {
+  return [
+    ...level.platforms,
+    ...(level.breakableBlocks ?? []).filter(
+      (_, index) => !state.breakableBlocksBroken[index],
+    ),
+    ...state.movingPlatforms,
+  ];
+}
+
+function movingPlatformUnderPlayer(
+  state: TangramPlatformerState,
+): TangramMovingPlatformState | null {
+  if (!state.player.grounded) return null;
+  const player = tangramPlayerRect(state);
+  const bottom = player.y + player.height;
+  return (
+    state.movingPlatforms.find(
+      (platform) =>
+        Math.abs(bottom - platform.y) <= 3 &&
+        player.x < platform.x + platform.width &&
+        player.x + player.width > platform.x,
+    ) ?? null
+  );
+}
+
 function resolveHorizontal(
   state: TangramPlatformerState,
   level: TangramSimulationLevel,
   previousX: number,
 ): void {
   const playerRect = tangramPlayerRect(state);
-  for (const platform of level.platforms) {
+  for (const platform of platformRects(state, level)) {
     if (!intersects(playerRect, platform)) continue;
     const wasLeft = previousX + TANGRAM_PLAYER_WIDTH <= platform.x;
     const wasRight = previousX >= platform.x + platform.width;
@@ -242,9 +468,10 @@ function resolveVertical(
   state: TangramPlatformerState,
   level: TangramSimulationLevel,
   previousY: number,
+  events: TangramPlatformerEvent[],
 ): void {
   const playerRect = tangramPlayerRect(state);
-  for (const platform of level.platforms) {
+  for (const platform of platformRects(state, level)) {
     if (!intersects(playerRect, platform)) continue;
     const wasAbove = previousY + TANGRAM_PLAYER_HEIGHT <= platform.y;
     const wasBelow = previousY >= platform.y + platform.height;
@@ -253,6 +480,15 @@ function resolveVertical(
       state.player.velocityY = 0;
       state.player.grounded = true;
     } else if (wasBelow && state.player.velocityY < 0) {
+      const breakableIndex = (level.breakableBlocks ?? []).findIndex(
+        (block) => block === platform,
+      );
+      if (breakableIndex >= 0 && isTangramPoweredUp(state)) {
+        state.breakableBlocksBroken[breakableIndex] = true;
+        setHint(state, `${level.breakableBlocks?.[breakableIndex].label} broken!`, events);
+        events.push({ type: 'shake' });
+        continue;
+      }
       state.player.y = platform.y + platform.height;
       state.player.velocityY = 0;
     } else if (state.player.velocityY > 0) {
@@ -276,6 +512,11 @@ function updatePlayer(
   const powered = isTangramPoweredUp(state);
   const maxSpeed = powered ? movement.poweredMaxSpeed : movement.maxSpeed;
   const jumpVelocity = powered ? movement.poweredJumpVelocity : movement.jumpVelocity;
+  const movingPlatform = movingPlatformUnderPlayer(state);
+  if (movingPlatform) {
+    player.x += movingPlatform.velocityX * dt;
+    player.y += movingPlatform.velocityY * dt;
+  }
   const previousX = player.x;
   const previousY = player.y;
 
@@ -309,9 +550,9 @@ function updatePlayer(
   );
   player.y += player.velocityY * dt;
   player.grounded = false;
-  resolveVertical(state, level, previousY);
+  resolveVertical(state, level, previousY, events);
 
-  if (player.y > level.worldHeight + 120) {
+  if (player.y > level.worldHeight + 120 && player.x + TANGRAM_PLAYER_WIDTH < level.goal.x) {
     respawn(
       state,
       movement,
@@ -422,6 +663,44 @@ function handleEnemies(
   }
 }
 
+function handleBoss(
+  state: TangramPlatformerState,
+  level: TangramSimulationLevel,
+  movement: TangramMovementSpec,
+  previousY: number,
+  events: TangramPlatformerEvent[],
+): void {
+  const boss = state.boss;
+  const definition = level.boss;
+  if (!boss?.active || !definition || boss.stunRemaining > 0 || state.invulnerableRemaining > 0) return;
+  const playerRect = tangramPlayerRect(state);
+  const bossRect = { ...definition, x: boss.x };
+  if (!intersects(playerRect, bossRect)) return;
+  const previousBottom = previousY + TANGRAM_PLAYER_HEIGHT;
+  if (state.player.velocityY > 0 && previousBottom <= definition.y + 12) {
+    boss.hitsRemaining -= 1;
+    boss.stunRemaining = 0.8;
+    boss.warningRemaining = 0;
+    boss.charging = false;
+    boss.chargeCooldown = 1.4;
+    state.player.velocityY = -520;
+    setHint(
+      state,
+      boss.hitsRemaining > 0
+        ? `${definition.label} staggered — ${boss.hitsRemaining} more clean stomps.`
+        : `${definition.label} cleared! The festival bell is open.`,
+      events,
+    );
+    if (boss.hitsRemaining <= 0) {
+      boss.hitsRemaining = 0;
+      boss.active = false;
+    }
+    events.push({ type: 'hud' });
+    return;
+  }
+  respawn(state, movement, `${definition.label} sent you back to the checkpoint.`, events);
+}
+
 function handleCheckpoint(
   state: TangramPlatformerState,
   level: TangramSimulationLevel,
@@ -429,20 +708,36 @@ function handleCheckpoint(
 ): void {
   if (state.checkpointActivated || !intersects(tangramPlayerRect(state), level.checkpoint)) return;
   state.checkpointActivated = true;
-  state.respawnPoint = {
-    x: level.checkpoint.x + 12,
-    y: level.checkpoint.y - 8,
-    label: level.checkpoint.label,
-  };
+  state.respawnPoint = getTangramCheckpointRespawn(level) ?? state.respawnPoint;
   setHint(state, `Checkpoint reached: ${level.checkpoint.label}`, events);
 }
 
 function handlePowerSnack(
   state: TangramPlatformerState,
   level: TangramSimulationLevel,
+  previousY: number,
   events: TangramPlatformerEvent[],
 ): void {
-  if (!state.powerSnackAvailable || !intersects(tangramPlayerRect(state), level.powerup)) return;
+  const block = level.powerup;
+  const player = tangramPlayerRect(state);
+  const hitBlockFromBelow =
+    !state.powerBlockHit &&
+    state.player.velocityY < 0 &&
+    previousY >= block.y + block.height &&
+    player.y < block.y + block.height &&
+    player.x < block.x + block.width &&
+    player.x + player.width > block.x;
+  if (hitBlockFromBelow) {
+    state.powerBlockHit = true;
+    setHint(state, 'A super Tangram popped out!', events);
+    events.push({ type: 'hud' });
+    return;
+  }
+  if (
+    !state.powerBlockHit ||
+    !state.powerSnackAvailable ||
+    !intersects(player, { ...block, y: block.y - 42 })
+  ) return;
   state.powerSnackAvailable = false;
   state.powerRemaining = TANGRAM_POWER_DURATION;
   setHint(
@@ -457,17 +752,41 @@ function handleGoal(
   level: TangramSimulationLevel,
   events: TangramPlatformerEvent[],
 ): void {
-  if (!intersects(tangramPlayerRect(state), level.goal)) return;
-  if (state.badgesCollected < level.collectibles.length) {
-    setHint(
-      state,
-      `You still need ${level.collectibles.length - state.badgesCollected} more Tangram badges.`,
-      events,
-    );
-    return;
+  if (state.goalPhase !== 'none') return;
+  const player = tangramPlayerRect(state);
+  if (!intersects(player, level.goal) && player.x + player.width < level.goal.x) return;
+  state.goalPhase = 'grab';
+  state.goalFlagY = level.goal.y;
+  state.player.x = level.goal.x + level.goal.width / 2 - TANGRAM_PLAYER_WIDTH / 2;
+  state.player.y = level.goal.y + 30;
+  state.player.velocityX = 0;
+  state.player.velocityY = 0;
+  state.player.grounded = false;
+  setHint(state, 'Hold on to the Tangram flag!', events);
+}
+
+function updateGoalSequence(
+  state: TangramPlatformerState,
+  level: TangramSimulationLevel,
+  dt: number,
+  events: TangramPlatformerEvent[],
+): void {
+  if (state.goalPhase === 'grab') {
+    state.goalPhase = 'slide';
+    events.push({ type: 'hud' });
   }
-  state.finished = true;
-  events.push({ type: 'complete' });
+  if (state.goalPhase !== 'slide') return;
+  const bottom = level.goal.y + level.goal.height - 30;
+  state.goalFlagY = Math.min(bottom, state.goalFlagY + 520 * dt);
+  state.player.x = level.goal.x + level.goal.width / 2 - TANGRAM_PLAYER_WIDTH / 2;
+  state.player.y = state.goalFlagY + 12;
+  state.player.velocityX = 0;
+  state.player.velocityY = 0;
+  if (state.goalFlagY >= bottom) {
+    state.goalPhase = 'none';
+    state.finished = true;
+    events.push({ type: 'complete' });
+  }
 }
 
 export function tickTangramPlatformer(
@@ -481,15 +800,23 @@ export function tickTangramPlatformer(
   if (state.finished) return;
   state.elapsedSeconds += dt;
   updateTimers(state, level, dt, events);
+  if (state.goalPhase !== 'none') {
+    updateGoalSequence(state, level, dt, events);
+    return;
+  }
   updateEnemies(state, level, dt);
+  updateMovingPlatforms(state, level, dt);
+  updateBoss(state, level, dt, events);
   const previousY = updatePlayer(state, level, movement, input, dt, events);
+  handlePowerSnack(state, level, previousY, events);
   handleBouncePads(state, level, events);
   handleCollectibles(state, level, events);
+  handleGoal(state, level, events);
+  if (state.finished) return;
   handleHazards(state, level, movement, events);
   handleEnemies(state, level, movement, previousY, events);
+  handleBoss(state, level, movement, previousY, events);
   handleCheckpoint(state, level, events);
-  handlePowerSnack(state, level, events);
-  handleGoal(state, level, events);
 }
 
 function jumpRiseForVelocity(jumpVelocity: number): number {
@@ -515,6 +842,12 @@ export function buildTangramJumpAudit(
       label: 'label' in platform && typeof platform.label === 'string'
         ? platform.label
         : `Platform ${index + 1}`,
+      x: platform.x,
+      width: platform.width,
+      topY: platform.y - TANGRAM_PLAYER_HEIGHT,
+    })),
+    ...(level.movingPlatforms ?? []).map((platform, index) => ({
+      label: `Moving platform ${index + 1}`,
       x: platform.x,
       width: platform.width,
       topY: platform.y - TANGRAM_PLAYER_HEIGHT,

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Sound } from './Sound';
+import { shouldPlaySiren, Sound } from './Sound';
 
 class FakeAudioNode {
   connectedTo: unknown = null;
@@ -61,6 +61,74 @@ afterEach(() => {
 });
 
 describe('Sound', () => {
+  it('stops scheduling the siren when wanted stars reach zero', () => {
+    expect(shouldPlaySiren('playing', 2, 2)).toBe(true);
+    expect(shouldPlaySiren('playing', 0, 2)).toBe(false);
+  });
+
+  it('schedules a soft alternating siren instead of a harsh chord', () => {
+    const managedContext = new FakeAudioContext();
+    const sound = new Sound({
+      context: managedContext as unknown as AudioContext,
+      destination: managedContext.destination as unknown as AudioNode,
+    });
+
+    sound.siren();
+
+    expect(managedContext.oscillators).toHaveLength(2);
+    expect(managedContext.oscillators.map((oscillator) => oscillator.frequency.value)).toEqual([
+      440,
+      554,
+    ]);
+    expect(managedContext.oscillators.map((oscillator) => oscillator.type)).toEqual([
+      'triangle',
+      'triangle',
+    ]);
+    expect(managedContext.oscillators[0]?.start).toHaveBeenCalledWith(12);
+    expect(managedContext.oscillators[1]?.start).toHaveBeenCalledWith(12.22);
+  });
+
+  it('schedules the small platformer cue set through the managed output', () => {
+    const managedContext = new FakeAudioContext();
+    const sound = new Sound({
+      context: managedContext as unknown as AudioContext,
+      destination: managedContext.destination as unknown as AudioNode,
+    });
+
+    sound.collect();
+    sound.powerup();
+    sound.bossHit();
+
+    expect(managedContext.oscillators).toHaveLength(6);
+    expect(managedContext.oscillators.map((oscillator) => oscillator.frequency.value)).toEqual([
+      660,
+      990,
+      523,
+      659,
+      784,
+      120,
+    ]);
+  });
+
+  it('stops active tones and suppresses new cues while muted', () => {
+    const managedContext = new FakeAudioContext();
+    const sound = new Sound({
+      context: managedContext as unknown as AudioContext,
+      destination: managedContext.destination as unknown as AudioNode,
+    });
+
+    sound.shot();
+    sound.setMuted(true);
+    sound.jump();
+
+    expect(managedContext.oscillators).toHaveLength(1);
+    expect(managedContext.oscillators[0].stop).toHaveBeenCalledTimes(2);
+
+    sound.setMuted(false);
+    sound.jump();
+    expect(managedContext.oscillators).toHaveLength(2);
+  });
+
   it('does not create an independent AudioContext', () => {
     let globalContextCount = 0;
     class GlobalAudioContext extends FakeAudioContext {

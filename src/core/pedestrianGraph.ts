@@ -153,7 +153,8 @@ export function buildPedestrianGraph(city: City): PedestrianGraph {
 
   // Index the ring nodes so crosswalk ends can attach to the nearest pavement.
   const ringIndex = new NodeIndex(nodes.slice(0, ringCount), Math.max(16, city.spec.tile));
-  const attachRadius = CROSSWALK_BELT_WIDTH + 2 * s + city.spec.tile / 2;
+  const belt = city.spec.sidewalkWidth ?? CROSSWALK_BELT_WIDTH;
+  const attachRadius = belt + 2 * s + city.spec.tile / 2;
 
   // 2. Crosswalk crossings: stitch the rings on opposite kerbs together so the
   //    graph can only span a road through a marked crossing.

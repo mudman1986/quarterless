@@ -1,4 +1,39 @@
-# Tangram Penguin Platformer Plan
+# Penguins of Tangram — Roadmap v5
+
+## Current status — 2026-07-15
+
+The game is now named **Penguins of Tangram** and has a working Phaser 4 campaign
+slice in the arcade launcher:
+
+- **Complete:** storybook visual direction, pure deterministic platformer simulation,
+  camera-follow runtime, hazards, enemies, checkpoints, badges, power snack, goal
+  completion, lazy loading, character select, six playable classes, five zones,
+  progression map, secret routes, bounce pads, completion summaries, and jump-route
+  audits.
+- **Shipped across the last two updates:** pointer/touch controls for left, right,
+  and jump, plus state-driven idle, walk, jump, and powered-up character poses.
+  Touch controls are shown during gameplay on coarse-pointer devices and remain
+  keyboard-compatible.
+- **Shipped in the current expanded slice:** validated local campaign persistence
+  (selected class, completed zones, and best run summaries), deterministic
+  moving platforms with player carry behavior, keyboard/button pause and resume,
+  and lightweight animated feedback for badges, enemies, bounce pads, checkpoints,
+  goals, and the power snack.
+- **Shipped to finish Phase 5:** managed procedural audio cues for jumps, landings,
+  badges, power snacks, boss hits, and completion; plus the Sports Day Relay
+  Captain finale with three stomp phases, stun windows, respawn handling, and a
+  locked final bell.
+- **Shipped in the language slice:** Dutch is the default language, English is
+  available from the child-friendly settings panel, and the choice persists
+  locally across visits. Authored level text, character profiles, HUD labels,
+  Phaser scene labels, and simulation hints are translated without putting
+  localization code in the deterministic core.
+- **Deliberately deferred:** binary/authored sprite frames remain optional. The
+  current procedural art pipeline is faster to diff, has no decode cost, and
+  matches the repository's asset policy.
+
+The simulation intentionally stays in `src/core/tangramPlatformer.ts`; Phaser only
+renders the scene and forwards keyboard or touch input.
 
 ## Goal
 
@@ -160,36 +195,44 @@ Start with 3 to 5 themed zones:
 
 ### Phase 1 - Pre-production
 
-- confirm art direction
-- choose final game name
-- decide whether playable animals have cosmetic or light mechanical differences
-- define the first vertical-slice level
+- [x] confirm art direction
+- [x] choose final game name: **Penguins of Tangram**
+- [x] decide on light mechanical differences between playable animals
+- [x] define the first vertical-slice level
 
 ### Phase 2 - Core platformer foundation
 
-- create Phaser game entry
-- implement camera, physics, player controller, and tile collisions
-- add checkpoint, hazard, collectible, and level completion systems
-- wire lazy loading into the arcade shell
+- [x] create Phaser game entry
+- [x] implement camera, deterministic player controller, and platform collisions
+- [x] add checkpoint, hazard, collectible, and level completion systems
+- [x] wire lazy loading into the arcade shell
 
 ### Phase 3 - Vertical slice
 
-- ship one polished Tangram level
-- include penguin as the first fully animated playable character
-- add one or two enemy types
-- add one power-up and one secret route
+- [x] ship a polished first Tangram level
+- [x] add state-driven procedural idle, walk, jump, and powered-up animation
+- [ ] replace procedural poses with authored sprite frames if the art pipeline needs them
+- [x] add enemy movement and stomp handling
+- [x] add one power-up and secret routes
 
 ### Phase 4 - Character expansion
 
-- add remaining playable animal classes
-- add character select
-- tune minor per-character movement traits
+- [x] add remaining playable animal classes
+- [x] add character select
+- [x] tune minor per-character movement traits
 
 ### Phase 5 - Content expansion
 
-- build additional level themes
-- add progression map
-- add more environmental mechanics and set-piece moments
+- [x] build additional level themes
+- [x] add progression map
+- [x] add bounce pads and themed set dressing
+- [x] add responsive touch controls
+- [x] persist campaign progress between visits
+- [x] add deterministic moving platforms and player carry behavior
+- [x] add pause/resume UX without advancing simulation while paused
+- [x] add animated feedback for interactive world objects
+- [x] add managed procedural audio feedback
+- [x] add a boss/finale set piece
 
 ## Name Options
 
@@ -202,20 +245,177 @@ Start with 3 to 5 themed zones:
 - **The Tangram Penguins**
 - **Penguin Paths of Tangram**
 
-## Recommended Starting Point
+## Current status — Roadmap v3 complete
 
-Start with **Penguins of Tangram** or **Tangram Penguin Quest** as the leading name candidates, and build a single polished Phaser vertical slice around:
+Roadmap v2 is complete. The five-zone campaign now has persistent campaign and
+audio preferences, pause-safe simulation, moving-platform traversal, reduced-motion
+rendering, a telegraphed Relay Captain finale, and browser coverage for reload
+persistence, pause/resume, boss gating, touch input, reduced motion, and the
+largest-zone render loop.
 
-- penguin default hero
-- one playable alternative animal
-- one playground-themed level
-- collectibles, checkpoints, one power-up, and one end-of-level goal
+Roadmap v3 is also complete. The child-first release now includes a discoverable
+How to play and settings panel, large touch controls, local personal-best
+reminders, opt-in bounded route notes, confirmed campaign reset, and restart from
+the beginning of the current level. Checkpoint respawns are derived from their
+supporting platforms, and authored-data tests prevent unsupported checkpoints
+from returning a child to a fall-respawn loop.
 
-## Feedback Needed Before Implementation
+- **Controls:** Arrow keys or WASD move; Space or Up jumps; P or Escape pauses.
+- **Accessibility:** coarse-pointer buttons mirror keyboard controls; reduced-motion
+  preferences remove bobbing, rotation, and camera shake.
+- **Persistence:** the selected class, completion records, best runs, and sound
+  preference use local storage. Clear `penguins-of-tangram.progress` to reset the
+  campaign.
+- **Content validation:** all six character profiles have route-reachability
+  coverage and authored moving-platform/boss bounds checks. No optional finale
+  shortcut was added because there is no replay telemetry showing a need for it.
+- **Art decision:** authored sprite frames remain deferred; procedural Canvas
+  textures stay the measured, diffable, no-decode path.
 
-Please confirm:
+## Roadmap v3 — child-first release
 
-1. which game name you prefer
-2. whether you want light gameplay differences between animal characters or mostly cosmetic choice
-3. whether the visual style should lean more storybook, more cartoony, or more classic pixel art
-4. whether I should start implementation with a single polished level and character-select flow
+### Re-evaluation
+
+The v2 release-hardening pass is finished. Because Tangram is for children ages
+4–10, v3 prioritizes safe, readable, low-pressure play over leaderboards,
+complex menus, social features, or extra systems. A child should understand the
+next action from the screen, recover quickly from a mistake, and never need an
+account or network connection.
+
+### Phase 9 — Friendly play UX
+
+- [x] add a large, discoverable How to play panel with keyboard and touch
+  instructions
+- [x] make sound, reduced motion, route notes, and reset behavior understandable
+  in the same panel
+- [x] show personal bests as friendly “your best” reminders, never as public
+  rankings or pressure
+- [x] confirm campaign reset and keep it local to this device
+
+### Phase 10 — Safe replay and family playtesting
+
+- [x] keep route notes opt-in, local-only, bounded, and free of identifiers
+- [x] use all-character route audits to protect the easiest age-appropriate path
+- [x] provide replay without locking campaign progress behind a score or timer
+- [x] tune only from measured local playtest summaries; do not add a shortcut or
+  new challenge without evidence that children need it
+- [x] restart the current level from its authored beginning without clearing
+  campaign progress
+- [x] keep every checkpoint grounded on authored platform geometry
+
+### Phase 11 — Child-safe release maintenance
+
+- [x] keep large touch targets, readable contrast, reduced-motion behavior, and
+  audio unlock fallback covered in production browser checks
+- [x] keep the Phaser vendor chunk isolated and watch the Tangram chunk budget
+- [x] retain deterministic core tests and full browser smoke coverage
+- [x] document that no account, network service, advertising, chat, or tracking
+  is required to play
+
+### v3 exit criteria
+
+Roadmap v3 is complete: a first-time child can find the controls, pause, recover,
+replay, and reset without adult-only game knowledge; personal progress stays
+local; accessibility settings are discoverable; and mobile production checks
+remain green. New mechanics remain deferred until child playtests show a clear,
+age-appropriate need.
+
+## Roadmap v4 — measured child play (complete)
+
+### Re-evaluation
+
+V3 established the safe, local, low-pressure foundation. V4 shipped the smallest
+measured-play loop: a welcoming opening route, readable instructions, opt-in
+bounded local notes, and production checks for the child-safe replay path. No
+account, network service, advertising, chat, leaderboard, or tracking system is
+needed.
+
+### Phase 12 — First-play clarity
+
+- [x] provide a first-play route hint that names movement, jumping, and the goal
+- [x] teach movement and jumping through the first level's existing spaces
+- [x] replace confusing labels, hints, or button wording with child-readable text
+- [x] keep the first successful route finishable without collecting every badge
+- [x] add focused core, data, persistence, and browser regression tests
+
+### Phase 13 — Gentle difficulty tuning
+
+- [x] record bounded opt-in attempts, falls, duration, and checkpoint use by zone
+- [x] keep the existing age-appropriate jumps, hazards, and checkpoint spacing
+- [x] preserve multiple characters and the easiest reachable route
+- [x] keep mistakes recoverable without lives, punishment, or progress loss
+- [x] retain route audits for every playable character
+
+### Phase 14 — Content polish
+
+- [x] improve feedback for badges, goals, checkpoints, hazards, and boss warnings
+- [x] make each zone's visual landmark and next destination obvious
+- [x] defer authored variations until playtests show repetition
+- [x] keep procedural art and audio unless authored replacements measurably improve
+  clarity or performance
+- [x] avoid new mechanics unless an observed problem cannot be solved by tuning
+
+### Phase 15 — Family-ready release
+
+- [x] verify keyboard, touch, reduced motion, audio mute, pause, restart, and reset
+  with production browser checks
+- [x] keep settings and reset understandable to an adult without making them
+  required for a child to play
+- [x] document the local-only data boundary and the opt-in playtest summary
+- [x] keep the Phaser vendor chunk isolated and the Tangram chunk within budget
+- [x] retain full deterministic core, authored-data, and browser regression suites
+
+### v4 exit criteria
+
+Roadmap v4 is complete: the opening route explains the controls, can be finished
+without bonus badges, falls remain recoverable, local notes are opt-in and
+bounded, and accessibility, privacy, performance, and regression checks remain
+green. Real supervised observations are the next input, not a reason to add
+speculative systems.
+
+## Roadmap v5 — supervised playtest findings
+
+### Re-evaluation
+
+V4 now records just enough local evidence to guide a short adult-supervised
+playtest. V5 should turn those observations into small content edits, then stop.
+The game remains a quiet, local activity for ages 4–10; no online analytics or
+competitive layer is justified.
+
+### Phase 19 — Language access
+
+- [x] default new players to Dutch while preserving English as an option
+- [x] persist and validate the language choice with the existing version-1 save
+- [x] expose the language switch in the existing How to play/settings panel
+- [x] translate authored routes, character choices, HUD, overlays, and dynamic
+  child-facing feedback
+- [x] cover Dutch default, English switching, and language persistence in tests
+
+### Phase 16 — Observe and listen
+
+- [ ] run short first-play sessions with children across the 4–10 age range
+- [ ] record only where a child hesitates, asks for help, or chooses to replay
+- [ ] review local route notes with an adult and discard them after review
+- [ ] write down no names, accounts, faces, voice recordings, or identifiers
+
+### Phase 17 — Tune the smallest friction
+
+- [ ] fix the most common control, label, or route confusion first
+- [ ] adjust one authored value at a time and rerun route audits
+- [ ] preserve the zero-pressure opening route and all recovery behavior
+- [ ] add a mechanic only when tuning cannot solve the observed problem
+
+### Phase 18 — Confirm the family release
+
+- [ ] repeat keyboard, touch, reduced-motion, audio, pause, restart, reset, and
+  checkpoint checks after playtest edits
+- [ ] keep local persistence bounded and backward-compatible
+- [ ] keep the Phaser vendor split and Tangram performance budgets green
+- [ ] update this roadmap with findings instead of adding a speculative v6 system
+
+### v5 exit criteria
+
+Roadmap v5 is complete when supervised observations have produced either a small,
+tested improvement or clear evidence that no change is needed, and the full
+child-safe regression suite remains green. New mechanics, online services, and
+competitive features remain out of scope without a separate product decision.

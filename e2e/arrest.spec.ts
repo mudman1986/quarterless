@@ -180,55 +180,33 @@ async function seedStoppedPlayerCarWithDistantFootCop(page: Page): Promise<void>
   );
 }
 
-async function traceInCarBustDelay(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    const win = window as unknown as { __game: GameProbe; __arrestTrace?: ArrestTrace };
-    win.__arrestTrace = {
+async function traceImmediateContactBust(page: Page): Promise<ArrestTrace> {
+  return page.evaluate(() => {
+    const win = window as unknown as { __game: GameProbe };
+    const w = win.__game.scene.getScene('City').world;
+    const controls = {
+      up: false,
+      down: false,
+      left: false,
+      right: false,
+      action: false,
+      confirm: false,
+      fire: false,
+    };
+    const trace: ArrestTrace = {
       maxStoppedWhilePlaying: 0,
       maxStoppedBeforeContact: 0,
-      firstContactStoppedFor: null,
-      contactAfterMs: null,
+      firstContactStoppedFor: w.carStoppedForBusted,
+      contactAfterMs: 0,
       bustStoppedFor: null,
     };
-    const startedAt = performance.now();
 
-    const sample = () => {
-      const w = win.__game.scene.getScene('City').world;
-      const footCop = w.police.find((cop) => cop.kind === 'foot' && !cop.returningHome);
-      const contactRadius = !footCop
-        ? 0
-        : w.isDriving && w.drivingCarIndex !== null
-          ? footCop.radius + w.cars[w.drivingCarIndex].radius
-          : footCop.radius;
-      const inContact =
-        !!footCop &&
-        Math.hypot(footCop.pos.x - w.focus.x, footCop.pos.y - w.focus.y) <= contactRadius;
-      if (w.status === 'playing') {
-        win.__arrestTrace!.maxStoppedWhilePlaying = Math.max(
-          win.__arrestTrace!.maxStoppedWhilePlaying,
-          w.carStoppedForBusted,
-        );
-        if (win.__arrestTrace!.firstContactStoppedFor === null) {
-          if (inContact) {
-            win.__arrestTrace!.firstContactStoppedFor = w.carStoppedForBusted;
-            win.__arrestTrace!.contactAfterMs = performance.now() - startedAt;
-          } else {
-            win.__arrestTrace!.maxStoppedBeforeContact = Math.max(
-              win.__arrestTrace!.maxStoppedBeforeContact,
-              w.carStoppedForBusted,
-            );
-          }
-        }
-        requestAnimationFrame(sample);
-        return;
-      }
-
-      if (w.status === 'busted' && win.__arrestTrace!.bustStoppedFor === null) {
-        win.__arrestTrace!.bustStoppedFor = w.carStoppedForBusted;
-      }
-    };
-
-    requestAnimationFrame(sample);
+    for (let frame = 0; frame < 90 && w.status === 'playing'; frame += 1) {
+      w.tick(controls, 1 / 60);
+      trace.maxStoppedWhilePlaying = Math.max(trace.maxStoppedWhilePlaying, w.carStoppedForBusted);
+    }
+    if (w.status === 'busted') trace.bustStoppedFor = w.carStoppedForBusted;
+    return trace;
   });
 }
 
@@ -286,35 +264,24 @@ test('a foot officer only busts a stopped player car after one second in the liv
 }) => {
   await boot(page);
   await seedStoppedPlayerCarUnderFootCop(page);
-  await traceInCarBustDelay(page);
-
-  await page.waitForFunction(
-    () => {
-      const win = window as unknown as { __arrestTrace?: ArrestTrace };
-      return win.__arrestTrace?.bustStoppedFor !== null;
-    },
-    undefined,
-    { timeout: 5000 },
-  );
+  const trace = await traceImmediateContactBust(page);
 
   const state = await page.evaluate(() => {
-    const win = window as unknown as { __game: GameProbe; __arrestTrace?: ArrestTrace };
+    const win = window as unknown as { __game: GameProbe };
     const w = win.__game.scene.getScene('City').world;
     return {
       status: w.status,
       isDriving: w.isDriving,
       stoppedFor: w.carStoppedForBusted,
-      trace: win.__arrestTrace,
     };
   });
 
   expect(state.isDriving).toBe(true);
   expect(state.status).toBe('busted');
-  expect(state.trace).toBeDefined();
-  expect(state.trace?.maxStoppedWhilePlaying).toBeGreaterThanOrEqual(0.9);
-  expect(state.trace?.maxStoppedWhilePlaying).toBeLessThan(1.05);
-  expect(state.trace?.bustStoppedFor).toBeGreaterThanOrEqual(1);
-  expect(state.trace?.bustStoppedFor).toBeLessThan(1.2);
+  expect(trace.maxStoppedWhilePlaying).toBeGreaterThanOrEqual(0.9);
+  expect(trace.maxStoppedWhilePlaying).toBeLessThan(1.05);
+  expect(trace.bustStoppedFor).toBeGreaterThanOrEqual(1);
+  expect(trace.bustStoppedFor).toBeLessThan(1.2);
   expect(state.stoppedFor).toBeGreaterThanOrEqual(1);
 });
 

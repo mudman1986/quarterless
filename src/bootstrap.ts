@@ -256,6 +256,7 @@ function storyBranchOutcomeTitle(branchId: string, outcomeId: string): string {
 }
 
 const STORY_TOUCH_PREF_KEY = 'sindicate.touchEnabled';
+const STORY_FPS_PREF_KEY = 'sindicate.fpsVisible';
 
 function readTouchPreference(): boolean | null {
   const store = currentGameStore();
@@ -270,6 +271,16 @@ function writeTouchPreference(enabled: boolean): void {
   const store = currentGameStore();
   if (!store) return;
   store.setItem(STORY_TOUCH_PREF_KEY, enabled ? '1' : '0');
+}
+
+function readFpsPreference(): boolean {
+  return currentGameStore()?.getItem(STORY_FPS_PREF_KEY) === '1';
+}
+
+function writeFpsPreference(enabled: boolean): void {
+  const store = currentGameStore();
+  if (!store) return;
+  store.setItem(STORY_FPS_PREF_KEY, enabled ? '1' : '0');
 }
 
 function currentStoryRunOverview(): StoryRunOverview {
@@ -465,6 +476,7 @@ function renderStoryMenu(game: ArcadeGame): void {
     slotOverview(index + 1),
   );
   const touchEnabled = readTouchPreference() !== false;
+  const fpsEnabled = readFpsPreference();
   const root = appRoot();
   root.innerHTML = `
     <main class="arcade-page" aria-label="Story mode selection">
@@ -491,6 +503,9 @@ function renderStoryMenu(game: ArcadeGame): void {
               </button>
               <button class="play-button play-button--secondary" type="button" data-story-touch>
                 Touch Controls: ${touchEnabled ? 'ON' : 'OFF'}
+              </button>
+              <button class="play-button play-button--secondary" type="button" data-story-action="fps">
+                FPS Counter: ${fpsEnabled ? 'ON' : 'OFF'}
               </button>
               <button class="play-button play-button--secondary" type="button" data-story-action="back">
                 Back to Arcade
@@ -591,6 +606,10 @@ function renderStoryMenu(game: ArcadeGame): void {
     ?.addEventListener('click', renderLanding);
   root.querySelector<HTMLButtonElement>('[data-story-touch]')?.addEventListener('click', () => {
     writeTouchPreference(!touchEnabled);
+    renderStoryMenu(game);
+  });
+  root.querySelector<HTMLButtonElement>('[data-story-action="fps"]')?.addEventListener('click', () => {
+    writeFpsPreference(!fpsEnabled);
     renderStoryMenu(game);
   });
   for (const button of root.querySelectorAll<HTMLButtonElement>('[data-story-chapter]')) {

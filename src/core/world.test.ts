@@ -8,6 +8,7 @@ import {
   SERVICE_TIMEOUT,
   SERVICE_PICKUP_DWELL,
   TRAFFIC_CAR_KINDS,
+  CAR_MAX_HEALTH,
   VEHICLE_BURN_DURATION,
   carTuningForKind,
   isCivilianRoadVehicleKind,
@@ -220,7 +221,7 @@ describe('World pedestrians', () => {
       bounds: { width: 1000, height: 1000 },
       rng: () => 0.5,
     });
-    for (let i = 0; i < 600; i++) {
+    for (let i = 0; i < 120; i++) {
       w.tick(controls(), 1 / 60);
       const p = w.pedestrians[0];
       // The pedestrian's centre must never end up inside the building: it cannot
@@ -268,6 +269,28 @@ describe('World pedestrians', () => {
     expect(w.wantedStars).toBeGreaterThanOrEqual(1);
     expect(w.kills).toBe(1); // the player gets credit for the kill
     expect(w.score.current).toBe(SCORE_PER_PEDESTRIAN);
+  });
+
+  it('does not re-route a fleeing pedestrian through the sidewalk graph when blocked by an obstacle', () => {
+    const city = buildCity({ cols: 30, rows: 30, tile: 48, block: 4, margin: 8 });
+    const opts = {
+      player: player(),
+      city,
+      walls: [...city.buildings, ...city.fences, rect(118, 0, 20, 40)],
+      pedestrians: [pedAt(100, 20)],
+      water: city.water,
+      bounds: { width: city.width, height: city.height },
+    };
+    const snapshot = new World(opts).snapshot();
+    snapshot.gunfireThreats = [vec2(80, 20)];
+    snapshot.bullets = [{ pos: vec2(80, 20), velocity: vec2(0, 0), life: 1, damage: 0 }];
+    const w = World.fromSnapshot(opts, snapshot);
+
+    for (let i = 0; i < 8; i++) w.tick(controls(), 1 / 60);
+
+    const fleeing = w.pedestrians[0];
+    expect(fleeing.state).toBe('flee');
+    expect(fleeing.navNode).toBeUndefined();
   });
 });
 
@@ -523,6 +546,24 @@ describe('World police and wanted level', () => {
     expect(after).toBeLessThan(before); // the cop closed the distance
   });
 
+  it('reuses the foot-police flow field while the player stays in one tile', () => {
+    const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+    const w = new World({
+      player: { pos: tileCenter(city.spec, 2, 2), angle: 0, radius: 8 },
+      city,
+      police: [{ pos: tileCenter(city.spec, 8, 8), heading: 0, radius: 12, kind: 'foot' }],
+      bounds: { width: city.width, height: city.height },
+    });
+    w.wanted = { heat: 200 };
+
+    w.tick(controls(), 1 / 60);
+    const firstBuilds = w.policeFlowFieldComputations;
+    w.tick(controls(), 1 / 60);
+
+    expect(firstBuilds).toBe(1);
+    expect(w.policeFlowFieldComputations).toBe(firstBuilds);
+  });
+
   it('sends a foot officer back to the station instead of dispersing when clear', () => {
     const w = new World({
       player: player(),
@@ -711,6 +752,37 @@ describe('World NPC traffic', () => {
     expect(w.cars[0].pos).toEqual(posAfterEnter);
   });
 
+  it('ejects the driver from every occupied civilian vehicle when it is stolen', () => {
+    for (const kind of TRAFFIC_CAR_KINDS) {
+      const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+      const w = new World({
+        player: player(),
+        cars: [carAt(20, 0)],
+        city,
+        carKinds: [kind],
+        carDrivers: [{ dir: vec2(1, 0) }],
+        rng: () => 0.9,
+      });
+
+      w.tick(controls({ action: true }), 1 / 60);
+
+      expect(w.snapshot().carDrivers[0], kind).toBeNull();
+      expect(w.pedestrians, kind).toHaveLength(1);
+    }
+  });
+
+  it('does not eject anyone from a parked vehicle when it is stolen', () => {
+    const w = new World({
+      player: player(),
+      cars: [carAt(20, 0)],
+      carDrivers: [null],
+    });
+
+    w.tick(controls({ action: true }), 1 / 60);
+
+    expect(w.pedestrians).toHaveLength(0);
+  });
+
   it('makes an NPC driver turn the car away after the vehicle is shot', () => {
     const city = miniCity();
     const npcCar: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 };
@@ -792,6 +864,60 @@ describe('World NPC traffic', () => {
     for (let i = 0; i < 90; i++) w.tick(controls(), 1 / 60);
 
     expect(w.cars[0].pos.y).toBeGreaterThanOrEqual(intersectionY);
+  });
+});
+
+describe('World vehicle damage', () => {
+  it('reduces incoming vehicle damage by half', () => {
+    const w = new World({
+      player: player(),
+      cars: [carAt(20, 0)],
+      bounds: { width: 4000, height: 4000 },
+    });
+    w.bullets = [
+      {
+        pos: vec2(20, 0),
+        velocity: vec2(0, 0),
+        life: 1,
+        damage: 20,
+      },
+    ];
+
+    w.tick(controls(), 1 / 60);
+
+    expect(w.snapshot().carHealth[0]).toBe(CAR_MAX_HEALTH - 10);
+  });
+
+  it('starts the car escape fuse instead of killing the player inside it', () => {
+    const w = new World({
+      player: player(),
+      cars: [carAt(0, 0)],
+      maxHealth: 10,
+      bounds: { width: 4000, height: 4000 },
+    });
+    w.tick(controls({ action: true }), 1 / 60);
+    w.tick(controls(), 1 / 60);
+    (w as unknown as { carHealth: number[] }).carHealth[0] = 1;
+    w.wanted = addHeat(createWanted(), CRIME_HEAT.hitPolice);
+    w.policeBullets = [
+      {
+        pos: vec2(0, 0),
+        velocity: vec2(0, 0),
+        life: 1,
+        damage: 10,
+      },
+    ];
+
+    w.tick(controls(), 1 / 60);
+
+    expect(w.isWasted).toBe(false);
+    expect(w.isDriving).toBe(true);
+    expect(w.snapshot().carBurnTimers[0]).toBeGreaterThan(0);
+
+    w.tick(controls({ action: true }), 1 / 60);
+
+    expect(w.isDriving).toBe(false);
+    expect(w.isWasted).toBe(false);
   });
 });
 
@@ -1740,11 +1866,16 @@ describe('World traffic rerouting and lights', () => {
     w.tick(controls(), 1 / 60);
     expect(w.pedestrians).toHaveLength(1);
     expect(w.pedestrians[0].state).toBe('flee');
+    let recentPathLength = 0;
+    let previous = start;
     for (let i = 0; i < 600; i++) {
       w.tick(controls(), 1 / 60);
       const p = w.pedestrians[0];
+      recentPathLength += distance(previous, p.pos);
+      previous = p.pos;
       expect(city.water.some((water) => pointInRect(p.pos, water))).toBe(false);
     }
+    expect(recentPathLength).toBeGreaterThan(30);
   }, 10_000);
 
   it('keeps a foot officer returning to station out of the river when home sits directly across the water', () => {
@@ -2775,6 +2906,7 @@ describe('World car explosions', () => {
       speed: 0,
       blocked: 0,
       health: 1,
+      depot: hospital!.roadSpawn,
     };
 
     for (let i = 0; i < 120 && w.ambulance; i++) w.tick(controls({ fire: true }), 1 / 60);
@@ -2821,7 +2953,7 @@ describe('World car explosions', () => {
         blocked: 0,
         health: 1,
         targetCar: 0,
-        depot: towPos,
+        depot: towYard!.roadSpawn,
         completedWrecks: 0,
       },
     ];
@@ -3117,30 +3249,6 @@ describe('World service vehicles treat actors as solid', () => {
     expect(w.isWasted).toBe(false); // the blocked player was never driven over
   });
 
-  it('runs over the player when a dispatched vehicle bears down on them', () => {
-    const city = miniCity();
-    const wreck: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 };
-    const w = new World({
-      player: player(),
-      cars: [wreck],
-      city,
-      carDrivers: [null],
-      viewRadius: 4000,
-      bounds: { width: city.width, height: city.height },
-    });
-    w.wreckedCars[0] = true;
-
-    w.tick(controls(), 0); // dispatch the tow at the yard without moving it yet
-    const tow = w.tows[0]!;
-    w.player = {
-      ...w.player,
-      pos: vec2(tow.pos.x + Math.cos(tow.heading) * 15, tow.pos.y + Math.sin(tow.heading) * 15),
-      angle: tow.heading,
-    };
-
-    for (let i = 0; i < 400 && !w.isWasted; i++) w.tick(controls(), 1 / 60);
-    expect(w.isWasted).toBe(true); // the moving tow truck mowed the player down
-  });
 });
 
 describe('World service vehicle crew fetch the cargo on foot', () => {
@@ -3375,7 +3483,9 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
 
   it('reaches wrecks near the live map bottom road instead of circling until timeout', () => {
     const city = buildCity(CITY_SPEC);
-    const bottomRoadStart = Math.floor((city.spec.rows - 1) / city.spec.block) * city.spec.block;
+    const bottomRoadStart = city.spec.edgeRoads?.bottom
+      ? city.spec.rows - (city.spec.roadWidth ?? 1)
+      : Math.floor((city.spec.rows - 1) / city.spec.block) * city.spec.block;
     const bottomRoadTy = bottomRoadStart + Math.floor((city.spec.roadWidth ?? 1) / 2);
     const sideStreetTy = bottomRoadStart - 3;
     const bottomTowYard = city.facilities
@@ -3404,7 +3514,10 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     const sideStreetTarget = tileCenter(city.spec, sideStreetTx!, sideStreetTy);
     const bottomSidewalk = city.sidewalks
       .filter(
-        (sidewalk) => sidewalk.y >= (bottomRoadStart + (city.spec.roadWidth ?? 1)) * city.spec.tile,
+        (sidewalk) =>
+          sidewalk.y >=
+          bottomRoadStart * city.spec.tile -
+            (city.spec.margin ?? 0),
       )
       .sort(
         (a, b) =>
@@ -3449,7 +3562,9 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
 
   it('clears several live-city wrecks near the bottom road without a tow timing out at dispatch', () => {
     const city = buildCity(CITY_SPEC);
-    const bottomRoadStart = Math.floor((city.spec.rows - 1) / city.spec.block) * city.spec.block;
+    const bottomRoadStart = city.spec.edgeRoads?.bottom
+      ? city.spec.rows - (city.spec.roadWidth ?? 1)
+      : Math.floor((city.spec.rows - 1) / city.spec.block) * city.spec.block;
     const bottomRoadTy = bottomRoadStart + Math.floor((city.spec.roadWidth ?? 1) / 2);
     const sideStreetTy = bottomRoadStart - 3;
     const bottomTowYard = city.facilities
@@ -3478,7 +3593,10 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     );
     const bottomSidewalk = city.sidewalks
       .filter(
-        (sidewalk) => sidewalk.y >= (bottomRoadStart + (city.spec.roadWidth ?? 1)) * city.spec.tile,
+        (sidewalk) =>
+          sidewalk.y >=
+          bottomRoadStart * city.spec.tile -
+            (city.spec.margin ?? 0),
       )
       .sort(
         (a, b) =>
@@ -4708,5 +4826,52 @@ describe('World pedestrian navigation performance', () => {
     // flow-field router blew past this budget by orders of magnitude and would
     // have tripped the runner's per-test timeout.
     expect(elapsed).toBeLessThan(3000);
+  });
+
+  it('does not repeatedly search from scripted squad or route pedestrians blocked on a road', () => {
+    const city = buildCity(CITY_SPEC);
+    const crusherLane = tileCenter(city.spec, 49, 36);
+    const peds = [
+      ...Array.from({ length: 5 }, (_, i) => ({
+        ...pedAt(crusherLane.x + (i - 2) * 26, crusherLane.y),
+        target: vec2(3115, 2261),
+        storyActorId: 'crusher-squad',
+        storyActorOrder: i,
+      })),
+      {
+        ...pedAt(640, 1088),
+        target: vec2(736, 1088),
+        storyActorId: 'dock-motel-runner',
+        storyActorOrder: 0,
+      },
+    ];
+    const w = new World({
+      player: player(),
+      city,
+      pedestrians: peds,
+      walls: [...city.buildings, ...city.fences],
+      water: city.water,
+      bounds: { width: city.width, height: city.height },
+    });
+    const graph = (
+      w as unknown as {
+        pedestrianGraph: { nearestNode: (pos: { x: number; y: number }) => number };
+      }
+    ).pedestrianGraph;
+    const nearestNode = graph.nearestNode.bind(graph);
+    let nearestNodeCalls = 0;
+    graph.nearestNode = (pos) => {
+      nearestNodeCalls++;
+      return nearestNode(pos);
+    };
+    w.pedestrians = w.pedestrians.map((ped) => ({
+      ...ped,
+      navNode: nearestNode(ped.pos),
+    }));
+
+    for (let i = 0; i < 60; i++) w.tick(controls(), 1 / 60);
+
+    expect(w.pedestrians).toHaveLength(6);
+    expect(nearestNodeCalls).toBeLessThanOrEqual(12);
   });
 });

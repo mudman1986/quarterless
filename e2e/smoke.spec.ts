@@ -38,9 +38,6 @@ test('canvas fits inside a mobile-sized viewport', async ({ page }) => {
 
 test('Penguins of Tangram starts after character selection', async ({ page }) => {
   await launchPenguinsOfTangram(page, 'Monkey');
-  const hud = page.locator('.tangram-platformer-hud');
-  await expect(hud.getByText('Monkey • Monkeys Class')).toBeVisible();
-  await expect(hud.getByText('School Gate Morning Run')).toBeVisible();
-  await expect(hud.getByText('0/12')).toBeVisible();
-  await expect(hud.getByText('No power-up')).toBeVisible();
+  await expect(page.locator('.tangram-platformer-score')).toHaveText(/0/);
+  await expect(page.locator('.tangram-platformer-touch-controls')).toBeHidden();
 });
