@@ -21,6 +21,7 @@ export class Sound {
   private output: ProceduralAudioOutput | null;
   private readonly activeTones = new Map<OscillatorNode, GainNode>();
   private destroyed = false;
+  private muted = false;
 
   constructor(output: ProceduralAudioOutput | null = null) {
     this.output = output;
@@ -40,7 +41,7 @@ export class Sound {
     delay = 0,
   ): void {
     const output = this.output;
-    if (this.destroyed || !output || output.context.state === 'closed') return;
+    if (this.destroyed || this.muted || !output || output.context.state === 'closed') return;
     let oscillator: OscillatorNode | null = null;
     let amplifier: GainNode | null = null;
     try {
@@ -86,9 +87,24 @@ export class Sound {
       } catch {
         /* ignore: oscillator may already have stopped */
       }
+
       this.disconnectTone(oscillator, gain);
     }
     this.activeTones.clear();
+  }
+
+  setMuted(muted: boolean): void {
+    if (this.muted === muted) return;
+    this.muted = muted;
+    if (!muted) return;
+    for (const [oscillator, gain] of this.activeTones) {
+      try {
+        oscillator.stop();
+      } catch {
+        /* already stopped */
+      }
+      this.disconnectTone(oscillator, gain);
+    }
   }
 
   /** A short, dry shot. */

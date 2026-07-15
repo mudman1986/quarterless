@@ -27,6 +27,8 @@ export interface TangramBossDefinition extends TangramRect {
   speed: number;
   hits: number;
   label: string;
+  warningSeconds: number;
+  chargeSpeed: number;
 }
 
 export interface TangramMovementSpec {
@@ -86,6 +88,9 @@ export interface TangramBossState {
   hitsRemaining: number;
   active: boolean;
   stunRemaining: number;
+  warningRemaining: number;
+  charging: boolean;
+  chargeCooldown: number;
 }
 
 export interface TangramPlatformerState {
@@ -154,6 +159,9 @@ export function createTangramPlatformerState(
           hitsRemaining: level.boss.hits,
           active: true,
           stunRemaining: 0,
+          warningRemaining: 0,
+          charging: false,
+          chargeCooldown: 0,
         }
       : null,
     collected: level.collectibles.map(() => false),
@@ -296,12 +304,36 @@ function updateMovingPlatforms(
   }
 }
 
-function updateBoss(state: TangramPlatformerState, level: TangramSimulationLevel, dt: number): void {
+function updateBoss(
+  state: TangramPlatformerState,
+  level: TangramSimulationLevel,
+  dt: number,
+  events: TangramPlatformerEvent[],
+): void {
   const boss = state.boss;
   const definition = level.boss;
   if (!boss || !definition || !boss.active) return;
   boss.stunRemaining = Math.max(0, boss.stunRemaining - dt);
+  boss.chargeCooldown = Math.max(0, boss.chargeCooldown - dt);
   if (boss.stunRemaining > 0) return;
+  if (boss.warningRemaining > 0) {
+    boss.warningRemaining = Math.max(0, boss.warningRemaining - dt);
+    if (boss.warningRemaining === 0) {
+      boss.charging = true;
+      events.push({ type: 'hud' });
+    }
+    return;
+  }
+  if (boss.charging) {
+    boss.x += definition.chargeSpeed * boss.direction * dt;
+    if (boss.x <= definition.minX || boss.x >= definition.maxX) {
+      boss.x = clamp(boss.x, definition.minX, definition.maxX);
+      boss.charging = false;
+      boss.chargeCooldown = 1.4;
+      events.push({ type: 'hud' });
+    }
+    return;
+  }
   boss.x += definition.speed * boss.direction * dt;
   if (boss.x <= definition.minX) {
     boss.x = definition.minX;
@@ -309,6 +341,15 @@ function updateBoss(state: TangramPlatformerState, level: TangramSimulationLevel
   } else if (boss.x >= definition.maxX) {
     boss.x = definition.maxX;
     boss.direction = -1;
+  }
+  if (
+    boss.chargeCooldown === 0 &&
+    Math.abs(state.player.x - boss.x) < 280 &&
+    Math.abs(state.player.y - definition.y) < TANGRAM_PLAYER_HEIGHT
+  ) {
+    boss.direction = state.player.x >= boss.x ? 1 : -1;
+    boss.warningRemaining = definition.warningSeconds;
+    events.push({ type: 'hud' });
   }
 }
 
@@ -560,6 +601,9 @@ function handleBoss(
   if (state.player.velocityY > 0 && previousBottom <= definition.y + 12) {
     boss.hitsRemaining -= 1;
     boss.stunRemaining = 0.8;
+    boss.warningRemaining = 0;
+    boss.charging = false;
+    boss.chargeCooldown = 1.4;
     state.player.velocityY = -520;
     setHint(
       state,
@@ -643,7 +687,7 @@ export function tickTangramPlatformer(
   updateTimers(state, level, dt, events);
   updateEnemies(state, level, dt);
   updateMovingPlatforms(state, level, dt);
-  updateBoss(state, level, dt);
+  updateBoss(state, level, dt, events);
   const previousY = updatePlayer(state, level, movement, input, dt, events);
   handleBouncePads(state, level, events);
   handleCollectibles(state, level, events);

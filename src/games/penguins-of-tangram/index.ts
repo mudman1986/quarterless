@@ -92,6 +92,12 @@ type TestHook = {
   totalBadges: number;
   checkpointLabel: string;
   poweredUp: boolean;
+  audioMuted: boolean;
+  reducedMotion: boolean;
+  bossActive: boolean;
+  bossHitsRemaining: number;
+  bossWarning: boolean;
+  bossCharging: boolean;
   jumpAudit: JumpAudit;
   completeCurrentLevel?: () => void;
 };
@@ -101,6 +107,10 @@ type SceneHookState = {
   totalBadges: number;
   checkpointLabel: string;
   poweredUp: boolean;
+  bossActive?: boolean;
+  bossHitsRemaining?: number;
+  bossWarning?: boolean;
+  bossCharging?: boolean;
   jumpAudit: JumpAudit;
 };
 
@@ -203,6 +213,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   private powerSnack!: Phaser.GameObjects.Container;
   private bossSprite: Phaser.GameObjects.Container | null = null;
   private bossHealthLabel: Phaser.GameObjects.Text | null = null;
+  private bossTelegraphLabel: Phaser.GameObjects.Text | null = null;
   private collectibles: Collectible[] = [];
   private enemies: Enemy[] = [];
   private movingPlatforms: MovingPlatformSprite[] = [];
@@ -214,6 +225,8 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   private previousGrounded = false;
   private previousPowered = false;
   private previousBossHits: number | null = null;
+  private readonly reducedMotion: boolean;
+  private readonly muted: boolean;
   accumulator = 0;
   private lastJumpDown = false;
   private paused = false;
@@ -227,12 +240,15 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       onSceneState: (snapshot: SceneHookState) => void;
       onComplete: (summary: LevelSummary) => void;
     },
+    options: { muted: boolean; reducedMotion: boolean },
   ) {
     super('PenguinsOfTangram');
     this.character = character;
     this.level = level;
     this.touchControls = touchControls;
     this.callbacks = callbacks;
+    this.muted = options.muted;
+    this.reducedMotion = options.reducedMotion;
     this.jumpAudit = buildJumpAudit(level, character);
     this.simulation = createTangramPlatformerState(level);
   }
@@ -269,6 +285,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
         context: this.sound.context,
         destination: this.sound.destination,
       });
+      this.effects.setMuted(this.muted);
     }
     this.previousBossHits = this.simulation.boss?.hitsRemaining ?? null;
     this.updateHud();
@@ -309,6 +326,10 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   setPaused(paused: boolean): void {
     this.paused = paused;
     this.touchControls.setVisible(!paused);
+  }
+
+  setMuted(muted: boolean): void {
+    this.effects?.setMuted(muted);
   }
 
   shutdown(): void {
@@ -519,6 +540,14 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       backgroundColor: '#ffffffcc',
       padding: { left: 5, right: 5, top: 2, bottom: 2 },
     }).setOrigin(0.5);
+    this.bossTelegraphLabel = this.add.text(0, -82, 'CHARGE READY', {
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '12px',
+      color: '#8d5b34',
+      fontStyle: 'bold',
+      backgroundColor: '#ffef8e',
+      padding: { left: 5, right: 5, top: 2, bottom: 2 },
+    }).setOrigin(0.5).setVisible(false);
     this.bossSprite.add([
       this.add.ellipse(0, 8, 64, 58, 0xff8f66),
       this.add.rectangle(0, -22, 72, 16, 0xffd166),
@@ -538,6 +567,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
         padding: { left: 6, right: 6, top: 3, bottom: 3 },
       }).setOrigin(0.5),
       this.bossHealthLabel,
+      this.bossTelegraphLabel,
     ]);
   }
 
@@ -697,7 +727,8 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       const sprite = this.enemies[index].sprite;
       sprite.setVisible(enemyState.active);
       sprite.x = enemyState.x + definition.width / 2;
-      sprite.y = definition.y + definition.height / 2 + Math.sin(this.time.now * 0.004 + index) * 2;
+      sprite.y = definition.y + definition.height / 2
+        + (this.reducedMotion ? 0 : Math.sin(this.time.now * 0.004 + index) * 2);
       sprite.scaleX = enemyState.direction;
     }
     if (this.bossSprite && this.simulation.boss && this.level.boss) {
@@ -707,9 +738,14 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       this.bossSprite.y = this.level.boss.y + this.level.boss.height / 2;
       this.bossSprite.scaleX = bossState.direction;
       this.bossSprite.alpha = bossState.stunRemaining > 0
-        ? 0.55 + Math.sin(this.time.now * 0.04) * 0.35
+        ? this.reducedMotion ? 0.65 : 0.55 + Math.sin(this.time.now * 0.04) * 0.35
         : 1;
       this.bossHealthLabel?.setText(`STOMPS: ${bossState.hitsRemaining}`);
+      const warning = bossState.warningRemaining > 0;
+      const charging = bossState.charging;
+      this.bossTelegraphLabel?.setVisible(warning || charging);
+      this.bossTelegraphLabel?.setText(charging ? 'CHARGE!' : 'CHARGE READY');
+      if (this.bossTelegraphLabel) this.bossTelegraphLabel.setTint(charging ? 0xff6b5f : 0x8d5b34);
     }
     for (let index = 0; index < this.movingPlatforms.length; index += 1) {
       const platformState = this.simulation.movingPlatforms[index];
@@ -720,24 +756,24 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     }
     for (let index = 0; index < this.bouncePads.length; index += 1) {
       const pad = this.bouncePads[index];
-      const pulse = 1 + Math.sin(this.time.now * 0.006 + index) * 0.08;
+      const pulse = this.reducedMotion ? 1 : 1 + Math.sin(this.time.now * 0.006 + index) * 0.08;
       pad.setScale(pulse, 1 / pulse);
     }
     for (let index = 0; index < this.collectibles.length; index += 1) {
       const sprite = this.collectibles[index].sprite;
       sprite.setVisible(!this.simulation.collected[index]);
       if (!this.simulation.collected[index]) {
-        const pulse = 1 + Math.sin(this.time.now * 0.005 + index) * 0.08;
+        const pulse = this.reducedMotion ? 1 : 1 + Math.sin(this.time.now * 0.005 + index) * 0.08;
         sprite.setScale(pulse);
-        sprite.rotation = Math.sin(this.time.now * 0.002 + index) * 0.08;
+        sprite.rotation = this.reducedMotion ? 0 : Math.sin(this.time.now * 0.002 + index) * 0.08;
       }
     }
     this.powerSnack.setVisible(this.simulation.powerSnackAvailable);
-    this.powerSnack.y = this.level.powerup.y + 26 + Math.sin(this.time.now * 0.004) * 5;
-    this.powerSnack.rotation = Math.sin(this.time.now * 0.002) * 0.12;
-    this.powerSnack.setScale(1 + Math.sin(this.time.now * 0.006) * 0.06);
-    this.checkpointBanner.y = this.level.checkpoint.y + 60 + Math.sin(this.time.now * 0.003) * 2;
-    this.goalBanner.y = this.level.goal.y + 84 + Math.sin(this.time.now * 0.003 + 1) * 3;
+    this.powerSnack.y = this.level.powerup.y + 26 + (this.reducedMotion ? 0 : Math.sin(this.time.now * 0.004) * 5);
+    this.powerSnack.rotation = this.reducedMotion ? 0 : Math.sin(this.time.now * 0.002) * 0.12;
+    this.powerSnack.setScale(this.reducedMotion ? 1 : 1 + Math.sin(this.time.now * 0.006) * 0.06);
+    this.checkpointBanner.y = this.level.checkpoint.y + 60 + (this.reducedMotion ? 0 : Math.sin(this.time.now * 0.003) * 2);
+    this.goalBanner.y = this.level.goal.y + 84 + (this.reducedMotion ? 0 : Math.sin(this.time.now * 0.003 + 1) * 3);
     this.playerAura.setVisible(powered);
     this.playerAura.x = this.player.x;
     this.playerAura.y = this.player.y - 10;
@@ -752,7 +788,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       const playerState = this.simulation.player;
       const speed = Math.abs(playerState.velocityX);
       const walking = playerState.grounded && speed > 12;
-      const phase = this.time.now * (walking ? 0.024 : 0.008);
+      const phase = this.reducedMotion ? 0 : this.time.now * (walking ? 0.024 : 0.008);
       const stride = walking ? Math.sin(phase) * 5 : 0;
       const bob = playerState.grounded
         ? walking
@@ -782,7 +818,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     let shouldUpdateHud = false;
     for (const event of this.simulationEvents) {
       if (event.type === 'hud') shouldUpdateHud = true;
-      if (event.type === 'shake') this.cameras.main.shake(180, 0.004);
+      if (event.type === 'shake' && !this.reducedMotion) this.cameras.main.shake(180, 0.004);
       if (event.type === 'complete') {
         this.effects?.fanfare();
         this.completeLevel();
@@ -827,6 +863,10 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       totalBadges: this.collectibles.length,
       checkpointLabel: this.simulation.respawnPoint.label,
       poweredUp: isTangramPoweredUp(this.simulation),
+      bossActive: this.simulation.boss?.active ?? false,
+      bossHitsRemaining: this.simulation.boss?.hitsRemaining ?? 0,
+      bossWarning: (this.simulation.boss?.warningRemaining ?? 0) > 0,
+      bossCharging: this.simulation.boss?.charging ?? false,
       jumpAudit: this.jumpAudit,
     };
   }
@@ -904,6 +944,29 @@ function createPauseOverlay(
     show: () => { overlay.hidden = false; },
     hide: () => { overlay.hidden = true; },
   };
+}
+
+function createAudioToggle(
+  parent: HTMLElement,
+  muted: boolean,
+  onToggle: (muted: boolean) => void,
+): { setMuted: (muted: boolean) => void } {
+  const button = document.createElement('button');
+  button.className = 'tangram-platformer-audio-button';
+  button.type = 'button';
+  parent.append(button);
+  const setMuted = (nextMuted: boolean): void => {
+    button.textContent = nextMuted ? 'Sound: Off' : 'Sound: On';
+    button.setAttribute('aria-pressed', String(nextMuted));
+    button.setAttribute('aria-label', nextMuted ? 'Turn sound on' : 'Mute sound');
+  };
+  button.addEventListener('click', () => {
+    const nextMuted = button.getAttribute('aria-pressed') !== 'true';
+    setMuted(nextMuted);
+    onToggle(nextMuted);
+  });
+  setMuted(muted);
+  return { setMuted };
 }
 
 function createCharacterSelect(
@@ -1136,6 +1199,15 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
     onResume: () => togglePause(false),
     onMap: () => showMap(selectedLevelId),
   });
+  let audioMuted = progress.audioMuted;
+  const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+  createAudioToggle(parent, audioMuted, (muted) => {
+    audioMuted = muted;
+    progress = { ...progress, audioMuted };
+    saveTangramProgress(progress);
+    activeScene?.setMuted(muted);
+    emitHook();
+  });
 
   function togglePause(nextValue?: boolean): void {
     if (currentState !== 'running' || !activeScene) return;
@@ -1157,6 +1229,12 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
       totalBadges: lastHookState.totalBadges,
       checkpointLabel: lastHookState.checkpointLabel,
       poweredUp: lastHookState.poweredUp,
+      audioMuted,
+      reducedMotion,
+      bossActive: lastHookState.bossActive ?? false,
+      bossHitsRemaining: lastHookState.bossHitsRemaining ?? 0,
+      bossWarning: lastHookState.bossWarning ?? false,
+      bossCharging: lastHookState.bossCharging ?? false,
       jumpAudit: lastHookState.jumpAudit,
       completeCurrentLevel: activeScene ? () => activeScene?.debugCompleteLevel() : undefined,
     });
@@ -1317,7 +1395,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
         completion.show(summary);
         emitHook();
       },
-    });
+    }, { muted: audioMuted, reducedMotion });
     activeScene = scene;
     touchControls.setVisible(true);
     pauseButton.setVisible(true);

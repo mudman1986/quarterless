@@ -921,6 +921,29 @@ button {
   outline-offset: 3px;
 }
 
+.tangram-platformer-audio-button {
+  position: absolute;
+  top: calc(max(14px, env(safe-area-inset-top)) + 52px);
+  right: max(14px, env(safe-area-inset-right));
+  z-index: 16;
+  min-height: 38px;
+  border: 1px solid rgba(16, 48, 71, 0.24);
+  border-radius: 10px;
+  padding: 0 12px;
+  background: rgba(255, 255, 255, 0.82);
+  color: #103047;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.tangram-platformer-audio-button:focus-visible {
+  outline: 3px solid #103047;
+  outline-offset: 3px;
+}
+
 .tangram-platformer-chip-grid,
 .tangram-platformer-summary-grid {
   display: grid;

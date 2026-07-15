@@ -24,6 +24,7 @@ export type TangramLevelBest = {
 export interface TangramProgress {
   version: 1;
   selectedCharacterId: TangramCharacterId;
+  audioMuted: boolean;
   completedLevelIds: TangramLevelId[];
   bestByLevel: Partial<Record<TangramLevelId, TangramLevelBest>>;
 }
@@ -36,6 +37,7 @@ function defaultProgress(): TangramProgress {
   return {
     version: PROGRESS_VERSION,
     selectedCharacterId: DEFAULT_CHARACTER_ID,
+    audioMuted: false,
     completedLevelIds: [],
     bestByLevel: {},
   };
@@ -84,6 +86,7 @@ function normalizeProgress(value: unknown): TangramProgress {
       typeof candidate.selectedCharacterId === 'string' && isTangramCharacterId(candidate.selectedCharacterId)
         ? candidate.selectedCharacterId
         : DEFAULT_CHARACTER_ID,
+    audioMuted: candidate.audioMuted === true,
     completedLevelIds: [...new Set(completedLevelIds)],
     bestByLevel,
   };

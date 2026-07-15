@@ -1,4 +1,4 @@
-# Tangram Penguin Platformer — Roadmap v2
+# Tangram Penguin Platformer — Roadmap v3
 
 ## Current status — 2026-07-15
 
@@ -240,39 +240,67 @@ Start with 3 to 5 themed zones:
 - **The Tangram Penguins**
 - **Penguin Paths of Tangram**
 
-## Roadmap v2
+## Current status — Roadmap v2 complete
+
+Roadmap v2 is complete. The five-zone campaign now has persistent campaign and
+audio preferences, pause-safe simulation, moving-platform traversal, reduced-motion
+rendering, a telegraphed Relay Captain finale, and browser coverage for reload
+persistence, pause/resume, boss gating, touch input, reduced motion, and the
+largest-zone render loop.
+
+- **Controls:** Arrow keys or WASD move; Space or Up jumps; P or Escape pauses.
+- **Accessibility:** coarse-pointer buttons mirror keyboard controls; reduced-motion
+  preferences remove bobbing, rotation, and camera shake.
+- **Persistence:** the selected class, completion records, best runs, and sound
+  preference use local storage. Clear `penguins-of-tangram.progress` to reset the
+  campaign.
+- **Content validation:** all six character profiles have route-reachability
+  coverage and authored moving-platform/boss bounds checks. No optional finale
+  shortcut was added because there is no replay telemetry showing a need for it.
+- **Art decision:** authored sprite frames remain deferred; procedural Canvas
+  textures stay the measured, diffable, no-decode path.
+
+## Roadmap v3
 
 ### Re-evaluation
 
-The original expansion phase is complete. Tangram now has a complete five-zone
-campaign loop, six movement variants, persistent progression, deterministic
-moving traversal, pause-safe fixed-step simulation, procedural animation,
-procedural audio, and a distinct final encounter. The remaining risk is not
-missing framework code; it is finish quality and release confidence.
+The original feature roadmap and the v2 release-hardening pass are finished.
+Tangram is now a complete playable campaign rather than a vertical slice. The
+next risks are content depth, replay value, and observing real player behavior;
+new engine systems should wait until play data demonstrates a need.
 
-### Phase 6 — Finish quality
+### Phase 9 — Replay and accessibility polish
 
-- [ ] add a mute/audio preference that persists beside campaign progress
-- [ ] add stronger boss telegraphs without changing the core collision model
-- [ ] add reduced-motion handling for world feedback animations
-- [ ] expose final encounter progress in the test hook
+- [ ] add a lightweight in-game accessibility panel for sound, reduced motion,
+  and control reminders
+- [ ] add optional per-zone best-run comparison to the completion and map views
+- [ ] provide a clearly labeled campaign-reset action after confirming the
+  local-storage behavior with playtesters
+- [ ] keep all new settings in the existing versioned progress schema
 
-### Phase 7 — Content tuning
+### Phase 10 — Measured content depth
 
-- [ ] playtest each zone with every character movement profile
-- [ ] tune moving-platform routes and boss spacing from collected telemetry
-- [ ] add one optional finale shortcut only if it improves replay value
-- [ ] keep authored sprite frames out of scope unless procedural art becomes a measured bottleneck
+- [ ] collect opt-in, local-only playtest summaries for falls, completion time,
+  boss attempts, and character selection
+- [ ] tune the weakest zone and character pairing from those summaries
+- [ ] add one replay modifier or finale shortcut only when a measured replay
+  problem justifies it
+- [ ] add one additional authored challenge only after the current five-zone
+  route remains stable for every character
 
-### Phase 8 — Release hardening
+### Phase 11 — Distribution and maintenance
 
-- [ ] add browser coverage for pause/resume, persistence reload, and boss gating
-- [ ] verify coarse-pointer controls and audio unlock behavior on mobile browsers
-- [ ] run a production performance pass against the largest zone
-- [ ] document the final player controls and campaign reset behavior
+- [ ] run mobile Safari and Chromium touch checks against the production build
+- [ ] verify audio unlock, mute persistence, and reduced-motion behavior on
+  real-device playtests
+- [ ] keep the Phaser chunk isolated and monitor the Tangram chunk budget
+- [ ] retain deterministic core tests and browser smoke coverage as content
+  changes
 
-### v2 exit criteria
+### v3 exit criteria
 
-Roadmap v2 is complete when the accessibility, browser regression, persistence
-reload, boss-gating, and production-performance checks are green. Do not add a
-new content system before those checks expose a real need.
+Roadmap v3 is complete when accessibility settings are discoverable, replay
+changes are backed by local playtest evidence, at least one measured content
+improvement ships without route regressions, and production mobile checks stay
+green. Do not add networking, a backend, or an asset pipeline unless a concrete
+release requirement makes one necessary.

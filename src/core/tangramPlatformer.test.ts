@@ -178,7 +178,19 @@ describe('Tangram platformer simulation', () => {
     const simulationLevel: TangramSimulationLevel = {
       ...level(),
       platforms: [{ x: 0, y: 448, width: 2000, height: 92 }],
-      boss: { x: 140, y: 376, width: 72, height: 72, minX: 140, maxX: 240, speed: 0, hits: 3, label: 'Relay Captain' },
+      boss: {
+        x: 140,
+        y: 376,
+        width: 72,
+        height: 72,
+        minX: 140,
+        maxX: 240,
+        speed: 0,
+        hits: 3,
+        label: 'Relay Captain',
+        warningSeconds: 0.55,
+        chargeSpeed: 260,
+      },
     };
     const state = createTangramPlatformerState(simulationLevel);
     const events: TangramPlatformerEvent[] = [];
@@ -229,5 +241,57 @@ describe('Tangram platformer simulation', () => {
 
     expect(state.boss?.hitsRemaining).toBe(0);
     expect(state.boss?.active).toBe(false);
+  });
+
+  it('warns before a finale charge and ends the charge at its patrol bounds', () => {
+    const simulationLevel: TangramSimulationLevel = {
+      ...level(),
+      platforms: [{ x: 0, y: 448, width: 2000, height: 92 }],
+      boss: {
+        x: 140,
+        y: 376,
+        width: 72,
+        height: 72,
+        minX: 100,
+        maxX: 220,
+        speed: 0,
+        hits: 3,
+        label: 'Relay Captain',
+        warningSeconds: 0.1,
+        chargeSpeed: 500,
+      },
+    };
+    const state = createTangramPlatformerState(simulationLevel);
+    const events: TangramPlatformerEvent[] = [];
+    state.player.x = 250;
+    state.player.y = 376;
+    state.player.grounded = true;
+
+    tickTangramPlatformer(
+      state,
+      simulationLevel,
+      movement,
+      { direction: 0, jumpPressed: false },
+      TANGRAM_FIXED_STEP,
+      events,
+    );
+    expect(state.boss?.warningRemaining).toBeGreaterThan(0);
+    expect(state.boss?.charging).toBe(false);
+
+    for (let tick = 0; tick < 20; tick += 1) {
+      state.player.x = 500;
+      state.player.y = 376;
+      state.player.grounded = true;
+      tickTangramPlatformer(
+        state,
+        simulationLevel,
+        movement,
+        { direction: 0, jumpPressed: false },
+        TANGRAM_FIXED_STEP,
+        events,
+      );
+    }
+    expect(state.boss?.charging).toBe(false);
+    expect(state.boss?.x).toBeLessThanOrEqual(220);
   });
 });

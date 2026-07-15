@@ -110,6 +110,25 @@ describe('Sound', () => {
     ]);
   });
 
+  it('stops active tones and suppresses new cues while muted', () => {
+    const managedContext = new FakeAudioContext();
+    const sound = new Sound({
+      context: managedContext as unknown as AudioContext,
+      destination: managedContext.destination as unknown as AudioNode,
+    });
+
+    sound.shot();
+    sound.setMuted(true);
+    sound.jump();
+
+    expect(managedContext.oscillators).toHaveLength(1);
+    expect(managedContext.oscillators[0].stop).toHaveBeenCalledTimes(2);
+
+    sound.setMuted(false);
+    sound.jump();
+    expect(managedContext.oscillators).toHaveLength(2);
+  });
+
   it('does not create an independent AudioContext', () => {
     let globalContextCount = 0;
     class GlobalAudioContext extends FakeAudioContext {

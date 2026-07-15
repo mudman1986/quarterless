@@ -13,7 +13,15 @@ export type EnemyDefinition = {
 };
 export type BouncePad = Rect & { label: string; strength: number; color: number };
 export type MovingPlatform = Platform & { axis: 'x' | 'y'; distance: number; speed: number };
-export type BossPlacement = Rect & { minX: number; maxX: number; speed: number; hits: number; label: string };
+export type BossPlacement = Rect & {
+  minX: number;
+  maxX: number;
+  speed: number;
+  hits: number;
+  label: string;
+  warningSeconds: number;
+  chargeSpeed: number;
+};
 
 export type TangramLevelId =
   | 'school-gate-morning-run'
@@ -388,7 +396,19 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
     checkpoint: { x: 2450, y: 308, width: 54, height: 126, label: 'Podium Midway' },
     goal: { x: 3440, y: 244, width: 84, height: 170, label: 'Sports Day Bell' },
     powerup: { x: 2858, y: 182, width: 44, height: 56, label: 'Victory Snack' },
-    boss: { x: 3090, y: 376, width: 72, height: 72, minX: 3060, maxX: 3290, speed: 72, hits: 3, label: 'Relay Captain' },
+    boss: {
+      x: 3090,
+      y: 376,
+      width: 72,
+      height: 72,
+      minX: 3060,
+      maxX: 3290,
+      speed: 72,
+      hits: 3,
+      label: 'Relay Captain',
+      warningSeconds: 0.55,
+      chargeSpeed: 260,
+    },
   },
 ] as const;
 

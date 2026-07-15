@@ -6,6 +6,12 @@ interface ArcadeGameTestHook {
 
 type TangramTestHook = {
   state?: string;
+  audioMuted?: boolean;
+  reducedMotion?: boolean;
+  bossActive?: boolean;
+  bossHitsRemaining?: number;
+  bossWarning?: boolean;
+  bossCharging?: boolean;
   completeCurrentLevel?: () => void;
   jumpAudit?: {
     allCriticalPlatformsReachable?: boolean;

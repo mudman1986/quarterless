@@ -31,6 +31,7 @@ describe('Tangram progress', () => {
     expect(loadTangramProgress(store)).toEqual({
       version: 1,
       selectedCharacterId: 'lion',
+      audioMuted: false,
       completedLevelIds: ['school-gate-morning-run'],
       bestByLevel: {
         'school-gate-morning-run': { badgesCollected: 12, durationSeconds: 48, falls: 2 },
@@ -60,6 +61,7 @@ describe('Tangram progress', () => {
     expect(loadTangramProgress(store)).toEqual({
       version: 1,
       selectedCharacterId: 'penguin',
+      audioMuted: false,
       completedLevelIds: ['school-gate-morning-run'],
       bestByLevel: {
         'school-gate-morning-run': { badgesCollected: 12, durationSeconds: 48, falls: 2 },
