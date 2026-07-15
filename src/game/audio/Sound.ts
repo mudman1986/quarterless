@@ -37,6 +37,7 @@ export class Sound {
     duration: number,
     type: OscillatorType = 'square',
     gain = 0.05,
+    delay = 0,
   ): void {
     const output = this.output;
     if (this.destroyed || !output || output.context.state === 'closed') return;
@@ -50,13 +51,13 @@ export class Sound {
       oscillator.connect(amplifier);
       amplifier.connect(output.destination);
 
-      const now = output.context.currentTime;
-      amplifier.gain.setValueAtTime(gain, now);
-      amplifier.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+      const start = output.context.currentTime + delay;
+      amplifier.gain.setValueAtTime(gain, start);
+      amplifier.gain.exponentialRampToValueAtTime(0.0001, start + duration);
       this.activeTones.set(oscillator, amplifier);
       oscillator.onended = () => this.handleToneEnded(oscillator!);
-      oscillator.start(now);
-      oscillator.stop(now + duration);
+      oscillator.start(start);
+      oscillator.stop(start + duration);
     } catch {
       if (oscillator && amplifier) this.disconnectTone(oscillator, amplifier);
       /* ignore: audio is best-effort */
@@ -118,10 +119,9 @@ export class Sound {
     this.blip(55, 0.5, 'square', 0.06);
   }
 
-  /** One wail of a police siren (two alternating tones). Call repeatedly while
-   * a chase is on to get a continuous effect. */
+  /** One soft, alternating police pulse. Call repeatedly while a chase is on. */
   siren(): void {
-    this.blip(740, 0.18, 'sine', 0.03);
-    this.blip(580, 0.18, 'sine', 0.03);
+    this.blip(440, 0.24, 'triangle', 0.018);
+    this.blip(554, 0.24, 'triangle', 0.018, 0.22);
   }
 }

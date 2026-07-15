@@ -212,6 +212,8 @@ export const PIN_GAP = 12;
 export const POLICE_DEPLOY_RANGE = 72;
 /** Hit points a car has before it is destroyed. */
 export const CAR_MAX_HEALTH = 60;
+/** Vehicles absorb half of incoming damage so ordinary traffic is not destroyed too quickly. */
+export const VEHICLE_DAMAGE_MULTIPLIER = 0.5;
 /** Seconds a destroyed vehicle burns before it finally explodes. */
 export const VEHICLE_BURN_DURATION = 5;
 /** Radius (px) of a car explosion's blast. */
@@ -219,7 +221,7 @@ export const EXPLOSION_RADIUS = 72;
 /** Damage an explosion does to the player caught in the blast. */
 export const EXPLOSION_DAMAGE = 65;
 /** Damage an explosion does to other cars (enough to chain-detonate them). */
-export const EXPLOSION_CAR_DAMAGE = CAR_MAX_HEALTH;
+export const EXPLOSION_CAR_DAMAGE = CAR_MAX_HEALTH / VEHICLE_DAMAGE_MULTIPLIER;
 /** Seconds an explosion's visual lingers (drives rendering). */
 export const EXPLOSION_LIFE = 1.3;
 /** Closing speed (px/s) below which a car-on-car bump does no damage. */
@@ -1333,6 +1335,7 @@ export class World {
       if (idx !== null) {
         if (this.carKind(idx) === 'taxi') this.clearNpcTaxiFare(idx, this.cars[idx].pos);
         this.markServiceVehicleTheft(idx);
+        this.evacuateNpcDriver(idx);
         this.drivingCarIndex = idx;
         this.cars[idx] = { ...this.cars[idx], speed: 0 };
         this.carDrivers[idx] = null; // any NPC driver bails out
@@ -1583,7 +1586,7 @@ export class World {
     return best;
   }
 
-  private buildBulletSpatialIndex(): BulletSpatialIndex {
+  private buildBulletSpatialIndex(includePlayerCar = false): BulletSpatialIndex {
     const pedestrians = new Map<string, Pedestrian[]>();
     const police = new Map<string, Police[]>();
     const cars = new Map<string, number[]>();
@@ -1593,7 +1596,7 @@ export class World {
     for (const ped of this.pedestrians) this.addToSpatialHash(pedestrians, ped, ped.pos);
     for (const cop of this.police) this.addToSpatialHash(police, cop, cop.pos);
     for (let i = 0; i < this.cars.length; i++) {
-      if (this.wreckedCars[i] || i === this.drivingCarIndex) continue;
+      if (this.wreckedCars[i] || (!includePlayerCar && i === this.drivingCarIndex)) continue;
       this.addToSpatialHash(cars, i, this.cars[i].pos);
     }
     for (const tow of this.tows) {
@@ -2038,7 +2041,7 @@ export class World {
     }
     if (ref.kind === 'ambulance') {
       if (this.ambulance !== ref.vehicle) return;
-      const health = ref.vehicle.health - amount;
+      const health = ref.vehicle.health - amount * VEHICLE_DAMAGE_MULTIPLIER;
       if (health <= 0) {
         this.igniteServiceVehicle(ref, byPlayer);
       } else {
@@ -2051,7 +2054,7 @@ export class World {
     if (ref.kind === 'tow') {
       const idx = this.tows.indexOf(ref.vehicle);
       if (idx === -1) return;
-      const health = ref.vehicle.health - amount;
+      const health = ref.vehicle.health - amount * VEHICLE_DAMAGE_MULTIPLIER;
       if (health <= 0) {
         this.igniteServiceVehicle(ref, byPlayer);
       } else {
@@ -2063,7 +2066,8 @@ export class World {
     }
     const idx = this.police.indexOf(ref.vehicle);
     if (idx === -1 || ref.vehicle.kind !== 'car') return;
-    const health = (ref.vehicle.health ?? CAR_MAX_HEALTH) - amount;
+    const health =
+      (ref.vehicle.health ?? CAR_MAX_HEALTH) - amount * VEHICLE_DAMAGE_MULTIPLIER;
     if (health <= 0) {
       this.ignitePatrolCar(ref, byPlayer);
     } else {
@@ -3907,7 +3911,7 @@ export class World {
    * own havoc earns them heat (NPC pile-ups do not). */
   private damageCar(idx: number, amount: number, byPlayer: boolean): void {
     if (this.wreckedCars[idx] || this.carIsBurning(idx)) return;
-    this.carHealth[idx] -= amount;
+    this.carHealth[idx] -= amount * VEHICLE_DAMAGE_MULTIPLIER;
     if (this.carHealth[idx] <= 0) this.igniteCar(idx, byPlayer);
   }
 
@@ -4372,7 +4376,7 @@ export class World {
   private updatePoliceBullets(dt: number): void {
     if (this.policeBullets.length === 0) return;
     const surviving: Bullet[] = [];
-    const spatial = this.buildBulletSpatialIndex();
+    const spatial = this.buildBulletSpatialIndex(true);
     for (const current of this.policeBullets) {
       const stepped = stepBullet(current, dt);
       if (!stepped) continue; // expired
@@ -4385,7 +4389,6 @@ export class World {
         MAX_BULLET_TARGET_RADIUS,
         (i) =>
           !this.wreckedCars[i] &&
-          i !== this.drivingCarIndex &&
           bulletHits(stepped, this.cars[i].pos, this.cars[i].radius),
       );
       if (carIdx !== -1) {

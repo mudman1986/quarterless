@@ -109,10 +109,16 @@ test('Sindicate FPS counter is off by default and toggles with F3', async ({ pag
       window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }
     ).__game?.scene.getScene('City') as {
       fpsText?: { visible?: boolean; text?: string };
+      hud?: { text?: string };
     };
-    return { text: scene?.fpsText?.text ?? '', visible: scene?.fpsText?.visible ?? false };
+    return {
+      hud: scene?.hud?.text ?? '',
+      text: scene?.fpsText?.text ?? '',
+      visible: scene?.fpsText?.visible ?? false,
+    };
   });
-  expect(hidden).toEqual({ text: '', visible: false });
+  expect(hidden).toMatchObject({ text: '', visible: false });
+  expect(hidden.hud).not.toContain('F3 FPS');
 
   await page.keyboard.press('F3');
   await page.waitForFunction(() => {

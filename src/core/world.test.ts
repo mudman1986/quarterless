@@ -8,6 +8,7 @@ import {
   SERVICE_TIMEOUT,
   SERVICE_PICKUP_DWELL,
   TRAFFIC_CAR_KINDS,
+  CAR_MAX_HEALTH,
   VEHICLE_BURN_DURATION,
   carTuningForKind,
   isCivilianRoadVehicleKind,
@@ -751,6 +752,37 @@ describe('World NPC traffic', () => {
     expect(w.cars[0].pos).toEqual(posAfterEnter);
   });
 
+  it('ejects the driver from every occupied civilian vehicle when it is stolen', () => {
+    for (const kind of TRAFFIC_CAR_KINDS) {
+      const city = buildCity({ cols: 12, rows: 12, tile: 64, block: 4 });
+      const w = new World({
+        player: player(),
+        cars: [carAt(20, 0)],
+        city,
+        carKinds: [kind],
+        carDrivers: [{ dir: vec2(1, 0) }],
+        rng: () => 0.9,
+      });
+
+      w.tick(controls({ action: true }), 1 / 60);
+
+      expect(w.snapshot().carDrivers[0], kind).toBeNull();
+      expect(w.pedestrians, kind).toHaveLength(1);
+    }
+  });
+
+  it('does not eject anyone from a parked vehicle when it is stolen', () => {
+    const w = new World({
+      player: player(),
+      cars: [carAt(20, 0)],
+      carDrivers: [null],
+    });
+
+    w.tick(controls({ action: true }), 1 / 60);
+
+    expect(w.pedestrians).toHaveLength(0);
+  });
+
   it('makes an NPC driver turn the car away after the vehicle is shot', () => {
     const city = miniCity();
     const npcCar: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 };
@@ -832,6 +864,60 @@ describe('World NPC traffic', () => {
     for (let i = 0; i < 90; i++) w.tick(controls(), 1 / 60);
 
     expect(w.cars[0].pos.y).toBeGreaterThanOrEqual(intersectionY);
+  });
+});
+
+describe('World vehicle damage', () => {
+  it('reduces incoming vehicle damage by half', () => {
+    const w = new World({
+      player: player(),
+      cars: [carAt(20, 0)],
+      bounds: { width: 4000, height: 4000 },
+    });
+    w.bullets = [
+      {
+        pos: vec2(20, 0),
+        velocity: vec2(0, 0),
+        life: 1,
+        damage: 20,
+      },
+    ];
+
+    w.tick(controls(), 1 / 60);
+
+    expect(w.snapshot().carHealth[0]).toBe(CAR_MAX_HEALTH - 10);
+  });
+
+  it('starts the car escape fuse instead of killing the player inside it', () => {
+    const w = new World({
+      player: player(),
+      cars: [carAt(0, 0)],
+      maxHealth: 10,
+      bounds: { width: 4000, height: 4000 },
+    });
+    w.tick(controls({ action: true }), 1 / 60);
+    w.tick(controls(), 1 / 60);
+    (w as unknown as { carHealth: number[] }).carHealth[0] = 1;
+    w.wanted = addHeat(createWanted(), CRIME_HEAT.hitPolice);
+    w.policeBullets = [
+      {
+        pos: vec2(0, 0),
+        velocity: vec2(0, 0),
+        life: 1,
+        damage: 10,
+      },
+    ];
+
+    w.tick(controls(), 1 / 60);
+
+    expect(w.isWasted).toBe(false);
+    expect(w.isDriving).toBe(true);
+    expect(w.snapshot().carBurnTimers[0]).toBeGreaterThan(0);
+
+    w.tick(controls({ action: true }), 1 / 60);
+
+    expect(w.isDriving).toBe(false);
+    expect(w.isWasted).toBe(false);
   });
 });
 

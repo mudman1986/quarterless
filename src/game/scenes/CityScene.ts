@@ -3161,6 +3161,7 @@ export class CityScene extends Phaser.Scene {
       }
     }
 
+    const scriptedTargetIndices = this.storyMissionTargetIndices();
     const taxiTarget = this.world.taxiTarget;
     if (taxiTarget) {
       markers.push({
@@ -3184,8 +3185,9 @@ export class CityScene extends Phaser.Scene {
       });
     }
 
-    for (const ped of this.world.pedestrians) {
-      if (!ped.missionTarget) continue;
+    for (let i = 0; i < this.world.pedestrians.length; i++) {
+      const ped = this.world.pedestrians[i];
+      if (!ped.missionTarget && !scriptedTargetIndices.has(i)) continue;
       markers.push({
         kind: 'mission-target',
         x: ped.pos.x,
@@ -3196,6 +3198,26 @@ export class CityScene extends Phaser.Scene {
       });
     }
     return markers;
+  }
+
+  /** Include authored target squads even if the simulation has not yet completed
+   * its one-frame mission-target synchronization pass. */
+  private storyMissionTargetIndices(): Set<number> {
+    const objective = this.world.missionObjective;
+    if (objective?.kind !== 'eliminate' || !objective.targetsOnly) return new Set();
+    if (!this.storyScript || !this.storyProgress) return new Set();
+    const mission = currentStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress);
+    const runtime = mission?.prototypeScript;
+    if (!runtime) return new Set();
+    const stage = this.activeStoryStage(runtime);
+    if (!stage) return new Set();
+
+    const indices = new Set<number>();
+    for (const actor of stage.actors) {
+      if (actor.kind !== 'pedestrianSquad' || !actor.missionTargets) continue;
+      for (const index of this.storyPedIndices(actor.actorId)) indices.add(index);
+    }
+    return indices;
   }
 
   private maybeStartSelectedStoryMission(): boolean {
@@ -3370,7 +3392,7 @@ export class CityScene extends Phaser.Scene {
       .setAlpha(darkness * 0.8);
   }
 
-  /** Wail the siren on a steady cadence whenever a chase is on. */
+  /** Play the soft siren pulse whenever a chase is on. */
   private updateSiren(dt: number): void {
     if (!shouldPlaySiren(this.world.status, this.world.wantedStars, this.world.police.length)) {
       this.sirenTimer = 0;
@@ -3379,7 +3401,7 @@ export class CityScene extends Phaser.Scene {
     this.sirenTimer -= dt;
     if (this.sirenTimer <= 0) {
       this.sfx.siren();
-      this.sirenTimer = 0.42; // matches the two-tone wail length
+      this.sirenTimer = 0.6; // leaves a small breath between the two-note pulses
     }
   }
 
@@ -4895,8 +4917,8 @@ export class CityScene extends Phaser.Scene {
         ? `DRIVING ${speed}  ·  touch stick move · tap buttons shoot/exit · pause top-right`
         : 'ON FOOT  ·  touch stick move · tap buttons interact/shoot · pause top-right'
       : w.isDriving
-        ? `DRIVING ${speed}  ·  WASD steer · Space exit · F shoot · P pause · F3 FPS`
-        : 'ON FOOT  ·  WASD move · Space car · F shoot · P pause · F3 FPS';
+        ? `DRIVING ${speed}  ·  WASD steer · Space exit · F shoot · P pause`
+        : 'ON FOOT  ·  WASD move · Space car · F shoot · P pause';
     const objective = w.missionObjective?.description;
     const compactObjective =
       objective && objective.startsWith('Go to the mission marker to start ')

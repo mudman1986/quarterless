@@ -66,6 +66,28 @@ describe('Sound', () => {
     expect(shouldPlaySiren('playing', 0, 2)).toBe(false);
   });
 
+  it('schedules a soft alternating siren instead of a harsh chord', () => {
+    const managedContext = new FakeAudioContext();
+    const sound = new Sound({
+      context: managedContext as unknown as AudioContext,
+      destination: managedContext.destination as unknown as AudioNode,
+    });
+
+    sound.siren();
+
+    expect(managedContext.oscillators).toHaveLength(2);
+    expect(managedContext.oscillators.map((oscillator) => oscillator.frequency.value)).toEqual([
+      440,
+      554,
+    ]);
+    expect(managedContext.oscillators.map((oscillator) => oscillator.type)).toEqual([
+      'triangle',
+      'triangle',
+    ]);
+    expect(managedContext.oscillators[0]?.start).toHaveBeenCalledWith(12);
+    expect(managedContext.oscillators[1]?.start).toHaveBeenCalledWith(12.22);
+  });
+
   it('does not create an independent AudioContext', () => {
     let globalContextCount = 0;
     class GlobalAudioContext extends FakeAudioContext {
