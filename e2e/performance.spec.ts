@@ -101,6 +101,97 @@ test('fixed-step simulation drops stale backlog after long frames', async ({ pag
   expect(result).toBeLessThan(1 / 60);
 });
 
+test('Sindicate FPS counter is off by default and toggles with F3', async ({ page }) => {
+  await launchSindicate(page);
+
+  const hidden = await page.evaluate(() => {
+    const scene = (
+      window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }
+    ).__game?.scene.getScene('City') as {
+      fpsText?: { visible?: boolean; text?: string };
+    };
+    return { text: scene?.fpsText?.text ?? '', visible: scene?.fpsText?.visible ?? false };
+  });
+  expect(hidden).toEqual({ text: '', visible: false });
+
+  await page.keyboard.press('F3');
+  await page.waitForFunction(() => {
+    const scene = (
+      window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }
+    ).__game?.scene.getScene('City') as {
+      fpsText?: { visible?: boolean; text?: string };
+    };
+    return scene?.fpsText?.visible === true && /^FPS \d+$/.test(scene.fpsText.text ?? '');
+  });
+
+  const shown = await page.evaluate(() => {
+    const scene = (
+      window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }
+    ).__game?.scene.getScene('City') as {
+      fpsText?: { visible?: boolean; text?: string };
+    };
+    return { text: scene?.fpsText?.text ?? '', visible: scene?.fpsText?.visible ?? false };
+  });
+  expect(shown.visible).toBe(true);
+  expect(shown.text).toMatch(/^FPS \d+$/);
+
+  await page.keyboard.press('F3');
+  await page.waitForFunction(() => {
+    const scene = (
+      window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }
+    ).__game?.scene.getScene('City') as {
+      fpsText?: { visible?: boolean };
+    };
+    return scene?.fpsText?.visible === false;
+  });
+});
+
+test('Sindicate FPS counter can be toggled from the story launch menu', async ({ page }) => {
+  await page.goto('/quarterless/');
+  await expect(page.getByRole('heading', { name: 'Retro Arcade' })).toBeVisible({ timeout: 10_000 });
+  await page.getByRole('button', { name: 'Play Sindicate' }).click();
+  await expect(page.getByRole('heading', { name: 'Story Mode' })).toBeVisible({ timeout: 10_000 });
+
+  const fpsButton = page.locator('[data-story-action="fps"]');
+  await expect(fpsButton).toHaveText('FPS Counter: OFF');
+  await fpsButton.click();
+  await expect(page.locator('[data-story-action="fps"]')).toHaveText('FPS Counter: ON');
+  await page.getByRole('button', { name: /Start Story|Continue Story|Resume Current Run/ }).click();
+  await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
+  await page.waitForFunction(() => {
+    const scene = (
+      window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }
+    ).__game?.scene.getScene('City') as {
+      fpsText?: { visible?: boolean; text?: string };
+    };
+    return scene?.fpsText?.visible === true && /^FPS \d+$/.test(scene.fpsText.text ?? '');
+  });
+});
+
+test('Sindicate keeps the live render cadence above the severe-stall floor', async ({ page }) => {
+  await launchSindicate(page);
+
+  const result = await page.evaluate(async () => {
+    const game = (window as unknown as {
+      __game?: { loop?: { actualFps?: number } };
+    }).__game;
+    const samples: number[] = [];
+    for (let frame = 0; frame < 90; frame += 1) {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const fps = game?.loop?.actualFps;
+      if (typeof fps === 'number' && Number.isFinite(fps)) samples.push(fps);
+    }
+    samples.sort((a, b) => a - b);
+    return {
+      p10: samples[Math.floor(samples.length * 0.1)] ?? 0,
+      samples: samples.length,
+    };
+  });
+
+  expect(result.samples).toBeGreaterThan(30);
+  expect(result.p10).toBeGreaterThanOrEqual(20);
+});
+
 test('full-world autosaves stay below the per-second hitch budget', async ({ page }) => {
   await launchSindicate(page);
 
@@ -228,4 +319,71 @@ test('visual feedback reuses its frame-state collections', async ({ page }) => {
     carHeadings: true,
     pickupBurstCount: 8,
   });
+});
+
+test('transient combat effects stay bounded during sustained activity', async ({ page }) => {
+  await launchSindicate(page);
+
+  const result = await page.evaluate(() => {
+    type Scene = {
+      world: {
+        bullets: Array<{
+          pos: { x: number; y: number };
+          velocity: { x: number; y: number };
+          life: number;
+          damage: number;
+        }>;
+        explosions: Array<{
+          pos: { x: number; y: number };
+          radius: number;
+          age: number;
+          life: number;
+        }>;
+      };
+      bulletSprites: unknown[];
+      explosionSprites: unknown[];
+      syncBullets(): void;
+      syncExplosions(): void;
+    };
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as Scene;
+    const baselineChildren = (scene as unknown as { children: { list: unknown[] } }).children.list.length;
+    let maxChildren = baselineChildren;
+    let maxBulletSprites = scene.bulletSprites.length;
+    let maxExplosionSprites = scene.explosionSprites.length;
+
+    for (let frame = 0; frame < 600; frame += 1) {
+      scene.world.bullets = [
+        { pos: { x: 0, y: 0 }, velocity: { x: 0, y: 0 }, life: 1, damage: 0 },
+      ];
+      scene.world.explosions = [
+        { pos: { x: 0, y: 0 }, radius: 18, age: 0, life: 1 },
+      ];
+      scene.syncBullets();
+      scene.syncExplosions();
+      scene.world.bullets = [];
+      scene.world.explosions = [];
+      scene.syncBullets();
+      scene.syncExplosions();
+
+      const children = (scene as unknown as { children: { list: unknown[] } }).children.list.length;
+      maxChildren = Math.max(maxChildren, children);
+      maxBulletSprites = Math.max(maxBulletSprites, scene.bulletSprites.length);
+      maxExplosionSprites = Math.max(maxExplosionSprites, scene.explosionSprites.length);
+    }
+
+    return {
+      baselineChildren,
+      finalChildren: (scene as unknown as { children: { list: unknown[] } }).children.list.length,
+      maxChildren,
+      maxBulletSprites,
+      maxExplosionSprites,
+    };
+  });
+
+  expect(result.maxChildren).toBeLessThanOrEqual(result.baselineChildren + 2);
+  expect(result.finalChildren).toBeLessThanOrEqual(result.baselineChildren + 2);
+  expect(result.maxBulletSprites).toBeLessThanOrEqual(1);
+  expect(result.maxExplosionSprites).toBeLessThanOrEqual(1);
 });

@@ -299,6 +299,7 @@ const TOUCH_ACTION = 0xf59e0b;
 const TOUCH_FIRE = 0xef4444;
 const TOUCH_CONFIRM = 0x22d3ee;
 const TOUCH_PREF_KEY = 'sindicate.touchEnabled';
+const FPS_PREF_KEY = 'sindicate.fpsVisible';
 const PARKED_TRAFFIC_MIX: readonly VehicleKind[] = [
   'sedan',
   'car',
@@ -448,6 +449,7 @@ export class CityScene extends Phaser.Scene {
   private intersectionCenters: Vec2[] = [];
   private focusPoint!: Phaser.GameObjects.Rectangle;
   private hud!: Phaser.GameObjects.Text;
+  private fpsText!: Phaser.GameObjects.Text;
   private bustedText!: Phaser.GameObjects.Text;
   private banner!: Phaser.GameObjects.Text;
   private bannerCloseButton!: Phaser.GameObjects.Text;
@@ -472,9 +474,12 @@ export class CityScene extends Phaser.Scene {
   private accumulator = 0;
   private minimapAccumulator = MINIMAP_REFRESH_INTERVAL;
   private saveAccumulator = 0;
+  private fpsAccumulator = 0;
 
   private paused = false;
   private pauseKey!: Phaser.Input.Keyboard.Key;
+  private fpsKey!: Phaser.Input.Keyboard.Key;
+  private fpsVisible = false;
   private storyAcknowledgeKey!: Phaser.Input.Keyboard.Key;
   private newGameKey!: Phaser.Input.Keyboard.Key;
   private pauseTouchButton!: Phaser.GameObjects.Text;
@@ -616,6 +621,8 @@ export class CityScene extends Phaser.Scene {
     this.accumulator = 0;
     this.minimapAccumulator = MINIMAP_REFRESH_INTERVAL;
     this.saveAccumulator = 0;
+    this.fpsAccumulator = 0;
+    this.fpsVisible = this.store.getItem(FPS_PREF_KEY) === '1';
     this.visualParticles = [];
     this.prevCarHeadings = [];
     this.prevCarHealth = [];
@@ -721,6 +728,7 @@ export class CityScene extends Phaser.Scene {
     // Menu keys: P pauses/resumes, N starts a fresh game.
     const kb = this.input.keyboard!;
     this.pauseKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.P);
+    this.fpsKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.F3);
     this.storyAcknowledgeKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER);
     this.newGameKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.N);
     const handleStoryAcknowledge = (): void => {
@@ -2730,6 +2738,7 @@ export class CityScene extends Phaser.Scene {
     };
 
     place(this.hud, 10, 10); // top-left status readout
+    place(this.fpsText, width - 10, MINIMAP_SIZE + 24);
     const bannerTop = 18 + this.hud.height;
     place(this.banner, 10, bannerTop);
     place(this.bannerCloseButton, 24 + this.banner.width, bannerTop + 6);
@@ -2776,6 +2785,19 @@ export class CityScene extends Phaser.Scene {
       })
       .setScrollFactor(0)
       .setDepth(1000);
+
+    this.fpsText = this.add
+      .text(0, 0, '', {
+        fontFamily: 'monospace',
+        fontSize: '14px',
+        color: '#86efac',
+        backgroundColor: '#000000b0',
+        padding: { x: 8, y: 6 },
+      })
+      .setOrigin(1, 0)
+      .setScrollFactor(0)
+      .setDepth(1000)
+      .setVisible(this.fpsVisible);
 
     this.bustedText = this.add
       .text(this.scale.width / 2, this.scale.height / 2, '', {
@@ -3202,6 +3224,19 @@ export class CityScene extends Phaser.Scene {
       touchSnapshot.confirmPressed &&
       !this.prevTouchConfirm;
     const acknowledgePressed = Phaser.Input.Keyboard.JustDown(this.storyAcknowledgeKey);
+    if (Phaser.Input.Keyboard.JustDown(this.fpsKey)) {
+      this.fpsVisible = !this.fpsVisible;
+      this.store.setItem(FPS_PREF_KEY, this.fpsVisible ? '1' : '0');
+      this.fpsAccumulator = 0;
+      this.fpsText.setVisible(this.fpsVisible);
+    }
+    if (this.fpsVisible) {
+      this.fpsAccumulator += deltaMs / 1000;
+      if (this.fpsAccumulator >= 0.25) {
+        this.fpsText.setText(`FPS ${Math.round(this.game.loop.actualFps)}`);
+        this.fpsAccumulator = 0;
+      }
+    }
     this.syncTouchControls(touchSnapshot);
 
     if (this.storyPanelRequiresAcknowledge && (acknowledgePressed || touchConfirmPressed)) {
@@ -4860,8 +4895,8 @@ export class CityScene extends Phaser.Scene {
         ? `DRIVING ${speed}  ·  touch stick move · tap buttons shoot/exit · pause top-right`
         : 'ON FOOT  ·  touch stick move · tap buttons interact/shoot · pause top-right'
       : w.isDriving
-        ? `DRIVING ${speed}  ·  WASD steer · Space exit · F shoot · P pause`
-        : 'ON FOOT  ·  WASD move · Space car · F shoot · P pause';
+        ? `DRIVING ${speed}  ·  WASD steer · Space exit · F shoot · P pause · F3 FPS`
+        : 'ON FOOT  ·  WASD move · Space car · F shoot · P pause · F3 FPS';
     const objective = w.missionObjective?.description;
     const compactObjective =
       objective && objective.startsWith('Go to the mission marker to start ')
