@@ -6,10 +6,13 @@ const PROGRESS_KEY = 'penguins-of-tangram.progress';
 test('Penguins defaults to Dutch and can switch to English with persistence', async ({ page }) => {
   await page.goto('/quarterless/');
   await page.getByRole('button', { name: 'Play Penguins of Tangram' }).click();
-  await expect(page.getByRole('heading', { name: 'Penguins of Tangram' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Pinguins van Tangram' })).toBeVisible();
   await page.waitForFunction(() => (
     (window as unknown as { __penguinsOfTangram?: { language?: string } }).__penguinsOfTangram?.language === 'nl'
   ));
+  await page.getByRole('button', { name: /^Pinguin/ }).click();
+  await page.getByRole('button', { name: 'Start avontuur' }).click();
+  await page.getByRole('button', { name: 'Pauze' }).click();
   await page.getByRole('button', { name: 'Zo speel je' }).click();
   await expect(page.getByRole('heading', { name: 'Zo speel je' })).toBeVisible();
   await page.getByRole('button', { name: 'Nederlands / English' }).click();
@@ -19,7 +22,9 @@ test('Penguins defaults to Dutch and can switch to English with persistence', as
   await expect(page.getByRole('heading', { name: 'How to play' })).toBeVisible();
   await page.reload();
   await page.getByRole('button', { name: 'Play Penguins of Tangram' }).click();
-  await expect(page.getByRole('button', { name: 'How to play' })).toBeVisible();
+  await page.getByRole('button', { name: /^Penguin/ }).click();
+  await page.getByRole('button', { name: 'Start adventure' }).click();
+  await page.getByRole('button', { name: 'Pause' }).click();
   await page.getByRole('button', { name: 'How to play' }).click();
   await expect(page.getByRole('heading', { name: 'How to play' })).toBeVisible();
 });
@@ -127,6 +132,7 @@ test('Penguins persists mute and campaign progress across reloads', async ({ pag
     return hook?.completedLevelIds?.includes('school-gate-morning-run') === true;
   });
   await page.getByRole('button', { name: 'Start adventure' }).click();
+  await page.getByRole('button', { name: 'Pause' }).click();
   await page.getByRole('button', { name: 'How to play' }).click();
   await expect(page.getByRole('heading', { name: 'How to play' })).toBeVisible();
   await page.getByRole('button', { name: 'Motion: Normal' }).click();
@@ -179,7 +185,7 @@ test('Sports Day exposes a boss and always accepts the final flag', async ({ pag
     return hook?.state === 'running' && hook.bossActive === true && hook.bossHitsRemaining === 3;
   });
 
-  const goalLocked = await page.evaluate(() => {
+  await page.evaluate(() => {
     const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
     const scene = game.scene.getScene('PenguinsOfTangram') as {
       level: { goal: { x: number; y: number } };
@@ -189,9 +195,10 @@ test('Sports Day exposes a boss and always accepts the final flag', async ({ pag
     scene.simulation.player.x = scene.level.goal.x;
     scene.simulation.player.y = scene.level.goal.y;
     scene.update(100, 17);
-    return (window as unknown as { __penguinsOfTangram?: { state?: string } }).__penguinsOfTangram?.state;
   });
-  expect(goalLocked).toBe('campaign-complete');
+  await page.waitForFunction(
+    () => (window as unknown as { __penguinsOfTangram?: { state?: string } }).__penguinsOfTangram?.state === 'campaign-complete',
+  );
 });
 
 test('Sports Day keeps the largest zone render loop responsive', async ({ page }) => {
@@ -263,6 +270,12 @@ test.describe('coarse pointer controls', () => {
     await launchPenguinsOfTangram(page);
     const moveZone = page.locator('[data-control="move"]');
     await expect(moveZone).toBeVisible();
+    const before = await page.evaluate(() => {
+      const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
+      return (game.scene.getScene('PenguinsOfTangram') as {
+        simulation: { player: { x: number } };
+      }).simulation.player.x;
+    });
     await moveZone.dispatchEvent('pointerdown', { pointerType: 'touch', clientX: 350 });
     await expect.poll(async () => page.evaluate(() => {
       const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
@@ -270,6 +283,19 @@ test.describe('coarse pointer controls', () => {
         touchControls: { right: boolean };
       }).touchControls.right;
     })).toBe(true);
+    await moveZone.dispatchEvent('pointerleave', { pointerType: 'touch' });
+    await expect.poll(async () => page.evaluate(() => {
+      const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
+      return (game.scene.getScene('PenguinsOfTangram') as {
+        touchControls: { right: boolean };
+      }).touchControls.right;
+    })).toBe(true);
+    await expect.poll(async () => page.evaluate(() => {
+      const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
+      return (game.scene.getScene('PenguinsOfTangram') as {
+        simulation: { player: { x: number } };
+      }).simulation.player.x;
+    })).toBeGreaterThan(before);
     await moveZone.dispatchEvent('pointerup', { pointerType: 'touch' });
   });
 });

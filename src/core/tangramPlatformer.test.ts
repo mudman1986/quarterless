@@ -3,6 +3,7 @@ import {
   TANGRAM_FIXED_STEP,
   TANGRAM_MAX_FRAME_DT,
   TANGRAM_MAX_SUBSTEPS,
+  TANGRAM_POWER_DURATION,
   createTangramPlatformerState,
   getTangramCheckpointRespawn,
   isTangramPoweredUp,
@@ -99,6 +100,30 @@ describe('Tangram platformer simulation', () => {
     };
     const state = createTangramPlatformerState(simulationLevel);
     const events: TangramPlatformerEvent[] = [];
+    for (let tick = 0; tick < 60 && !state.finished; tick += 1) {
+      tickTangramPlatformer(
+        state,
+        simulationLevel,
+        movement,
+        { direction: 0, jumpPressed: false },
+        TANGRAM_FIXED_STEP,
+        events,
+      );
+    }
+    expect(state.finished).toBe(true);
+    expect(events).toContainEqual({ type: 'complete' });
+  });
+
+  it('holds the player on the flag while the Tangram flag slides down', () => {
+    const simulationLevel = {
+      ...level(),
+      goal: { x: 100, y: 80, width: 80, height: 368 },
+    };
+    const state = createTangramPlatformerState(simulationLevel);
+    const events: TangramPlatformerEvent[] = [];
+    state.player.x = 100;
+    state.player.y = 80;
+
     tickTangramPlatformer(
       state,
       simulationLevel,
@@ -107,6 +132,31 @@ describe('Tangram platformer simulation', () => {
       TANGRAM_FIXED_STEP,
       events,
     );
+    expect(state.goalPhase).toBe('grab');
+    expect(state.finished).toBe(false);
+
+    tickTangramPlatformer(
+      state,
+      simulationLevel,
+      movement,
+      { direction: 0, jumpPressed: false },
+      TANGRAM_FIXED_STEP,
+      events,
+    );
+    expect(state.goalPhase).toBe('slide');
+    expect(state.goalFlagY).toBeGreaterThan(simulationLevel.goal.y);
+    expect(state.player.y).toBe(state.goalFlagY + 12);
+
+    for (let tick = 0; tick < 60 && !state.finished; tick += 1) {
+      tickTangramPlatformer(
+        state,
+        simulationLevel,
+        movement,
+        { direction: 0, jumpPressed: false },
+        TANGRAM_FIXED_STEP,
+        events,
+      );
+    }
     expect(state.finished).toBe(true);
     expect(events).toContainEqual({ type: 'complete' });
   });
@@ -212,6 +262,72 @@ describe('Tangram platformer simulation', () => {
     );
     expect(state.breakableBlocksBroken[0]).toBe(true);
     expect(events).toContainEqual({ type: 'shake' });
+  });
+
+  it('pops and collects a power snack after a clean underside hit', () => {
+    const simulationLevel = {
+      ...level(),
+      powerup: { x: 300, y: 300, width: 44, height: 56, label: 'Super Snack' },
+    };
+    const state = createTangramPlatformerState(simulationLevel);
+    const events: TangramPlatformerEvent[] = [];
+    state.player.x = 300;
+    state.player.y = 356;
+    state.player.velocityY = -700;
+
+    tickTangramPlatformer(
+      state,
+      simulationLevel,
+      movement,
+      { direction: 0, jumpPressed: false },
+      TANGRAM_FIXED_STEP,
+      events,
+    );
+
+    expect(state.powerBlockHit).toBe(true);
+    expect(state.powerSnackAvailable).toBe(true);
+    expect(events).toContainEqual({ type: 'hud' });
+
+    state.player.y = 250;
+    state.player.velocityY = 0;
+    tickTangramPlatformer(
+      state,
+      simulationLevel,
+      movement,
+      { direction: 0, jumpPressed: false },
+      TANGRAM_FIXED_STEP,
+      events,
+    );
+
+    expect(state.powerSnackAvailable).toBe(false);
+    expect(state.powerRemaining).toBe(TANGRAM_POWER_DURATION);
+    expect(isTangramPoweredUp(state)).toBe(true);
+  });
+
+  it('turns enemies around before they leave a platform edge', () => {
+    const simulationLevel = {
+      ...level(),
+      platforms: [
+        { x: 0, y: 448, width: 340, height: 92 },
+        { x: 440, y: 448, width: 1560, height: 92 },
+      ],
+      enemies: [{ x: 280, y: 404, width: 44, height: 40, minX: 200, maxX: 560, speed: 120 }],
+    };
+    const state = createTangramPlatformerState(simulationLevel);
+    const events: TangramPlatformerEvent[] = [];
+    state.enemies[0].direction = 1;
+
+    tickTangramPlatformer(
+      state,
+      simulationLevel,
+      movement,
+      { direction: 0, jumpPressed: false },
+      0.5,
+      events,
+    );
+
+    expect(state.enemies[0].x).toBe(280);
+    expect(state.enemies[0].direction).toBe(-1);
   });
 
   it('moves platforms deterministically and carries a grounded player', () => {

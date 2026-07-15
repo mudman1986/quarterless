@@ -19,6 +19,12 @@ const DUTCH: Record<string, string> = {
   'Mute sound': 'Zet geluid uit',
   'How to play': 'Zo speel je',
   'Open how to play and settings': 'Open uitleg en instellingen',
+  'Start adventure': 'Start avontuur',
+  'Pick a classmate and jump through the school.': 'Kies een klasgenoot en spring door de school.',
+  'Penguins of Tangram': 'Pinguins van Tangram',
+  'Choose class': 'Kies klas',
+  'Reset the adventure and start again?': 'Avontuur wissen en opnieuw beginnen?',
+  'Badges collected': 'Verzamelde badges',
   'Motion: Reduced': 'Beweging: Minder',
   'Motion: Normal': 'Beweging: Normaal',
   'Route notes: On': 'Route-notities: Aan',
@@ -34,6 +40,8 @@ const DUTCH: Record<string, string> = {
   Touch: 'Aanraken',
   'Use the big buttons on the screen to move and jump.':
     'Gebruik de grote knoppen op het scherm om te bewegen en springen.',
+  'Tap ahead or behind the player to move. Tap the big circle to jump.':
+    'Tik voor of achter de speler om te bewegen. Tik op de grote cirkel om te springen.',
   Pause: 'Pauze',
   'Press P or Escape, or choose Pause.': 'Druk op P of Escape, of kies Pauze.',
   'Reset the school map and start again?': 'Schoolkaart wissen en opnieuw beginnen?',

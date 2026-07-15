@@ -151,6 +151,8 @@ export interface TangramPlatformerState {
   hint: string;
   hintRemaining: number;
   elapsedSeconds: number;
+  goalPhase: 'none' | 'grab' | 'slide';
+  goalFlagY: number;
   finished: boolean;
 }
 
@@ -223,6 +225,8 @@ export function createTangramPlatformerState(
     hint: level.hint,
     hintRemaining: 0,
     elapsedSeconds: 0,
+    goalPhase: 'none',
+    goalFlagY: level.goal.y,
     finished: false,
   };
 }
@@ -310,7 +314,18 @@ function updateEnemies(
     const enemy = state.enemies[index];
     const definition = level.enemies[index];
     if (!enemy.active) continue;
-    enemy.x += definition.speed * enemy.direction * dt;
+    const nextX = enemy.x + definition.speed * enemy.direction * dt;
+    const supported = platformRects(state, level).some(
+      (platform) =>
+        Math.abs(platform.y - (definition.y + definition.height)) <= 4 &&
+        nextX < platform.x + platform.width &&
+        nextX + definition.width > platform.x,
+    );
+    if (!supported) {
+      enemy.direction = enemy.direction === 1 ? -1 : 1;
+      continue;
+    }
+    enemy.x = nextX;
     if (enemy.x <= definition.minX) {
       enemy.x = definition.minX;
       enemy.direction = 1;
@@ -715,6 +730,7 @@ function handlePowerSnack(
   if (hitBlockFromBelow) {
     state.powerBlockHit = true;
     setHint(state, 'A super Tangram popped out!', events);
+    events.push({ type: 'hud' });
     return;
   }
   if (
@@ -736,10 +752,41 @@ function handleGoal(
   level: TangramSimulationLevel,
   events: TangramPlatformerEvent[],
 ): void {
+  if (state.goalPhase !== 'none') return;
   const player = tangramPlayerRect(state);
   if (!intersects(player, level.goal) && player.x + player.width < level.goal.x) return;
-  state.finished = true;
-  events.push({ type: 'complete' });
+  state.goalPhase = 'grab';
+  state.goalFlagY = level.goal.y;
+  state.player.x = level.goal.x + level.goal.width / 2 - TANGRAM_PLAYER_WIDTH / 2;
+  state.player.y = level.goal.y + 30;
+  state.player.velocityX = 0;
+  state.player.velocityY = 0;
+  state.player.grounded = false;
+  setHint(state, 'Hold on to the Tangram flag!', events);
+}
+
+function updateGoalSequence(
+  state: TangramPlatformerState,
+  level: TangramSimulationLevel,
+  dt: number,
+  events: TangramPlatformerEvent[],
+): void {
+  if (state.goalPhase === 'grab') {
+    state.goalPhase = 'slide';
+    events.push({ type: 'hud' });
+  }
+  if (state.goalPhase !== 'slide') return;
+  const bottom = level.goal.y + level.goal.height - 30;
+  state.goalFlagY = Math.min(bottom, state.goalFlagY + 520 * dt);
+  state.player.x = level.goal.x + level.goal.width / 2 - TANGRAM_PLAYER_WIDTH / 2;
+  state.player.y = state.goalFlagY + 12;
+  state.player.velocityX = 0;
+  state.player.velocityY = 0;
+  if (state.goalFlagY >= bottom) {
+    state.goalPhase = 'none';
+    state.finished = true;
+    events.push({ type: 'complete' });
+  }
 }
 
 export function tickTangramPlatformer(
@@ -753,10 +800,15 @@ export function tickTangramPlatformer(
   if (state.finished) return;
   state.elapsedSeconds += dt;
   updateTimers(state, level, dt, events);
+  if (state.goalPhase !== 'none') {
+    updateGoalSequence(state, level, dt, events);
+    return;
+  }
   updateEnemies(state, level, dt);
   updateMovingPlatforms(state, level, dt);
   updateBoss(state, level, dt, events);
   const previousY = updatePlayer(state, level, movement, input, dt, events);
+  handlePowerSnack(state, level, previousY, events);
   handleBouncePads(state, level, events);
   handleCollectibles(state, level, events);
   handleGoal(state, level, events);
@@ -765,7 +817,6 @@ export function tickTangramPlatformer(
   handleEnemies(state, level, movement, previousY, events);
   handleBoss(state, level, movement, previousY, events);
   handleCheckpoint(state, level, events);
-  handlePowerSnack(state, level, previousY, events);
 }
 
 function jumpRiseForVelocity(jumpVelocity: number): number {

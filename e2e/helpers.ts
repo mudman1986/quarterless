@@ -144,6 +144,7 @@ export async function completeTangramLevel(page: Page): Promise<void> {
     const hook = (window as unknown as { __penguinsOfTangram?: TangramTestHook }).__penguinsOfTangram;
     hook?.completeCurrentLevel?.();
   });
+  await expect(page.locator('.tangram-platformer-overlay--complete')).toBeVisible();
 }
 
 export async function tangramJumpAudit(page: Page): Promise<{ reachable: boolean; unreachable: string[] }> {

@@ -905,8 +905,8 @@ button {
   right: max(22px, env(safe-area-inset-right));
   bottom: max(22px, env(safe-area-inset-bottom));
   display: grid;
-  width: 78px;
-  height: 78px;
+  width: 104px;
+  height: 104px;
   place-items: center;
   border: 1px solid rgba(16, 48, 71, 0.24);
   border-radius: 50%;
@@ -914,7 +914,7 @@ button {
   background: rgba(255, 255, 255, 0.82);
   color: #103047;
   cursor: pointer;
-  font-size: 2rem;
+  font-size: 3.2rem;
   font-weight: 800;
   pointer-events: auto;
   touch-action: none;
@@ -981,26 +981,10 @@ button {
   outline-offset: 3px;
 }
 
-.tangram-platformer-help-button {
-  position: absolute;
-  right: max(14px, env(safe-area-inset-right));
-  bottom: max(14px, env(safe-area-inset-bottom));
-  z-index: 20;
-  min-height: 44px;
-  border: 1px solid rgba(16, 48, 71, 0.24);
-  border-radius: 12px;
-  padding: 0 14px;
-  background: rgba(255, 255, 255, 0.86);
-  color: #103047;
-  cursor: pointer;
-  font-weight: 800;
-}
-
 .tangram-platformer-overlay--help {
   z-index: 22;
 }
 
-.tangram-platformer-help-button:focus-visible,
 .tangram-platformer-help-list + .tangram-platformer-action-row button:focus-visible {
   outline: 3px solid #103047;
   outline-offset: 3px;
