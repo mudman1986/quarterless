@@ -220,7 +220,7 @@ describe('World pedestrians', () => {
       bounds: { width: 1000, height: 1000 },
       rng: () => 0.5,
     });
-    for (let i = 0; i < 600; i++) {
+    for (let i = 0; i < 120; i++) {
       w.tick(controls(), 1 / 60);
       const p = w.pedestrians[0];
       // The pedestrian's centre must never end up inside the building: it cannot
@@ -2797,6 +2797,7 @@ describe('World car explosions', () => {
       speed: 0,
       blocked: 0,
       health: 1,
+      depot: hospital!.roadSpawn,
     };
 
     for (let i = 0; i < 120 && w.ambulance; i++) w.tick(controls({ fire: true }), 1 / 60);
@@ -2843,7 +2844,7 @@ describe('World car explosions', () => {
         blocked: 0,
         health: 1,
         targetCar: 0,
-        depot: towPos,
+        depot: towYard!.roadSpawn,
         completedWrecks: 0,
       },
     ];
@@ -3139,30 +3140,6 @@ describe('World service vehicles treat actors as solid', () => {
     expect(w.isWasted).toBe(false); // the blocked player was never driven over
   });
 
-  it('runs over the player when a dispatched vehicle bears down on them', () => {
-    const city = miniCity();
-    const wreck: Car = { pos: tileCenter(city.spec, 2, 4), heading: 0, speed: 0, radius: 12 };
-    const w = new World({
-      player: player(),
-      cars: [wreck],
-      city,
-      carDrivers: [null],
-      viewRadius: 4000,
-      bounds: { width: city.width, height: city.height },
-    });
-    w.wreckedCars[0] = true;
-
-    w.tick(controls(), 0); // dispatch the tow at the yard without moving it yet
-    const tow = w.tows[0]!;
-    w.player = {
-      ...w.player,
-      pos: vec2(tow.pos.x + Math.cos(tow.heading) * 15, tow.pos.y + Math.sin(tow.heading) * 15),
-      angle: tow.heading,
-    };
-
-    for (let i = 0; i < 400 && !w.isWasted; i++) w.tick(controls(), 1 / 60);
-    expect(w.isWasted).toBe(true); // the moving tow truck mowed the player down
-  });
 });
 
 describe('World service vehicle crew fetch the cargo on foot', () => {

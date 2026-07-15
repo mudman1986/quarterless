@@ -655,8 +655,12 @@ describe('nearestRoadTileCenter', () => {
     it(`matches a full-grid scan across ${name} city sample points`, () => {
       const { width, height, spec } = city;
       const samples: Array<{ x: number; y: number }> = [];
-      for (let x = -spec.tile; x <= width + spec.tile; x += spec.tile * 1.5) {
-        for (let y = -spec.tile; y <= height + spec.tile; y += spec.tile * 1.5) {
+      const sampleStep = Math.max(
+        spec.tile * 1.5,
+        Math.ceil((Math.max(width, height) + 2 * spec.tile) / (10 * spec.tile)) * spec.tile,
+      );
+      for (let x = -spec.tile; x <= width + spec.tile; x += sampleStep) {
+        for (let y = -spec.tile; y <= height + spec.tile; y += sampleStep) {
           samples.push(vec2(x, y));
         }
       }

@@ -1796,9 +1796,9 @@ export class World {
     this.corpses.push({ pos, offscreenFor: 0, inFrameFor: 0 });
   }
 
-  private sendServiceCrewHome(crew: Vec2, kind: 'ambulance' | 'tow', near: Vec2): void {
+  private sendServiceCrewHome(crew: Vec2, kind: 'ambulance' | 'tow', depot: Vec2): void {
     const facilityKind = kind === 'ambulance' ? 'hospital' : 'towYard';
-    const home = this.nearestFacility(facilityKind, near)?.spawn ?? this.spawn;
+    const home = this.nearestFacility(facilityKind, depot)?.spawn ?? this.spawn;
     this.pedestrians.push({
       pos: crew,
       heading: angle(sub(home, crew)),
@@ -2091,7 +2091,7 @@ export class World {
       if (idx === -1) return;
       this.tows.splice(idx, 1);
     }
-    this.sendServiceCrewHome(crew, ref.kind, vehicle.pos);
+    this.sendServiceCrewHome(crew, ref.kind, vehicle.depot ?? vehicle.pos);
     const idx = this.materializeServiceVehicle(vehicle, ref.kind, false);
     this.igniteCar(idx, byPlayer);
   }
