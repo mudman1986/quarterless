@@ -95,3 +95,8 @@ Why this shape (do not regress it):
 - **Update the docs (`README.md`, `STORY_MODE.md`) as part of any change that affects them.**
 - Don't add speculative abstractions or features beyond what's asked; the pure-core /
   thin-render split is deliberate — keep it lean.
+
+## Response style
+
+- After completing work, explain the root cause, relevant execution flow, user-visible
+  symptom, and solution in a useful summary rather than only confirming that it is done.

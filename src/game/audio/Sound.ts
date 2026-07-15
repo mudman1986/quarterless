@@ -9,6 +9,14 @@ export type ProceduralAudioOutput = {
   destination: AudioNode;
 };
 
+export function shouldPlaySiren(
+  status: 'playing' | 'busted' | 'wasted',
+  wantedStars: number,
+  policeCount: number,
+): boolean {
+  return status === 'playing' && wantedStars > 0 && policeCount > 0;
+}
+
 export class Sound {
   private output: ProceduralAudioOutput | null;
   private readonly activeTones = new Map<OscillatorNode, GainNode>();

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Sound } from './Sound';
+import { shouldPlaySiren, Sound } from './Sound';
 
 class FakeAudioNode {
   connectedTo: unknown = null;
@@ -61,6 +61,11 @@ afterEach(() => {
 });
 
 describe('Sound', () => {
+  it('stops scheduling the siren when wanted stars reach zero', () => {
+    expect(shouldPlaySiren('playing', 2, 2)).toBe(true);
+    expect(shouldPlaySiren('playing', 0, 2)).toBe(false);
+  });
+
   it('does not create an independent AudioContext', () => {
     let globalContextCount = 0;
     class GlobalAudioContext extends FakeAudioContext {

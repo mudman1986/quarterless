@@ -269,6 +269,28 @@ describe('World pedestrians', () => {
     expect(w.kills).toBe(1); // the player gets credit for the kill
     expect(w.score.current).toBe(SCORE_PER_PEDESTRIAN);
   });
+
+  it('does not re-route a fleeing pedestrian through the sidewalk graph when blocked by an obstacle', () => {
+    const city = buildCity({ cols: 30, rows: 30, tile: 48, block: 4, margin: 8 });
+    const opts = {
+      player: player(),
+      city,
+      walls: [...city.buildings, ...city.fences, rect(118, 0, 20, 40)],
+      pedestrians: [pedAt(100, 20)],
+      water: city.water,
+      bounds: { width: city.width, height: city.height },
+    };
+    const snapshot = new World(opts).snapshot();
+    snapshot.gunfireThreats = [vec2(80, 20)];
+    snapshot.bullets = [{ pos: vec2(80, 20), velocity: vec2(0, 0), life: 1, damage: 0 }];
+    const w = World.fromSnapshot(opts, snapshot);
+
+    for (let i = 0; i < 8; i++) w.tick(controls(), 1 / 60);
+
+    const fleeing = w.pedestrians[0];
+    expect(fleeing.state).toBe('flee');
+    expect(fleeing.navNode).toBeUndefined();
+  });
 });
 
 describe('World story objective progress', () => {
@@ -3375,7 +3397,9 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
 
   it('reaches wrecks near the live map bottom road instead of circling until timeout', () => {
     const city = buildCity(CITY_SPEC);
-    const bottomRoadStart = Math.floor((city.spec.rows - 1) / city.spec.block) * city.spec.block;
+    const bottomRoadStart = city.spec.edgeRoads?.bottom
+      ? city.spec.rows - (city.spec.roadWidth ?? 1)
+      : Math.floor((city.spec.rows - 1) / city.spec.block) * city.spec.block;
     const bottomRoadTy = bottomRoadStart + Math.floor((city.spec.roadWidth ?? 1) / 2);
     const sideStreetTy = bottomRoadStart - 3;
     const bottomTowYard = city.facilities
@@ -3404,7 +3428,10 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     const sideStreetTarget = tileCenter(city.spec, sideStreetTx!, sideStreetTy);
     const bottomSidewalk = city.sidewalks
       .filter(
-        (sidewalk) => sidewalk.y >= (bottomRoadStart + (city.spec.roadWidth ?? 1)) * city.spec.tile,
+        (sidewalk) =>
+          sidewalk.y >=
+          bottomRoadStart * city.spec.tile -
+            (city.spec.margin ?? 0),
       )
       .sort(
         (a, b) =>
@@ -3449,7 +3476,9 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
 
   it('clears several live-city wrecks near the bottom road without a tow timing out at dispatch', () => {
     const city = buildCity(CITY_SPEC);
-    const bottomRoadStart = Math.floor((city.spec.rows - 1) / city.spec.block) * city.spec.block;
+    const bottomRoadStart = city.spec.edgeRoads?.bottom
+      ? city.spec.rows - (city.spec.roadWidth ?? 1)
+      : Math.floor((city.spec.rows - 1) / city.spec.block) * city.spec.block;
     const bottomRoadTy = bottomRoadStart + Math.floor((city.spec.roadWidth ?? 1) / 2);
     const sideStreetTy = bottomRoadStart - 3;
     const bottomTowYard = city.facilities
@@ -3478,7 +3507,10 @@ describe('World service vehicle crew fetch the cargo on foot', () => {
     );
     const bottomSidewalk = city.sidewalks
       .filter(
-        (sidewalk) => sidewalk.y >= (bottomRoadStart + (city.spec.roadWidth ?? 1)) * city.spec.tile,
+        (sidewalk) =>
+          sidewalk.y >=
+          bottomRoadStart * city.spec.tile -
+            (city.spec.margin ?? 0),
       )
       .sort(
         (a, b) =>

@@ -125,6 +125,24 @@ export type Objective =
 
 export type MissionStatus = 'active' | 'completed' | 'failed';
 
+export function mapMissionPositions(
+  mission: Mission,
+  mapPosition: (position: Vec2) => Vec2,
+): Mission {
+  return {
+    ...mission,
+    objectives: mission.objectives.map((objective) => {
+      if (objective.kind === 'reach' || objective.kind === 'defend') {
+        return { ...objective, target: mapPosition(objective.target) };
+      }
+      if (objective.kind === 'route' || objective.kind === 'sabotage') {
+        return { ...objective, targets: objective.targets.map(mapPosition) };
+      }
+      return objective;
+    }),
+  };
+}
+
 /** A linear sequence of objectives with a completion reward. */
 export interface Mission {
   id: string;

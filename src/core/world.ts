@@ -95,6 +95,7 @@ import {
   type ObjectiveProgress,
   type ServiceCompletionCounts,
   type ServiceObjectiveKind,
+  mapMissionPositions,
   currentObjective,
   updateMission,
   isComplete,
@@ -112,6 +113,8 @@ import type { Controls } from './types';
 
 export interface WorldOptions {
   player: OnFootActor;
+  /** Re-map persisted mission coordinates when the active map layout changes. */
+  mapMissionPosition?: (position: Vec2) => Vec2;
   cars?: Car[];
   walls?: Rect[];
   pedestrians?: Pedestrian[];
@@ -993,7 +996,16 @@ export class World {
     world.bustedTimer = snapshot.bustedTimer;
     world.prevAction = snapshot.prevAction;
     world.prevConfirm = snapshot.prevConfirm;
-    world.campaign = cloneJson(snapshot.campaign);
+    world.campaign = snapshot.campaign
+      ? {
+          ...cloneJson(snapshot.campaign),
+          missions: snapshot.campaign.missions.map((mission) =>
+            opts.mapMissionPosition
+              ? mapMissionPositions(mission, opts.mapMissionPosition)
+              : cloneJson(mission),
+          ),
+        }
+      : null;
     world.campaignIndex = snapshot.campaignIndex;
     world.vehicleImpactCooldowns = new Map(cloneJson(snapshot.vehicleImpactCooldowns));
     world.objectiveBaseline = cloneJson(snapshot.objectiveBaseline);
@@ -2325,7 +2337,7 @@ export class World {
         alive.push(this.nextTowTruckJob(tow));
         continue;
       }
-      if (distance(tow.pos, this.cars[tow.targetCar].pos) <= tow.radius + AMBULANCE_PICKUP_RADIUS) {
+      if (distance(tow.pos, this.cars[tow.targetCar].pos) <= this.serviceStopRadius(tow.radius)) {
         // Pull up beside the wreck and send the operator out on foot to hook it.
         alive.push({
           ...tow,
@@ -2639,12 +2651,12 @@ export class World {
   }
 
   /** How close a service vehicle must get to its chosen road-side stop point to
-   * park and send the crew out. Wide multi-lane roads allow stopping from the
-   * opposite half of the band; narrow roads keep the original pickup radius. */
+   * park and send the crew out. The stop point may be at the edge of a wide
+   * perimeter road while the vehicle is travelling in its opposite lane. */
   private serviceStopRadius(vehicleRadius: number): number {
     const roadWidth = Math.max(1, Math.min(this.city!.spec.block, this.city!.spec.roadWidth ?? 1));
     return (
-      vehicleRadius + Math.max(AMBULANCE_PICKUP_RADIUS, (roadWidth * this.city!.spec.tile) / 2)
+      vehicleRadius + Math.max(AMBULANCE_PICKUP_RADIUS, roadWidth * this.city!.spec.tile)
     );
   }
 
@@ -3511,6 +3523,8 @@ export class World {
         : playerCarThreat
           ? [playerCarThreat, ...civilianThreats]
           : civilianThreats;
+      const fleeing =
+        !returningTo && threats.some((threat) => distance(ped.pos, threat) < PANIC_RADIUS);
       let routeCache: PedestrianRouteCache | undefined;
       if (returningTo && distance(ped.pos, returningTo) <= ARRIVE_RADIUS) {
         continue; // reached the building entrance: disappear inside
@@ -3540,7 +3554,9 @@ export class World {
       // per-tick routing search. Worlds without a city keep the free-roam wander.
       let navNode = ped.navNode;
       let navFrom = ped.navFrom;
-      const graph = !returningTo ? this.pedestrianGraph : undefined;
+      // Fleeing is direct movement; graph recovery here repeats an expensive
+      // nearest-node search when a frightened NPC is pinned by an obstacle.
+      const graph = !returningTo && !fleeing ? this.pedestrianGraph : undefined;
       const steerPoint = (() => {
         if (!graph) return undefined;
         if (navNode === undefined || navNode < 0 || navNode >= graph.nodes.length) {

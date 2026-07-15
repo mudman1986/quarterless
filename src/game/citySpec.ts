@@ -8,7 +8,8 @@ import type { CitySpec } from '../core/city';
  * gap between a building and the road — wide enough to walk three abreast, with no
  * spill onto the carriageway. The river sits on a building-row band (rows 32–34)
  * so the wide streets run alongside it rather than into it, crossed by bridges
- * on every other vertical road.
+ * on every other vertical road. The right and bottom perimeter roads keep the
+ * map edge drivable; the right one is always bridged across the river.
  */
 export const CITY_SPEC: CitySpec = {
   cols: 70,
@@ -19,5 +20,6 @@ export const CITY_SPEC: CitySpec = {
   margin: 42,
   sidewalkWidth: 42,
   mergeBlocks: true,
+  edgeRoads: { right: true, bottom: true },
   rivers: [{ orientation: 'horizontal', start: 32, span: 3, bridgeEvery: 2 }],
 };

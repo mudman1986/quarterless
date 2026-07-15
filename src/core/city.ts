@@ -51,6 +51,8 @@ export interface CitySpec {
    * not a stateful RNG). Off by default; the regular modulo grid is unchanged.
    */
   mergeBlocks?: boolean;
+   /** Optional road bands along the outer right and bottom edges of the map. */
+   edgeRoads?: { right?: boolean; bottom?: boolean };
 }
 
 export interface City {
@@ -104,8 +106,7 @@ export interface Facility {
 }
 
 export const DEFAULT_CITY: CitySpec = { cols: 25, rows: 25, tile: 64, block: 5 };
-/** Width in pixels of the zebra belt a pedestrian steps across — about four
- * people wide, so a group can cross abreast. */
+/** Default clearance used by pedestrian routing around a zebra belt. */
 export const CROSSWALK_BELT_WIDTH = 56;
 
 /** Thickness in pixels of the rails lining each bridge. */
@@ -131,6 +132,45 @@ type FacilitySide = 'left' | 'right' | 'top' | 'bottom';
 
 function roadWidthFor(spec: CitySpec): number {
   return Math.max(1, Math.min(spec.block, spec.roadWidth ?? 1));
+}
+
+export type RoadAxis = 'horizontal' | 'vertical';
+
+/** Start tile of a road band, including optional right/bottom perimeter roads. */
+export function roadBandStart(spec: CitySpec, tileIndex: number, axis: RoadAxis): number {
+  const width = roadWidthFor(spec);
+  const edgeEnabled = axis === 'vertical' ? spec.edgeRoads?.right : spec.edgeRoads?.bottom;
+  const size = axis === 'vertical' ? spec.cols : spec.rows;
+  if (edgeEnabled && tileIndex >= size - width) return size - width;
+  return Math.floor(tileIndex / spec.block) * spec.block;
+}
+
+export function isRoadBandTile(spec: CitySpec, tileIndex: number, axis: RoadAxis): boolean {
+  const width = roadWidthFor(spec);
+  const size = axis === 'vertical' ? spec.cols : spec.rows;
+  if (tileIndex < 0 || tileIndex >= size) return false;
+  const start = roadBandStart(spec, tileIndex, axis);
+  const edgeEnabled = axis === 'vertical' ? spec.edgeRoads?.right : spec.edgeRoads?.bottom;
+  const edgeStart = size - width;
+  const finalRegularStart = Math.floor((size - 1) / spec.block) * spec.block;
+  if (
+    edgeEnabled &&
+    finalRegularStart < edgeStart &&
+    finalRegularStart + width > edgeStart &&
+    tileIndex >= finalRegularStart &&
+    tileIndex < edgeStart
+  ) {
+    return false;
+  }
+  return tileIndex >= start && tileIndex < start + width;
+}
+
+export function isVerticalRoadTile(spec: CitySpec, tx: number): boolean {
+  return isRoadBandTile(spec, tx, 'vertical');
+}
+
+export function isHorizontalRoadTile(spec: CitySpec, ty: number): boolean {
+  return isRoadBandTile(spec, ty, 'horizontal');
 }
 
 function sidewalkWidthFor(spec: CitySpec): number {
@@ -175,8 +215,9 @@ function subtractBand(r: TileRect, river: RiverSpec): TileRect[] {
   return pieces;
 }
 
-/** Pick two distinct building blocks per service type, favouring the city
- * corners and edges so they read as deliberate landmarks spread across town.
+/** Pick two distinct building blocks per service type, favouring separate
+ * quadrants so they read as deliberate landmarks spread across town. Hospitals
+ * may occupy merged blocks; the smaller service buildings may not.
  * Each facility also gets a road-adjacent spawn point on a preferred frontage,
  * with fallbacks if that side is missing (e.g. the map edge or a cropped block).
  */
@@ -219,16 +260,19 @@ function buildFacilities(
   const east = cols * tile;
   const south = rows * tile;
   const plans: { kind: FacilityKind; target: Vec2; prefs: FacilitySide[] }[] = [
-    { kind: 'policeStation', target: vec2(0, 0), prefs: ['top', 'left', 'right', 'bottom'] },
-    { kind: 'policeStation', target: vec2(east, south), prefs: ['bottom', 'right', 'left', 'top'] },
-    { kind: 'hospital', target: vec2(east, 0), prefs: ['right', 'top', 'bottom', 'left'] },
-    { kind: 'hospital', target: vec2(east, south / 2), prefs: ['right', 'bottom', 'top', 'left'] },
-    { kind: 'towYard', target: vec2(0, south), prefs: ['left', 'bottom', 'top', 'right'] },
-    { kind: 'towYard', target: vec2(east / 2, south), prefs: ['bottom', 'left', 'right', 'top'] },
-    { kind: 'taxiDepot', target: vec2(0, south / 2), prefs: ['left', 'top', 'bottom', 'right'] },
-    { kind: 'taxiDepot', target: vec2(east, south * 0.25), prefs: ['right', 'top', 'bottom', 'left'] },
+    { kind: 'policeStation', target: vec2(east * 0.18, south * 0.18), prefs: ['top', 'left', 'right', 'bottom'] },
+    { kind: 'policeStation', target: vec2(east * 0.82, south * 0.82), prefs: ['bottom', 'right', 'left', 'top'] },
+    { kind: 'hospital', target: vec2(east * 0.82, south * 0.18), prefs: ['right', 'top', 'bottom', 'left'] },
+    { kind: 'hospital', target: vec2(east * 0.18, south * 0.82), prefs: ['left', 'bottom', 'top', 'right'] },
+    { kind: 'towYard', target: vec2(east * 0.18, south * 0.82), prefs: ['left', 'bottom', 'top', 'right'] },
+    { kind: 'towYard', target: vec2(east * 0.82, south * 0.18), prefs: ['right', 'top', 'bottom', 'left'] },
+    { kind: 'taxiDepot', target: vec2(east * 0.18, south * 0.5), prefs: ['left', 'top', 'bottom', 'right'] },
+    { kind: 'taxiDepot', target: vec2(east * 0.82, south * 0.5), prefs: ['right', 'top', 'bottom', 'left'] },
   ];
 
+  const singleSize = (spec.block - roadWidthFor(spec)) * tile - 2 * (spec.margin ?? 0);
+  const isMergedBuilding = (building: Rect): boolean =>
+    building.w > singleSize || building.h > singleSize;
   const used = new Set<number>();
   const facilities: Facility[] = [];
   for (const plan of plans) {
@@ -238,7 +282,7 @@ function buildFacilities(
         building,
         dist: Math.hypot(center(building).x - plan.target.x, center(building).y - plan.target.y),
       }))
-      .filter((c) => !used.has(c.i))
+      .filter((c) => !used.has(c.i) && (plan.kind === 'hospital' || !isMergedBuilding(c.building)))
       .sort((a, b) => a.dist - b.dist)
       .find((c) => spawnFor(c.building, plan.prefs) !== null);
     if (!pick) continue;
@@ -353,9 +397,18 @@ export function buildCity(spec: CitySpec = DEFAULT_CITY): City {
     }
   }
   const isInteriorRoad = (tx: number, ty: number): boolean =>
-    tx >= 0 && ty >= 0 && tx < cols && ty < rows && removedRoad[ty * cols + tx] === 1;
+    tx >= 0 &&
+    ty >= 0 &&
+    tx < cols &&
+    ty < rows &&
+    removedRoad[ty * cols + tx] === 1 &&
+    !(
+      (spec.edgeRoads?.right && tx >= cols - roadWidth) ||
+      (spec.edgeRoads?.bottom && ty >= rows - roadWidth)
+    );
 
-  const isRoadLane = (tx: number, ty: number): boolean => tx % block < roadWidth || ty % block < roadWidth;
+  const isRoadLane = (tx: number, ty: number): boolean =>
+    isVerticalRoadTile(spec, tx) || isHorizontalRoadTile(spec, ty);
   const inBand = (river: RiverSpec, tx: number, ty: number): boolean => {
     const idx = river.orientation === 'horizontal' ? ty : tx;
     return idx >= river.start && idx < river.start + river.span;
@@ -365,8 +418,14 @@ export function buildCity(spec: CitySpec = DEFAULT_CITY): City {
     // A horizontal river is crossed by vertical roads (column `tx`); a vertical
     // river by horizontal roads (row `ty`).
     const lane = river.orientation === 'horizontal' ? tx : ty;
+    const axis = river.orientation === 'horizontal' ? 'vertical' : 'horizontal';
+    if (!isRoadBandTile(spec, lane, axis)) return false;
+    const edgeRoad =
+      (river.orientation === 'horizontal' && spec.edgeRoads?.right && lane >= cols - roadWidth) ||
+      (river.orientation === 'vertical' && spec.edgeRoads?.bottom && lane >= rows - roadWidth);
+    if (edgeRoad) return true;
     const band = Math.floor(lane / block) * block;
-    return lane % block < roadWidth && (band / block) % every === 0;
+    return (band / block) % every === 0;
   };
 
   const isBridge = (tx: number, ty: number): boolean =>
@@ -382,8 +441,10 @@ export function buildCity(spec: CitySpec = DEFAULT_CITY): City {
     .map((sb) => {
       const tx = sb.bcx * block + roadWidth;
       const ty = sb.bcy * block + roadWidth;
-      const tw = Math.min((sb.bcx + sb.bcw) * block, cols) - tx;
-      const th = Math.min((sb.bcy + sb.bch) * block, rows) - ty;
+      const xEnd = Math.min((sb.bcx + sb.bcw) * block, cols);
+      const yEnd = Math.min((sb.bcy + sb.bch) * block, rows);
+      const tw = xEnd - (xEnd === cols && spec.edgeRoads?.right ? roadWidth : 0) - tx;
+      const th = yEnd - (yEnd === rows && spec.edgeRoads?.bottom ? roadWidth : 0) - ty;
       return { tx, ty, tw, th };
     })
     .filter((r) => r.tw > 0 && r.th > 0);
@@ -435,6 +496,8 @@ export function buildCity(spec: CitySpec = DEFAULT_CITY): City {
     }
   }
 
+  const sidewalkWidth = sidewalkWidthFor(spec);
+  const sidewalks = buildSidewalks(buildings, sidewalkWidth, water);
   return {
     spec,
     width: cols * tile,
@@ -443,8 +506,8 @@ export function buildCity(spec: CitySpec = DEFAULT_CITY): City {
     facilities,
     water,
     fences,
-    sidewalks: buildSidewalks(buildings, sidewalkWidthFor(spec), water),
-    crosswalks: buildCrosswalks(spec, isRoad, isWater),
+    sidewalks,
+    crosswalks: buildCrosswalks(spec, isRoad, isWater, sidewalks),
     parkingSpots: buildParkingSpots(spec, buildings, facilities, isWater),
     isRoad,
     isWater,
@@ -481,53 +544,107 @@ function buildCrosswalks(
   spec: CitySpec,
   isRoad: (tx: number, ty: number) => boolean,
   isWater: (tx: number, ty: number) => boolean,
+  sidewalks: readonly Rect[],
 ): Rect[] {
   const { cols, rows, tile, block } = spec;
   const roadWidth = roadWidthFor(spec);
-  const belt = CROSSWALK_BELT_WIDTH;
-  const roadSpan = roadWidth * tile;
+  const belt = spec.sidewalkWidth ?? CROSSWALK_BELT_WIDTH;
   const dryIfInBounds = (tx: number, ty: number): boolean =>
     tx < 0 || ty < 0 || tx >= cols || ty >= rows || !isWater(tx, ty);
   const dry = (tx: number, ty: number): boolean =>
     tx >= 0 && ty >= 0 && tx < cols && ty < rows && isRoad(tx, ty) && !isWater(tx, ty);
   const zones: Rect[] = [];
-  for (let bx = 0; bx < cols; bx += block) {
-    for (let by = 0; by < rows; by += block) {
+  const overlapsOrTouches = (a0: number, a1: number, b0: number, b1: number): boolean =>
+    Math.min(a1, b1) >= Math.max(a0, b0);
+  const sidewalkWidth = sidewalkWidthFor(spec);
+  const sidewalkGap =
+    Math.max(0, (spec.margin ?? 0) - sidewalkWidth) + Math.max(0, belt - sidewalkWidth);
+  const near = (a: number, b: number): boolean => Math.abs(a - b) <= sidewalkGap + 1e-6;
+  const touchesSidewalk = (zone: Rect): boolean => {
+    const wide = zone.w >= zone.h;
+    const endpoints = wide ? [zone.x, zone.x + zone.w] : [zone.y, zone.y + zone.h];
+    return endpoints.every((edge) =>
+      sidewalks.some((sidewalk) =>
+        wide
+          ? (near(sidewalk.x + sidewalk.w, edge) || near(sidewalk.x, edge)) &&
+            overlapsOrTouches(sidewalk.y, sidewalk.y + sidewalk.h, zone.y, zone.y + zone.h)
+          : (near(sidewalk.y + sidewalk.h, edge) || near(sidewalk.y, edge)) &&
+            overlapsOrTouches(sidewalk.x, sidewalk.x + sidewalk.w, zone.x, zone.x + zone.w),
+      ),
+    );
+  };
+  const addZone = (zone: Rect): void => {
+    if (touchesSidewalk(zone)) zones.push(zone);
+  };
+  const roadRuns = (size: number, edgeEnabled: boolean): { start: number; span: number }[] => {
+    const edgeStart = size - roadWidth;
+    const starts: number[] = [];
+    for (let start = 0; start < size; start += block) {
+      if (!(edgeEnabled && start < edgeStart && start + roadWidth > edgeStart)) starts.push(start);
+    }
+    if (edgeEnabled) starts.push(edgeStart);
+    starts.sort((a, b) => a - b);
+    const runs: { start: number; span: number }[] = [];
+    for (const start of starts) {
+      const end = Math.min(size, start + roadWidth);
+      const previous = runs[runs.length - 1];
+      if (previous && start <= previous.start + previous.span) {
+        previous.span = Math.max(previous.span, end - previous.start);
+      } else if (end > start) {
+        runs.push({ start, span: end - start });
+      }
+    }
+    return runs;
+  };
+  const verticalRoadRuns = roadRuns(cols, spec.edgeRoads?.right === true);
+  const horizontalRoadRuns = roadRuns(rows, spec.edgeRoads?.bottom === true);
+
+  for (const vertical of verticalRoadRuns) {
+    for (const horizontal of horizontalRoadRuns) {
+      const bx = vertical.start;
+      const by = horizontal.start;
+      const verticalSpan = vertical.span * tile;
+      const horizontalSpan = horizontal.span * tile;
       if (!dry(bx, by)) continue; // a dry road intersection only
       const x0 = bx * tile;
       const y0 = by * tile;
-      const x1 = (bx + roadWidth) * tile;
-      const y1 = (by + roadWidth) * tile;
+      const x1 = x0 + verticalSpan;
+      const y1 = y0 + horizontalSpan;
       // North / south crossings span the vertical road band (full width in x).
-      if (dry(bx, by - 1) && dryIfInBounds(bx - 1, by - 1) && dryIfInBounds(bx + roadWidth, by - 1)) {
-        zones.push(rect(x0, y0 - belt, roadSpan, belt));
+      if (
+        dry(bx, by - 1) &&
+        dryIfInBounds(bx - 1, by - 1) &&
+        dryIfInBounds(bx + vertical.span, by - 1)
+      ) {
+        addZone(rect(x0, y0 - belt, verticalSpan, belt));
       }
       if (
-        dry(bx, by + roadWidth) &&
-        dryIfInBounds(bx - 1, by + roadWidth) &&
-        dryIfInBounds(bx + roadWidth, by + roadWidth)
+        dry(bx, by + horizontal.span) &&
+        dryIfInBounds(bx - 1, by + horizontal.span) &&
+        dryIfInBounds(bx + vertical.span, by + horizontal.span)
       ) {
-        zones.push(rect(x0, y1, roadSpan, belt));
+        addZone(rect(x0, y1, verticalSpan, belt));
       }
       // East / west crossings span the horizontal road band (full width in y).
-      if (dry(bx - 1, by) && dryIfInBounds(bx - 1, by - 1) && dryIfInBounds(bx - 1, by + roadWidth)) {
-        zones.push(rect(x0 - belt, y0, belt, roadSpan));
+      if (
+        dry(bx - 1, by) &&
+        dryIfInBounds(bx - 1, by - 1) &&
+        dryIfInBounds(bx - 1, by + horizontal.span)
+      ) {
+        addZone(rect(x0 - belt, y0, belt, horizontalSpan));
       }
       if (
-        dry(bx + roadWidth, by) &&
-        dryIfInBounds(bx + roadWidth, by - 1) &&
-        dryIfInBounds(bx + roadWidth, by + roadWidth)
+        dry(bx + vertical.span, by) &&
+        dryIfInBounds(bx + vertical.span, by - 1) &&
+        dryIfInBounds(bx + vertical.span, by + horizontal.span)
       ) {
-        zones.push(rect(x1, y0, belt, roadSpan));
+        addZone(rect(x1, y0, belt, horizontalSpan));
       }
     }
   }
   return zones;
 }
 
-/** Zebra-stripe rectangles filling a crosswalk. The bars run the long way
- * (parallel to the pedestrian's path, kerb to kerb) and repeat across the short
- * belt dimension, so they read as a proper zebra rather than lane lines. */
 /** Zebra-stripe rectangles filling a crosswalk. Real zebra bars run *parallel to
  * the traffic* (perpendicular to the pedestrian's path): so on a wide crossing
  * over a north-south road the bars are upright and march across in x, and on a
