@@ -76,4 +76,8 @@ describe('penguins of tangram character roster', () => {
       expect(support?.y).toBeGreaterThanOrEqual(level.checkpoint.y);
     }
   });
+
+  it('keeps the opening route welcoming without a badge gate', () => {
+    expect(CAMPAIGN_LEVELS[0].requiredBadges).toBe(0);
+  });
 });

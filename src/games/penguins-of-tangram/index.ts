@@ -38,6 +38,7 @@ import {
   resetTangramProgress,
   saveTangramProgress,
   type TangramLevelBest,
+  type TangramPlaytestSummary,
   type TangramProgress,
 } from './progress';
 
@@ -79,6 +80,7 @@ type LevelSummary = {
   totalBadges: number;
   durationSeconds: number;
   checkpointLabel: string;
+  checkpointReached: boolean;
   falls: number;
   nextLevelId: TangramLevelId | null;
   campaignComplete: boolean;
@@ -143,6 +145,12 @@ function buildJumpAudit(level: TangramLevelDefinition, character: TangramCharact
 
 function formatBest(best: TangramLevelBest | undefined): string {
   return best ? `Personal best: ${best.badgesCollected} badges • ${best.durationSeconds}s • ${best.falls} falls` : 'No personal best yet';
+}
+
+function formatPlaytestSummary(summary: TangramPlaytestSummary | undefined): string {
+  if (!summary) return '';
+  const averageSeconds = Math.round(summary.totalDurationSeconds / summary.attempts);
+  return `Local notes: ${summary.attempts} tries • ${averageSeconds}s average • ${summary.totalFalls} falls • ${summary.checkpointUses} checkpoint uses`;
 }
 
 function createTouchControls(parent: HTMLElement): TangramTouchControls {
@@ -842,6 +850,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       totalBadges: this.collectibles.length,
       durationSeconds: Math.max(1, Math.round(this.simulation.elapsedSeconds)),
       checkpointLabel: this.simulation.respawnPoint.label,
+      checkpointReached: this.simulation.checkpointActivated,
       falls: this.simulation.falls,
       nextLevelId,
       campaignComplete: nextLevelId === null,
@@ -1127,6 +1136,7 @@ function createCampaignMap(
     unlocked: readonly TangramLevelId[],
     completed: readonly TangramLevelId[],
     bestByLevel: Partial<Record<TangramLevelId, TangramLevelBest>>,
+    playtestByLevel: Partial<Record<TangramLevelId, TangramPlaytestSummary>>,
   ) => void;
 } {
   const overlay = document.createElement('div');
@@ -1148,6 +1158,7 @@ function createCampaignMap(
     unlocked: readonly TangramLevelId[],
     completed: readonly TangramLevelId[],
     bestByLevel: Partial<Record<TangramLevelId, TangramLevelBest>>,
+    playtestByLevel: Partial<Record<TangramLevelId, TangramPlaytestSummary>>,
   ): void => {
     const unlockedSet = new Set(unlocked);
     const completedSet = new Set(completed);
@@ -1169,6 +1180,7 @@ function createCampaignMap(
           <span class="story-chapter-copy">${level.summary}</span>
           <span class="story-chapter-meta">${isCompleted ? 'Completed' : isUnlocked ? 'Unlocked' : 'Locked'} • ${level.collectibles.length} badges</span>
           <span class="story-chapter-meta">${formatBest(bestByLevel[level.id])}</span>
+          ${formatPlaytestSummary(playtestByLevel[level.id]) ? `<span class="story-chapter-meta">${formatPlaytestSummary(playtestByLevel[level.id])}</span>` : ''}
         </button>`;
     }).join('');
     for (const button of grid.querySelectorAll<HTMLButtonElement>('[data-level-id]')) {
@@ -1461,7 +1473,13 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
     selectedLevelId = unlockedLevelIds.includes(levelId) ? levelId : unlockedLevelIds[unlockedLevelIds.length - 1];
     select.overlay.hidden = true;
     completion.overlay.hidden = true;
-    map.render(selectedLevelId, unlockedLevelIds, completedLevelIds, progress.bestByLevel);
+    map.render(
+      selectedLevelId,
+      unlockedLevelIds,
+      completedLevelIds,
+      progress.bestByLevel,
+      playtestEnabled ? progress.playtestByLevel : {},
+    );
     map.overlay.hidden = false;
     currentState = 'map';
     lastHookState = {
@@ -1495,6 +1513,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
         levelId,
         pendingSummary.durationSeconds,
         pendingSummary.falls,
+        pendingSummary.checkpointReached,
       );
       saveTangramProgress(progress);
     }

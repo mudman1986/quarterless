@@ -100,13 +100,36 @@ describe('Tangram progress', () => {
       ...loadTangramProgress(fakeStore()),
       playtestEnabled: true,
     };
-    const recorded = recordTangramPlaytest(progress, 'school-gate-morning-run', 48.8, 2.7);
+    const recorded = recordTangramPlaytest(progress, 'school-gate-morning-run', 48.8, 2.7, true);
     expect(recorded.playtestByLevel['school-gate-morning-run']).toEqual({
       attempts: 1,
       totalDurationSeconds: 48,
       totalFalls: 2,
+      checkpointUses: 1,
     });
-    expect(recordTangramPlaytest({ ...progress, playtestEnabled: false }, 'school-gate-morning-run', 10, 1))
+    expect(recordTangramPlaytest({ ...progress, playtestEnabled: false }, 'school-gate-morning-run', 10, 1, false))
       .toEqual({ ...progress, playtestEnabled: false });
+  });
+
+  it('keeps older local playtest notes when checkpoint counts are absent', () => {
+    const store = fakeStore();
+    store.setItem(TANGRAM_PROGRESS_KEY, JSON.stringify({
+      version: 1,
+      selectedCharacterId: 'penguin',
+      audioMuted: false,
+      reducedMotion: false,
+      playtestEnabled: true,
+      completedLevelIds: [],
+      bestByLevel: {},
+      playtestByLevel: {
+        'school-gate-morning-run': { attempts: 2, totalDurationSeconds: 80, totalFalls: 1 },
+      },
+    }));
+    expect(loadTangramProgress(store).playtestByLevel['school-gate-morning-run']).toEqual({
+      attempts: 2,
+      totalDurationSeconds: 80,
+      totalFalls: 1,
+      checkpointUses: 0,
+    });
   });
 });

@@ -25,6 +25,7 @@ export type TangramPlaytestSummary = {
   attempts: number;
   totalDurationSeconds: number;
   totalFalls: number;
+  checkpointUses: number;
 };
 
 export interface TangramProgress {
@@ -119,18 +120,22 @@ function normalizePlaytestSummaries(
     const attempts = Number(summary.attempts);
     const totalDurationSeconds = Number(summary.totalDurationSeconds);
     const totalFalls = Number(summary.totalFalls);
+    const checkpointUses = Number(summary.checkpointUses ?? 0);
     if (
       Number.isFinite(attempts) &&
       Number.isFinite(totalDurationSeconds) &&
       Number.isFinite(totalFalls) &&
+      Number.isFinite(checkpointUses) &&
       attempts > 0 &&
       totalDurationSeconds >= 0 &&
-      totalFalls >= 0
+      totalFalls >= 0 &&
+      checkpointUses >= 0
     ) {
       summaries[level.id] = {
         attempts: Math.min(20, Math.floor(attempts)),
         totalDurationSeconds: Math.floor(totalDurationSeconds),
         totalFalls: Math.floor(totalFalls),
+        checkpointUses: Math.floor(checkpointUses),
       };
     }
   }
@@ -162,12 +167,14 @@ export function recordTangramPlaytest(
   levelId: TangramLevelId,
   durationSeconds: number,
   falls: number,
+  checkpointReached: boolean,
 ): TangramProgress {
   if (!progress.playtestEnabled) return progress;
   const previous = progress.playtestByLevel[levelId] ?? {
     attempts: 0,
     totalDurationSeconds: 0,
     totalFalls: 0,
+    checkpointUses: 0,
   };
   return normalizeProgress({
     ...progress,
@@ -177,6 +184,7 @@ export function recordTangramPlaytest(
         attempts: Math.min(20, previous.attempts + 1),
         totalDurationSeconds: previous.totalDurationSeconds + Math.max(0, Math.floor(durationSeconds)),
         totalFalls: previous.totalFalls + Math.max(0, Math.floor(falls)),
+        checkpointUses: previous.checkpointUses + (checkpointReached ? 1 : 0),
       },
     },
   });

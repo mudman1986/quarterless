@@ -59,6 +59,7 @@ export interface TangramSimulationLevel {
   checkpoint: TangramRect & { label: string };
   goal: TangramRect;
   powerup: TangramRect & { label: string };
+  requiredBadges?: number;
 }
 
 export function getTangramCheckpointSupport(
@@ -696,10 +697,11 @@ function handleGoal(
     setHint(state, `Defeat ${level.boss?.label ?? 'the finale champion'} before ringing the bell.`, events);
     return;
   }
-  if (state.badgesCollected < level.collectibles.length) {
+  const requiredBadges = level.requiredBadges ?? level.collectibles.length;
+  if (state.badgesCollected < requiredBadges) {
     setHint(
       state,
-      `You still need ${level.collectibles.length - state.badgesCollected} more Tangram badges.`,
+      `You still need ${requiredBadges - state.badgesCollected} more Tangram badges.`,
       events,
     );
     return;

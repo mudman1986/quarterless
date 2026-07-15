@@ -54,6 +54,7 @@ export interface TangramLevelDefinition {
   checkpoint: Rect & { label: string };
   goal: Rect & { label: string };
   powerup: Rect & { label: string };
+  requiredBadges?: number;
 }
 
 const ground = (x: number, width: number): Platform => ({
@@ -74,7 +75,8 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
     worldWidth: 3600,
     worldHeight: 540,
     start: { x: 104, y: 376, label: 'School Gate' },
-    hint: 'Collect every Tangram badge and ring the bell ahead.',
+    hint: 'Use the big buttons or arrow keys to move. Try a jump, then ring the bell. Badges are bonus fun.',
+    requiredBadges: 0,
     mapAccent: '#59d0ff',
     skyColor: '#8fd8ff',
     hillColors: [0x88d06d, 0x72c25f],

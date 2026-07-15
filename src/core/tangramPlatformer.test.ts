@@ -91,6 +91,26 @@ describe('Tangram platformer simulation', () => {
     expect(state.player.grounded).toBe(true);
   });
 
+  it('lets the first route finish without collecting bonus badges', () => {
+    const simulationLevel = {
+      ...level(),
+      requiredBadges: 0,
+      goal: { x: 100, y: 376, width: 80, height: 72 },
+    };
+    const state = createTangramPlatformerState(simulationLevel);
+    const events: TangramPlatformerEvent[] = [];
+    tickTangramPlatformer(
+      state,
+      simulationLevel,
+      movement,
+      { direction: 0, jumpPressed: false },
+      TANGRAM_FIXED_STEP,
+      events,
+    );
+    expect(state.finished).toBe(true);
+    expect(events).toContainEqual({ type: 'complete' });
+  });
+
   it('reaches the same state across 30, 60, and 120 Hz rendering', () => {
     const at30 = simulate(30);
     const at60 = simulate(60);

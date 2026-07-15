@@ -64,6 +64,23 @@ test('Penguins can restart the current level from its starting point', async ({ 
   expect(restarted).toEqual({ checkpointActivated: false, falls: 0, x: restarted.startX, startX: restarted.startX });
 });
 
+test('Penguins can finish the opening route without collecting every bonus badge', async ({ page }) => {
+  await launchPenguinsOfTangram(page);
+  await page.evaluate(() => {
+    const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game.scene.getScene('PenguinsOfTangram') as {
+      level: { goal: { x: number; y: number } };
+      simulation: { player: { x: number; y: number; collected: boolean[] } };
+      update(time: number, deltaMs: number): void;
+    };
+    scene.simulation.player.x = scene.level.goal.x;
+    scene.simulation.player.y = scene.level.goal.y;
+    scene.update(100, 17);
+  });
+  await expect(page.getByText('School Gate Morning Run cleared!')).toBeVisible();
+  await expect(page.locator('.tangram-platformer-overlay--complete [data-field="badges"]')).toHaveText('0/12');
+});
+
 test('Penguins persists mute and campaign progress across reloads', async ({ page }) => {
   await launchPenguinsOfTangram(page, 'Lion');
 
