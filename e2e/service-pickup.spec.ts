@@ -873,6 +873,9 @@ test('stealing a patrol car starts and completes a live suspect bust side missio
       drivingKind: w.drivingCarIndex === null ? null : w.carKind(w.drivingCarIndex),
       mission: w.serviceMission,
       target: w.serviceTarget,
+      suspectPosition: w.pedestrians.find(
+        (ped) => ped.policeSuspectId === w.serviceMission?.suspectId,
+      )?.pos ?? null,
       score: w.score.current,
       suspectCount: w.pedestrians.filter((ped) => ped.policeSuspectId !== undefined).length,
       hud: scene.hud.text,
@@ -882,7 +885,12 @@ test('stealing a patrol car starts and completes a live suspect bust side missio
 
   expect(start.drivingKind).toBe('police');
   expect(start.mission?.kind).toBe('police');
-  expect(start.target).toEqual(suspectB);
+  expect(start.target).toEqual(start.suspectPosition);
+  expect(start.target).not.toBeNull();
+  if (!start.target) throw new Error('expected a live police suspect target');
+  expect(
+    Math.hypot(start.target.x - suspectB.x, start.target.y - suspectB.y),
+  ).toBeLessThan(16);
   expect(start.suspectCount).toBe(1);
   expect(start.markerVisible).toBe(true);
   expect(start.hud).not.toContain('POLICE: Bust the suspect');
