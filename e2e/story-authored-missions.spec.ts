@@ -987,6 +987,8 @@ test('Wreck Before Dawn uses a 15 second objective banner window after the elimi
       storyScript?: { stageIndex: number } | null;
       banner?: { visible: boolean; text: string };
       announceRemaining?: number;
+      syncStoryScript?: () => void;
+      handleEvents?: () => void;
       update: (time: number, deltaMs: number) => void;
     };
     if (!scene?.world.registerKill || !scene.world.addCorpse) {
@@ -1003,10 +1005,16 @@ test('Wreck Before Dawn uses a 15 second objective banner window after the elimi
 
     const text = scene.banner?.text ?? '';
     const initialSeconds = scene.announceRemaining ?? 0;
-
+    const syncStoryScript = scene.syncStoryScript;
+    const handleEvents = scene.handleEvents;
+    if (!syncStoryScript || !handleEvents) throw new Error('Missing scene update hooks');
+    scene.syncStoryScript = () => {};
+    scene.handleEvents = () => {};
     for (let i = 0; i < Math.ceil(14 / 0.1); i++) scene.update(i * 100, 100);
     const visibleAt14Seconds = !!scene.banner?.visible;
     for (let i = 0; i < Math.ceil(2 / 0.1); i++) scene.update((i + 200) * 100, 100);
+    scene.syncStoryScript = syncStoryScript;
+    scene.handleEvents = handleEvents;
 
     return {
       text,

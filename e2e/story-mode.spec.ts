@@ -485,7 +485,13 @@ test('story chapter opener stages into a mission briefing that stays visible unt
       storyPortraitRole?: { visible: boolean; text: string };
       storyPortraitMonogram?: { visible: boolean; text: string };
       cameras?: { main?: { zoom: number } };
+      world?: {
+        mission?: {
+          objectives: Array<{ kind: string; target?: { x: number; y: number } }>;
+        } | null;
+      };
     };
+    const firstObjective = scene?.world?.mission?.objectives[0];
     return {
       paused: !!scene?.paused,
       visible: !!scene?.storyPanel?.visible,
@@ -494,6 +500,7 @@ test('story chapter opener stages into a mission briefing that stays visible unt
       baseZoom: scene?.storyPanelBaseZoom ?? 0,
       zoom: scene?.cameras?.main?.zoom ?? 0,
       focusTarget: scene?.storyPanelFocusTarget ?? null,
+      missionFocus: firstObjective?.kind === 'reach' ? firstObjective.target ?? null : null,
       portraitName: scene?.storyPortraitName?.text ?? '',
       portraitRole: scene?.storyPortraitRole?.text ?? '',
       portraitMonogram: scene?.storyPortraitMonogram?.text ?? '',
@@ -505,7 +512,7 @@ test('story chapter opener stages into a mission briefing that stays visible unt
   expect(opener.visible).toBe(true);
   expect(opener.cinematicActive).toBe(true);
   expect(opener.zoom).toBeGreaterThan(opener.baseZoom);
-  expect(opener.focusTarget).toEqual({ x: 640, y: 1088 });
+  expect(opener.focusTarget).toEqual(opener.missionFocus);
   expect(opener.portraitVisible).toBe(true);
   expect(opener.portraitName).toBe('Rook Vance');
   expect(opener.portraitRole).toContain('Returning wheelman');
@@ -530,8 +537,14 @@ test('story chapter opener stages into a mission briefing that stays visible unt
       storyPortraitRole?: { visible: boolean; text: string };
       storyPortraitMonogram?: { visible: boolean; text: string };
       cameras?: { main?: { zoom: number } };
+      world?: {
+        mission?: {
+          objectives: Array<{ kind: string; target?: { x: number; y: number } }>;
+        } | null;
+      };
     };
     if (!scene?.storyPanel?.visible || !scene.storyPanel.text.includes('MISSION BRIEF')) return null;
+    const firstObjective = scene.world?.mission?.objectives[0];
     return {
       paused: !!scene.paused,
       visible: !!scene.storyPanel.visible,
@@ -540,6 +553,7 @@ test('story chapter opener stages into a mission briefing that stays visible unt
       baseZoom: scene.storyPanelBaseZoom ?? 0,
       zoom: scene.cameras?.main?.zoom ?? 0,
       focusTarget: scene.storyPanelFocusTarget ?? null,
+      missionFocus: firstObjective?.kind === 'reach' ? firstObjective.target ?? null : null,
       portraitName: scene.storyPortraitName?.text ?? '',
       portraitRole: scene.storyPortraitRole?.text ?? '',
       portraitMonogram: scene.storyPortraitMonogram?.text ?? '',
@@ -552,7 +566,7 @@ test('story chapter opener stages into a mission briefing that stays visible unt
   expect(briefing.visible).toBe(true);
   expect(briefing.cinematicActive).toBe(true);
   expect(briefing.zoom).toBeGreaterThan(briefing.baseZoom);
-  expect(briefing.focusTarget).toEqual({ x: 640, y: 1088 });
+  expect(briefing.focusTarget).toEqual(briefing.missionFocus);
   expect(briefing.portraitVisible).toBe(true);
   expect(briefing.portraitName).toBe('Rook Vance');
   expect(briefing.portraitRole).toContain('Returning wheelman');
