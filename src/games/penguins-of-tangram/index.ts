@@ -104,13 +104,75 @@ type TangramKeys = {
   space: Phaser.Input.Keyboard.Key;
 };
 
+type TangramTouchControls = {
+  left: boolean;
+  right: boolean;
+  jumpPressed: boolean;
+  setVisible: (visible: boolean) => void;
+  destroy: () => void;
+};
+
 function buildJumpAudit(level: TangramLevelDefinition, character: TangramCharacterDefinition): JumpAudit {
   return buildTangramJumpAudit(level, character.movement);
+}
+
+function createTouchControls(parent: HTMLElement): TangramTouchControls {
+  const controls = document.createElement('div');
+  controls.className = 'tangram-platformer-touch-controls';
+  controls.hidden = true;
+  controls.innerHTML = `
+    <button type="button" data-control="left" aria-label="Move left">←</button>
+    <button type="button" data-control="right" aria-label="Move right">→</button>
+    <button type="button" data-control="jump" aria-label="Jump">Jump</button>`;
+  parent.append(controls);
+
+  const cleanups: Array<() => void> = [];
+  const reset = (): void => {
+    touchControls.left = false;
+    touchControls.right = false;
+    touchControls.jumpPressed = false;
+  };
+  const touchControls: TangramTouchControls = {
+    left: false,
+    right: false,
+    jumpPressed: false,
+    setVisible(visible) {
+      controls.hidden = !visible;
+      if (!visible) reset();
+    },
+    destroy() {
+      reset();
+      cleanups.forEach((cleanup) => cleanup());
+      controls.remove();
+    },
+  };
+  const pointerDown = (event: PointerEvent): void => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-control]');
+    if (!button) return;
+    event.preventDefault();
+    const control = button.dataset.control;
+    if (control === 'jump') touchControls.jumpPressed = true;
+    if (control === 'left' || control === 'right') touchControls[control] = true;
+  };
+  controls.addEventListener('pointerdown', pointerDown);
+  controls.addEventListener('pointerup', reset);
+  controls.addEventListener('pointercancel', reset);
+  controls.addEventListener('pointerleave', reset);
+  cleanups.push(
+    () => controls.removeEventListener('pointerdown', pointerDown),
+    () => controls.removeEventListener('pointerup', reset),
+    () => controls.removeEventListener('pointercancel', reset),
+    () => controls.removeEventListener('pointerleave', reset),
+  );
+  window.addEventListener('blur', reset);
+  cleanups.push(() => window.removeEventListener('blur', reset));
+  return touchControls;
 }
 
 class PenguinsOfTangramScene extends Phaser.Scene {
   private readonly character: TangramCharacterDefinition;
   private readonly level: TangramLevelDefinition;
+  private readonly touchControls: TangramTouchControls;
   private readonly callbacks: {
     onHudUpdate: (snapshot: HudSnapshot) => void;
     onSceneState: (snapshot: SceneHookState) => void;
@@ -121,6 +183,11 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   private keys: TangramKeys | undefined;
   private player!: Phaser.GameObjects.Container;
   private playerAura!: Phaser.GameObjects.Ellipse;
+  private playerBody!: Phaser.GameObjects.Ellipse;
+  private playerBelly!: Phaser.GameObjects.Ellipse;
+  private playerShadow!: Phaser.GameObjects.Ellipse;
+  private playerFlippers!: Phaser.GameObjects.Rectangle[];
+  private playerFeet!: Phaser.GameObjects.Ellipse[];
   private checkpointBanner!: Phaser.GameObjects.Container;
   private goalBanner!: Phaser.GameObjects.Container;
   private powerSnack!: Phaser.GameObjects.Container;
@@ -134,6 +201,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   constructor(
     character: TangramCharacterDefinition,
     level: TangramLevelDefinition,
+    touchControls: TangramTouchControls,
     callbacks: {
       onHudUpdate: (snapshot: HudSnapshot) => void;
       onSceneState: (snapshot: SceneHookState) => void;
@@ -143,6 +211,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     super('PenguinsOfTangram');
     this.character = character;
     this.level = level;
+    this.touchControls = touchControls;
     this.callbacks = callbacks;
     this.jumpAudit = buildJumpAudit(level, character);
     this.simulation = createTangramPlatformerState(level);
@@ -179,11 +248,11 @@ class PenguinsOfTangramScene extends Phaser.Scene {
 
   update(_: number, deltaMs: number): void {
     if (this.simulation.finished) return;
-    const leftDown = Boolean(this.keys?.left.isDown || this.keys?.a.isDown);
-    const rightDown = Boolean(this.keys?.right.isDown || this.keys?.d.isDown);
+    const leftDown = Boolean(this.keys?.left.isDown || this.keys?.a.isDown || this.touchControls.left);
+    const rightDown = Boolean(this.keys?.right.isDown || this.keys?.d.isDown || this.touchControls.right);
     const jumpDown = Boolean(this.keys?.up.isDown || this.keys?.w.isDown || this.keys?.space.isDown);
     const direction = ((rightDown ? 1 : 0) - (leftDown ? 1 : 0)) as -1 | 0 | 1;
-    let jumpPressed = jumpDown && !this.lastJumpDown;
+    let jumpPressed = (jumpDown && !this.lastJumpDown) || this.touchControls.jumpPressed;
     this.lastJumpDown = jumpDown;
     this.accumulator += Math.min(deltaMs / 1000, TANGRAM_MAX_FRAME_DT);
     let steps = 0;
@@ -200,6 +269,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       this.accumulator -= TANGRAM_FIXED_STEP;
       steps += 1;
     }
+    if (steps > 0) this.touchControls.jumpPressed = false;
     if (steps === TANGRAM_MAX_SUBSTEPS && this.accumulator >= TANGRAM_FIXED_STEP) {
       this.accumulator = 0;
     }
@@ -431,21 +501,33 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     const bodyColor = Phaser.Display.Color.HexStringToColor(this.character.body).color;
     const accentColor = Phaser.Display.Color.HexStringToColor(this.character.accent).color;
     const accessoryColor = Phaser.Display.Color.HexStringToColor(this.character.accessory).color;
+    const shadow = this.add.ellipse(0, 22, 38, 14, 0x000000, 0.18);
+    const body = this.add.ellipse(0, -8, 44, 56, bodyColor);
+    const belly = this.add.ellipse(0, -2, 24, 30, 0xf7fbff);
+    const leftFlipper = this.add.rectangle(-20, -8, 10, 24, accessoryColor);
+    const rightFlipper = this.add.rectangle(20, -8, 10, 24, accessoryColor);
+    const leftFoot = this.add.ellipse(-10, 22, 14, 8, 0xffb15f);
+    const rightFoot = this.add.ellipse(10, 22, 14, 8, 0xffb15f);
     container.add([
-      this.add.ellipse(0, 22, 38, 14, 0x000000, 0.18),
-      this.add.ellipse(0, -8, 44, 56, bodyColor),
-      this.add.ellipse(0, -2, 24, 30, 0xf7fbff),
+      shadow,
+      body,
+      belly,
       this.add.rectangle(0, -30, 36, 10, accentColor),
-      this.add.rectangle(-20, -8, 10, 24, accessoryColor),
-      this.add.rectangle(20, -8, 10, 24, accessoryColor),
+      leftFlipper,
+      rightFlipper,
       this.add.circle(-9, -18, 4, 0xffffff),
       this.add.circle(9, -18, 4, 0xffffff),
       this.add.circle(-9, -18, 2, 0x103047),
       this.add.circle(9, -18, 2, 0x103047),
       this.add.triangle(0, -8, -8, -4, 8, -4, 0, 8, 0xffb15f),
-      this.add.ellipse(-10, 22, 14, 8, 0xffb15f),
-      this.add.ellipse(10, 22, 14, 8, 0xffb15f),
+      leftFoot,
+      rightFoot,
     ]);
+    this.playerShadow = shadow;
+    this.playerBody = body;
+    this.playerBelly = belly;
+    this.playerFlippers = [leftFlipper, rightFlipper];
+    this.playerFeet = [leftFoot, rightFoot];
     return container;
   }
 
@@ -495,7 +577,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     this.player.y = playerState.y + TANGRAM_PLAYER_HEIGHT / 2;
     this.player.scaleX = playerState.facing;
     this.player.rotation = Phaser.Math.Linear(this.player.rotation, playerState.velocityX * 0.0008, 0.15);
-    this.player.y += playerState.grounded ? Math.sin(this.time.now * 0.02) * 0.08 : 0;
+    this.animatePlayer();
 
     for (let index = 0; index < this.enemies.length; index += 1) {
       const enemyState = this.simulation.enemies[index];
@@ -517,6 +599,36 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       this.checkpointBanner.list.forEach((child) => {
         if ('setTint' in child && typeof child.setTint === 'function') child.setTint(0x7dfc8a);
       });
+    }
+
+    private animatePlayer(): void {
+      const playerState = this.simulation.player;
+      const speed = Math.abs(playerState.velocityX);
+      const walking = playerState.grounded && speed > 12;
+      const phase = this.time.now * (walking ? 0.024 : 0.008);
+      const stride = walking ? Math.sin(phase) * 5 : 0;
+      const bob = playerState.grounded
+        ? walking
+          ? Math.abs(Math.sin(phase)) * 1.4
+          : Math.sin(phase) * 0.8
+        : 0;
+      const airborne = !playerState.grounded;
+      const tuck = airborne ? Math.min(1, Math.abs(playerState.velocityY) / 900) : 0;
+      const powered = isTangramPoweredUp(this.simulation);
+
+      this.playerShadow.setScale(walking ? 1.08 : 1, walking ? 0.9 : 1);
+      this.playerShadow.setAlpha(airborne ? 0.1 : 0.18);
+      this.playerBody.y = -8 + bob;
+      this.playerBody.scaleY = 1 + (powered ? 0.04 : 0);
+      this.playerBelly.y = -2 + bob;
+      this.playerFlippers[0].y = -8 + bob - tuck * 3;
+      this.playerFlippers[1].y = -8 + bob - tuck * 3;
+      this.playerFlippers[0].rotation = -0.18 - Math.sin(phase) * (walking ? 0.22 : 0.04);
+      this.playerFlippers[1].rotation = 0.18 + Math.sin(phase) * (walking ? 0.22 : 0.04);
+      this.playerFeet[0].x = -10 + stride;
+      this.playerFeet[1].x = 10 - stride;
+      this.playerFeet[0].y = 22 + bob - tuck * 5;
+      this.playerFeet[1].y = 22 + bob - tuck * 5;
     }
   }
 
@@ -807,6 +919,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
   parent.append(host);
 
   const hud = createHudPanel(parent);
+  const touchControls = createTouchControls(parent);
   let selectedCharacterId: TangramCharacterId = DEFAULT_CHARACTER_ID;
   let selectedLevelId: TangramLevelId = FIRST_LEVEL_ID;
   const unlockedLevelIds: TangramLevelId[] = [FIRST_LEVEL_ID];
@@ -887,6 +1000,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
 
   function showCharacterSelect(): void {
     destroyGame();
+    touchControls.setVisible(false);
     completion.overlay.hidden = true;
     map.overlay.hidden = true;
     select.overlay.hidden = false;
@@ -909,6 +1023,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
 
   function showMap(levelId: TangramLevelId): void {
     destroyGame();
+    touchControls.setVisible(false);
     selectedLevelId = unlockedLevelIds.includes(levelId) ? levelId : unlockedLevelIds[unlockedLevelIds.length - 1];
     select.overlay.hidden = true;
     completion.overlay.hidden = true;
@@ -946,7 +1061,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
     destroyGame();
     const level = getTangramLevel(levelId);
     const character = getTangramCharacter(selectedCharacterId);
-    const scene = new PenguinsOfTangramScene(character, level, {
+    const scene = new PenguinsOfTangramScene(character, level, touchControls, {
       onHudUpdate(snapshot) {
         updateHudForScene(snapshot);
       },
@@ -956,6 +1071,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
       },
       onComplete(summary) {
         destroyGame();
+        touchControls.setVisible(false);
         pendingSummary = summary;
         markCompleted(levelId);
         currentState = summary.campaignComplete ? 'campaign-complete' : 'complete';
@@ -971,6 +1087,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
       },
     });
     activeScene = scene;
+    touchControls.setVisible(true);
     currentState = 'running';
     lastHookState = {
       badgesCollected: 0,
@@ -996,6 +1113,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
   return {
     stop() {
       destroyGame();
+      touchControls.destroy();
       window.removeEventListener('keydown', keyboardHandler);
       delete (window as unknown as { __penguinsOfTangram?: TestHook }).__penguinsOfTangram;
       parent.innerHTML = '';

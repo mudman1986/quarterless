@@ -1,5 +1,25 @@
 # Tangram Penguin Platformer Plan
 
+## Current status — 2026-07-15
+
+The game is now named **Penguins of Tangram** and has a working Phaser 4 campaign
+slice in the arcade launcher:
+
+- **Complete:** storybook visual direction, pure deterministic platformer simulation,
+  camera-follow runtime, hazards, enemies, checkpoints, badges, power snack, goal
+  completion, lazy loading, character select, six playable classes, five zones,
+  progression map, secret routes, bounce pads, completion summaries, and jump-route
+  audits.
+- **Shipped across the last two updates:** pointer/touch controls for left, right,
+  and jump, plus state-driven idle, walk, jump, and powered-up character poses.
+  Touch controls are shown during gameplay on coarse-pointer devices and remain
+  keyboard-compatible.
+- **Still open:** authored sprite frames and audio, persistent campaign progress,
+  and more advanced moving-platform or boss set pieces.
+
+The simulation intentionally stays in `src/core/tangramPlatformer.ts`; Phaser only
+renders the scene and forwards keyboard or touch input.
+
 ## Goal
 
 Create a new left-to-right 2D platform game for the arcade that captures the readable, playful feel of classic Super Mario platformers while replacing the theme with a custom Tangram primary-school world led by penguin characters and the school's animal classes.
@@ -160,36 +180,40 @@ Start with 3 to 5 themed zones:
 
 ### Phase 1 - Pre-production
 
-- confirm art direction
-- choose final game name
-- decide whether playable animals have cosmetic or light mechanical differences
-- define the first vertical-slice level
+- [x] confirm art direction
+- [x] choose final game name: **Penguins of Tangram**
+- [x] decide on light mechanical differences between playable animals
+- [x] define the first vertical-slice level
 
 ### Phase 2 - Core platformer foundation
 
-- create Phaser game entry
-- implement camera, physics, player controller, and tile collisions
-- add checkpoint, hazard, collectible, and level completion systems
-- wire lazy loading into the arcade shell
+- [x] create Phaser game entry
+- [x] implement camera, deterministic player controller, and platform collisions
+- [x] add checkpoint, hazard, collectible, and level completion systems
+- [x] wire lazy loading into the arcade shell
 
 ### Phase 3 - Vertical slice
 
-- ship one polished Tangram level
-- include penguin as the first fully animated playable character
-- add one or two enemy types
-- add one power-up and one secret route
+- [x] ship a polished first Tangram level
+- [x] add state-driven procedural idle, walk, jump, and powered-up animation
+- [ ] replace procedural poses with authored sprite frames if the art pipeline needs them
+- [x] add enemy movement and stomp handling
+- [x] add one power-up and secret routes
 
 ### Phase 4 - Character expansion
 
-- add remaining playable animal classes
-- add character select
-- tune minor per-character movement traits
+- [x] add remaining playable animal classes
+- [x] add character select
+- [x] tune minor per-character movement traits
 
 ### Phase 5 - Content expansion
 
-- build additional level themes
-- add progression map
-- add more environmental mechanics and set-piece moments
+- [x] build additional level themes
+- [x] add progression map
+- [x] add bounce pads and themed set dressing
+- [x] add responsive touch controls
+- [ ] persist campaign progress between visits
+- [ ] add moving platforms, authored audio, and a boss/finale set piece
 
 ## Name Options
 
@@ -202,20 +226,8 @@ Start with 3 to 5 themed zones:
 - **The Tangram Penguins**
 - **Penguin Paths of Tangram**
 
-## Recommended Starting Point
+## Next recommended slice
 
-Start with **Penguins of Tangram** or **Tangram Penguin Quest** as the leading name candidates, and build a single polished Phaser vertical slice around:
-
-- penguin default hero
-- one playable alternative animal
-- one playground-themed level
-- collectibles, checkpoints, one power-up, and one end-of-level goal
-
-## Feedback Needed Before Implementation
-
-Please confirm:
-
-1. which game name you prefer
-2. whether you want light gameplay differences between animal characters or mostly cosmetic choice
-3. whether the visual style should lean more storybook, more cartoony, or more classic pixel art
-4. whether I should start implementation with a single polished level and character-select flow
+Add local campaign persistence next, then authored audio or sprite frames if the
+visual polish still needs them. Keep both behind the existing pure-core /
+thin-render split; do not move gameplay rules into Phaser.
