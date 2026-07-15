@@ -27,6 +27,11 @@
         "npx tsc": true,
         "npx eslint": true
     },
+    "github.copilot.chat.commitMessageGeneration.instructions": [
+        {
+            "text": "Use conventional commit message format."
+        }
+    ],
     "cSpell.words": [
         "cooldown",
         "respawn",
