@@ -32,6 +32,7 @@ test('Penguins publishes power state only on pickup and expiry transitions', asy
     type Simulation = {
       player: { x: number; y: number };
       powerRemaining: number;
+      powerBlockHit: boolean;
     };
     type Scene = {
       simulation: Simulation;
@@ -59,24 +60,25 @@ test('Penguins publishes power state only on pickup and expiry transitions', asy
     const idleWrites = writes;
 
     scene.simulation.player.x = 1160;
-    scene.simulation.player.y = 176;
+    scene.simulation.player.y = 134;
+    scene.simulation.powerBlockHit = true;
     scene.update(200, 17);
     const pickupWrites = writes - idleWrites;
-    const pickupLabel = document.querySelector<HTMLElement>('[data-field="power"]')?.textContent;
+    const pickupPowered = (hookValue as { poweredUp?: boolean }).poweredUp;
 
     scene.simulation.powerRemaining = 0.001;
     scene.update(217, 17);
     const expiryWrites = writes - idleWrites - pickupWrites;
-    const expiryLabel = document.querySelector<HTMLElement>('[data-field="power"]')?.textContent;
+    const expiryPowered = (hookValue as { poweredUp?: boolean }).poweredUp;
 
-    return { expiryLabel, expiryWrites, idleWrites, pickupLabel, pickupWrites };
+    return { expiryPowered, expiryWrites, idleWrites, pickupPowered, pickupWrites };
   });
 
   expect(result.idleWrites).toBe(0);
   expect(result.pickupWrites).toBe(1);
-  expect(result.pickupLabel).toBe('Super snack active');
+  expect(result.pickupPowered).toBe(true);
   expect(result.expiryWrites).toBe(1);
-  expect(result.expiryLabel).toBe('No power-up');
+  expect(result.expiryPowered).toBe(false);
 });
 
 test('fixed-step simulation drops stale backlog after long frames', async ({ page }) => {

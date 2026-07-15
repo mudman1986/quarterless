@@ -181,6 +181,39 @@ describe('Tangram platformer simulation', () => {
     expect(isTangramPoweredUp(state)).toBe(false);
   });
 
+  it('breaks a Tangram block from below only while powered up', () => {
+    const simulationLevel = {
+      ...level(),
+      breakableBlocks: [{ x: 300, y: 300, width: 48, height: 48, label: 'Tangram block' }],
+    };
+    const state = createTangramPlatformerState(simulationLevel);
+    const events: TangramPlatformerEvent[] = [];
+    state.player.x = 300;
+    state.player.y = 360;
+    state.player.velocityY = -700;
+    tickTangramPlatformer(
+      state,
+      simulationLevel,
+      movement,
+      { direction: 0, jumpPressed: false },
+      TANGRAM_FIXED_STEP,
+      events,
+    );
+    expect(state.breakableBlocksBroken[0]).toBe(false);
+
+    state.powerRemaining = 1;
+    tickTangramPlatformer(
+      state,
+      simulationLevel,
+      movement,
+      { direction: 0, jumpPressed: false },
+      TANGRAM_FIXED_STEP,
+      events,
+    );
+    expect(state.breakableBlocksBroken[0]).toBe(true);
+    expect(events).toContainEqual({ type: 'shake' });
+  });
+
   it('moves platforms deterministically and carries a grounded player', () => {
     const simulationLevel: TangramSimulationLevel = {
       ...level(),

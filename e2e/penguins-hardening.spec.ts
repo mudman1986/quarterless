@@ -126,8 +126,7 @@ test('Penguins persists mute and campaign progress across reloads', async ({ pag
       .__penguinsOfTangram;
     return hook?.completedLevelIds?.includes('school-gate-morning-run') === true;
   });
-  await page.getByRole('button', { name: 'Open school map' }).click();
-  await expect(page.getByText(/Personal best:/)).toBeVisible();
+  await page.getByRole('button', { name: 'Start adventure' }).click();
   await page.getByRole('button', { name: 'How to play' }).click();
   await expect(page.getByRole('heading', { name: 'How to play' })).toBeVisible();
   await page.getByRole('button', { name: 'Motion: Normal' }).click();
@@ -145,7 +144,7 @@ test('Penguins persists mute and campaign progress across reloads', async ({ pag
   });
 });
 
-test('Sports Day exposes boss telegraph state and locks the final bell', async ({ page }) => {
+test('Sports Day exposes a boss and always accepts the final flag', async ({ page }) => {
   await page.goto('/quarterless/');
   await page.evaluate((key) => {
     localStorage.setItem(
@@ -167,8 +166,7 @@ test('Sports Day exposes boss telegraph state and locks the final bell', async (
   }, PROGRESS_KEY);
   await page.getByRole('button', { name: 'Play Penguins of Tangram' }).click();
   await page.getByRole('button', { name: /^Penguin/ }).click();
-  await page.getByRole('button', { name: 'Open school map' }).click();
-  await page.getByRole('button', { name: 'Play Sports Day Finale' }).click();
+  await page.getByRole('button', { name: 'Start adventure' }).click();
 
   await page.waitForFunction(() => {
     const hook = (window as unknown as {
@@ -180,21 +178,6 @@ test('Sports Day exposes boss telegraph state and locks the final bell', async (
     }).__penguinsOfTangram;
     return hook?.state === 'running' && hook.bossActive === true && hook.bossHitsRemaining === 3;
   });
-
-  const telegraph = await page.evaluate(() => {
-    const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
-    const scene = game.scene.getScene('PenguinsOfTangram') as {
-      simulation: { boss?: { warningRemaining: number; charging: boolean } };
-      bossTelegraphLabel?: { visible: boolean; text: string };
-      update(time: number, deltaMs: number): void;
-    };
-    if (!scene.simulation.boss) throw new Error('Missing finale boss');
-    scene.simulation.boss.warningRemaining = 1;
-    scene.simulation.boss.charging = false;
-    scene.update(50, 17);
-    return { text: scene.bossTelegraphLabel?.text, visible: scene.bossTelegraphLabel?.visible };
-  });
-  expect(telegraph).toEqual({ text: 'CHARGE READY', visible: true });
 
   const goalLocked = await page.evaluate(() => {
     const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
@@ -208,7 +191,7 @@ test('Sports Day exposes boss telegraph state and locks the final bell', async (
     scene.update(100, 17);
     return (window as unknown as { __penguinsOfTangram?: { state?: string } }).__penguinsOfTangram?.state;
   });
-  expect(goalLocked).toBe('running');
+  expect(goalLocked).toBe('campaign-complete');
 });
 
 test('Sports Day keeps the largest zone render loop responsive', async ({ page }) => {
@@ -233,8 +216,7 @@ test('Sports Day keeps the largest zone render loop responsive', async ({ page }
   }, PROGRESS_KEY);
   await page.getByRole('button', { name: 'Play Penguins of Tangram' }).click();
   await page.getByRole('button', { name: /^Penguin/ }).click();
-  await page.getByRole('button', { name: 'Open school map' }).click();
-  await page.getByRole('button', { name: 'Play Sports Day Finale' }).click();
+  await page.getByRole('button', { name: 'Start adventure' }).click();
   await page.waitForFunction(() => (
     (window as unknown as { __penguinsOfTangram?: { state?: string } }).__penguinsOfTangram?.state === 'running'
   ));
@@ -279,15 +261,15 @@ test.describe('coarse pointer controls', () => {
 
   test('renders and forwards touch controls', async ({ page }) => {
     await launchPenguinsOfTangram(page);
-    const left = page.locator('[data-control="left"]');
-    await expect(left).toBeVisible();
-    await left.dispatchEvent('pointerdown', { pointerType: 'touch' });
+    const moveZone = page.locator('[data-control="move"]');
+    await expect(moveZone).toBeVisible();
+    await moveZone.dispatchEvent('pointerdown', { pointerType: 'touch', clientX: 350 });
     await expect.poll(async () => page.evaluate(() => {
       const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
       return (game.scene.getScene('PenguinsOfTangram') as {
-        touchControls: { left: boolean };
-      }).touchControls.left;
+        touchControls: { right: boolean };
+      }).touchControls.right;
     })).toBe(true);
-    await left.dispatchEvent('pointerup', { pointerType: 'touch' });
+    await moveZone.dispatchEvent('pointerup', { pointerType: 'touch' });
   });
 });
