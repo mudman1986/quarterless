@@ -944,6 +944,49 @@ button {
   outline-offset: 3px;
 }
 
+.tangram-platformer-help-button {
+  position: absolute;
+  right: max(14px, env(safe-area-inset-right));
+  bottom: max(14px, env(safe-area-inset-bottom));
+  z-index: 20;
+  min-height: 44px;
+  border: 1px solid rgba(16, 48, 71, 0.24);
+  border-radius: 12px;
+  padding: 0 14px;
+  background: rgba(255, 255, 255, 0.86);
+  color: #103047;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.tangram-platformer-overlay--help {
+  z-index: 22;
+}
+
+.tangram-platformer-help-button:focus-visible,
+.tangram-platformer-help-list + .tangram-platformer-action-row button:focus-visible {
+  outline: 3px solid #103047;
+  outline-offset: 3px;
+}
+
+.tangram-platformer-help-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.tangram-platformer-help-list p {
+  margin: 0;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.7);
+  line-height: 1.4;
+}
+
+.tangram-platformer-action-row--settings {
+  flex-wrap: wrap;
+}
+
 .tangram-platformer-chip-grid,
 .tangram-platformer-summary-grid {
   display: grid;

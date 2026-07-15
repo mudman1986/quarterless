@@ -61,6 +61,40 @@ export interface TangramSimulationLevel {
   powerup: TangramRect & { label: string };
 }
 
+export function getTangramCheckpointSupport(
+  level: TangramSimulationLevel,
+): TangramRect | null {
+  const checkpointCenter = level.checkpoint.x + level.checkpoint.width / 2;
+  const platforms = level.platforms;
+  return (
+    platforms
+      .filter(
+        (platform) =>
+          checkpointCenter > platform.x &&
+          checkpointCenter < platform.x + platform.width &&
+          platform.y >= level.checkpoint.y &&
+          platform.y <= level.checkpoint.y + level.checkpoint.height + TANGRAM_PLAYER_HEIGHT,
+      )
+      .sort((a, b) => a.y - b.y)[0] ?? null
+  );
+}
+
+export function getTangramCheckpointRespawn(
+  level: TangramSimulationLevel,
+): { x: number; y: number; label: string } | null {
+  const support = getTangramCheckpointSupport(level);
+  if (!support) return null;
+  return {
+    x: clamp(
+      level.checkpoint.x + 12,
+      support.x,
+      support.x + support.width - TANGRAM_PLAYER_WIDTH,
+    ),
+    y: support.y - TANGRAM_PLAYER_HEIGHT,
+    label: level.checkpoint.label,
+  };
+}
+
 export interface TangramPlayerState {
   x: number;
   y: number;
@@ -132,6 +166,10 @@ export interface TangramJumpAudit {
 export function createTangramPlatformerState(
   level: TangramSimulationLevel,
 ): TangramPlatformerState {
+  const checkpointRespawn = getTangramCheckpointRespawn(level);
+  if (!checkpointRespawn) {
+    throw new Error(`Tangram checkpoint has no supporting platform: ${level.title}`);
+  }
   return {
     player: {
       x: level.start.x,
@@ -629,11 +667,7 @@ function handleCheckpoint(
 ): void {
   if (state.checkpointActivated || !intersects(tangramPlayerRect(state), level.checkpoint)) return;
   state.checkpointActivated = true;
-  state.respawnPoint = {
-    x: level.checkpoint.x + 12,
-    y: level.checkpoint.y - 8,
-    label: level.checkpoint.label,
-  };
+  state.respawnPoint = getTangramCheckpointRespawn(level) ?? state.respawnPoint;
   setHint(state, `Checkpoint reached: ${level.checkpoint.label}`, events);
 }
 

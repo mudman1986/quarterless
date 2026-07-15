@@ -8,6 +8,7 @@ type TangramTestHook = {
   state?: string;
   audioMuted?: boolean;
   reducedMotion?: boolean;
+  playtestEnabled?: boolean;
   bossActive?: boolean;
   bossHitsRemaining?: number;
   bossWarning?: boolean;

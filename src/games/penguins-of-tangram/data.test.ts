@@ -6,7 +6,7 @@ import {
   isTangramCharacterId,
 } from './data';
 import { CAMPAIGN_LEVELS } from './levels';
-import { buildTangramJumpAudit } from '../../core/tangramPlatformer';
+import { buildTangramJumpAudit, getTangramCheckpointSupport } from '../../core/tangramPlatformer';
 
 describe('penguins of tangram character roster', () => {
   it('keeps penguin as the default class hero', () => {
@@ -62,6 +62,18 @@ describe('penguins of tangram character roster', () => {
         expect(level.boss.warningSeconds).toBeGreaterThan(0);
         expect(level.boss.chargeSpeed).toBeGreaterThan(level.boss.speed);
       }
+    }
+  });
+
+  it('gives every checkpoint a platform to stand on', () => {
+    for (const level of CAMPAIGN_LEVELS) {
+      const support = getTangramCheckpointSupport(level);
+      expect(support, `${level.id} checkpoint is unsupported`).not.toBeNull();
+      expect(support?.x).toBeLessThanOrEqual(level.checkpoint.x + level.checkpoint.width / 2);
+      expect((support?.x ?? 0) + (support?.width ?? 0)).toBeGreaterThanOrEqual(
+        level.checkpoint.x + level.checkpoint.width / 2,
+      );
+      expect(support?.y).toBeGreaterThanOrEqual(level.checkpoint.y);
     }
   });
 });

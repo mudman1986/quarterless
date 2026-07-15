@@ -9,6 +9,7 @@ import {
   TANGRAM_PLAYER_WIDTH,
   buildTangramJumpAudit,
   createTangramPlatformerState,
+  getTangramCheckpointRespawn,
   isTangramPoweredUp,
   tickTangramPlatformer,
   type TangramPlatformerEvent,
@@ -32,8 +33,11 @@ import {
 import {
   getUnlockedTangramLevelIds,
   loadTangramProgress,
+  recordTangramPlaytest,
   recordTangramLevelCompletion,
+  resetTangramProgress,
   saveTangramProgress,
+  type TangramLevelBest,
   type TangramProgress,
 } from './progress';
 
@@ -94,6 +98,7 @@ type TestHook = {
   poweredUp: boolean;
   audioMuted: boolean;
   reducedMotion: boolean;
+  playtestEnabled: boolean;
   bossActive: boolean;
   bossHitsRemaining: number;
   bossWarning: boolean;
@@ -134,6 +139,10 @@ type TangramTouchControls = {
 
 function buildJumpAudit(level: TangramLevelDefinition, character: TangramCharacterDefinition): JumpAudit {
   return buildTangramJumpAudit(level, character.movement);
+}
+
+function formatBest(best: TangramLevelBest | undefined): string {
+  return best ? `Personal best: ${best.badgesCollected} badges • ${best.durationSeconds}s • ${best.falls} falls` : 'No personal best yet';
 }
 
 function createTouchControls(parent: HTMLElement): TangramTouchControls {
@@ -342,11 +351,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     this.simulation.collected.fill(true);
     this.simulation.badgesCollected = this.collectibles.length;
     this.simulation.checkpointActivated = true;
-    this.simulation.respawnPoint = {
-      x: this.level.checkpoint.x + 12,
-      y: this.level.checkpoint.y - 8,
-      label: this.level.checkpoint.label,
-    };
+    this.simulation.respawnPoint = getTangramCheckpointRespawn(this.level) ?? this.simulation.respawnPoint;
     this.simulation.player.x = this.level.goal.x;
     this.simulation.player.y = this.level.goal.y;
     if (this.simulation.boss) {
@@ -921,7 +926,7 @@ function createPauseButton(parent: HTMLElement, onPause: () => void): {
 
 function createPauseOverlay(
   parent: HTMLElement,
-  actions: { onResume: () => void; onMap: () => void },
+  actions: { onResume: () => void; onMap: () => void; onRestart: () => void },
 ): { overlay: HTMLDivElement; show: () => void; hide: () => void } {
   const overlay = document.createElement('div');
   overlay.className = 'tangram-platformer-overlay tangram-platformer-overlay--pause';
@@ -933,11 +938,13 @@ function createPauseOverlay(
       <p class="tangram-platformer-copy">The simulation is frozen. Take a breath, then jump back into the route.</p>
       <div class="tangram-platformer-action-row">
         <button class="tangram-platformer-button" type="button" data-action="resume">Resume run</button>
+        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-action="restart">Restart level</button>
         <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-action="map">Back to school map</button>
       </div>
     </section>`;
   parent.append(overlay);
   overlay.querySelector<HTMLButtonElement>('[data-action="resume"]')?.addEventListener('click', actions.onResume);
+  overlay.querySelector<HTMLButtonElement>('[data-action="restart"]')?.addEventListener('click', actions.onRestart);
   overlay.querySelector<HTMLButtonElement>('[data-action="map"]')?.addEventListener('click', actions.onMap);
   return {
     overlay,
@@ -969,6 +976,88 @@ function createAudioToggle(
   return { setMuted };
 }
 
+function createChildHelpPanel(
+  parent: HTMLElement,
+  options: {
+    reducedMotion: boolean;
+    playtestEnabled: boolean;
+    onReducedMotion: (reduced: boolean) => void;
+    onPlaytest: (enabled: boolean) => void;
+    onReset: () => void;
+  },
+): {
+  setReducedMotion: (reduced: boolean) => void;
+  setPlaytestEnabled: (enabled: boolean) => void;
+} {
+  const openButton = document.createElement('button');
+  openButton.className = 'tangram-platformer-help-button';
+  openButton.type = 'button';
+  openButton.textContent = 'How to play';
+  openButton.setAttribute('aria-label', 'Open how to play and settings');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'tangram-platformer-overlay tangram-platformer-overlay--help';
+  overlay.hidden = true;
+  overlay.innerHTML = `
+    <section class="tangram-platformer-panel">
+      <p class="tangram-platformer-kicker">Tangram helper</p>
+      <h2>How to play</h2>
+      <p class="tangram-platformer-copy">Move, jump, collect badges, and ring the bell. Falling is okay: checkpoints remember your place.</p>
+      <div class="tangram-platformer-help-list">
+        <p><strong>Keyboard</strong><br>Arrow keys or A/D move. Space, W, or Up jumps.</p>
+        <p><strong>Touch</strong><br>Use the big buttons on the screen to move and jump.</p>
+        <p><strong>Pause</strong><br>Press P or Escape, or choose Pause.</p>
+      </div>
+      <div class="tangram-platformer-action-row tangram-platformer-action-row--settings">
+        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-help-action="motion"></button>
+        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-help-action="playtest"></button>
+        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-help-action="reset">Reset campaign</button>
+        <button class="tangram-platformer-button" type="button" data-help-action="close">Close</button>
+      </div>
+    </section>`;
+  parent.append(openButton, overlay);
+
+  const motionButton = overlay.querySelector<HTMLButtonElement>('[data-help-action="motion"]');
+  const playtestButton = overlay.querySelector<HTMLButtonElement>('[data-help-action="playtest"]');
+  const setReducedMotion = (reduced: boolean): void => {
+    if (!motionButton) return;
+    motionButton.textContent = reduced ? 'Motion: Reduced' : 'Motion: Normal';
+    motionButton.setAttribute('aria-pressed', String(reduced));
+  };
+  const setPlaytestEnabled = (enabled: boolean): void => {
+    if (!playtestButton) return;
+    playtestButton.textContent = enabled ? 'Route notes: On' : 'Route notes: Off';
+    playtestButton.setAttribute('aria-pressed', String(enabled));
+  };
+  openButton.addEventListener('click', () => {
+    overlay.hidden = false;
+    overlay.querySelector<HTMLButtonElement>('[data-help-action="close"]')?.focus();
+  });
+  overlay.querySelector<HTMLButtonElement>('[data-help-action="close"]')?.addEventListener('click', () => {
+    overlay.hidden = true;
+    openButton.focus();
+  });
+  motionButton?.addEventListener('click', () => {
+    const reduced = motionButton.getAttribute('aria-pressed') !== 'true';
+    setReducedMotion(reduced);
+    options.onReducedMotion(reduced);
+  });
+  playtestButton?.addEventListener('click', () => {
+    const enabled = playtestButton.getAttribute('aria-pressed') !== 'true';
+    setPlaytestEnabled(enabled);
+    options.onPlaytest(enabled);
+  });
+  overlay.querySelector<HTMLButtonElement>('[data-help-action="reset"]')?.addEventListener('click', () => {
+    if (window.confirm('Reset the school map and start again?')) {
+      overlay.hidden = true;
+      options.onReset();
+    }
+  });
+  setReducedMotion(options.reducedMotion);
+  setPlaytestEnabled(options.playtestEnabled);
+  return { setReducedMotion, setPlaytestEnabled };
+}
+
 function createCharacterSelect(
   parent: HTMLElement,
   selectedCharacterId: TangramCharacterId,
@@ -988,14 +1077,14 @@ function createCharacterSelect(
   startButton.textContent = 'Open school map';
   startButton.addEventListener('click', onStart);
   title.innerHTML = `
-    <p class="tangram-platformer-kicker">Expanded Phaser platformer</p>
+    <p class="tangram-platformer-kicker">Tangram school adventure</p>
     <h2>Penguins of Tangram</h2>
     <p class="tangram-platformer-copy">
-      Choose your Tangram classmate, travel across five themed school zones, collect every badge,
-      discover secret routes, and ring the final festival bell.
+      Pick a classmate, run and jump through five school zones, collect badges,
+      and ring the festival bell.
     </p>
     <p class="tangram-platformer-copy tangram-platformer-copy--soft">
-      Each class now has a light movement perk, from Kangaroo's bigger jumps to Lion's faster dash.
+      Every class is fun to play. Try different classmates to find your favorite.
     </p>`;
   const buttons = PLAYABLE_CHARACTERS.map((character) => {
     const button = document.createElement('button');
@@ -1033,7 +1122,12 @@ function createCampaignMap(
   onStartLevel: (id: TangramLevelId) => void,
 ): {
   overlay: HTMLDivElement;
-  render: (selectedLevelId: TangramLevelId, unlocked: readonly TangramLevelId[], completed: readonly TangramLevelId[]) => void;
+  render: (
+    selectedLevelId: TangramLevelId,
+    unlocked: readonly TangramLevelId[],
+    completed: readonly TangramLevelId[],
+    bestByLevel: Partial<Record<TangramLevelId, TangramLevelBest>>,
+  ) => void;
 } {
   const overlay = document.createElement('div');
   overlay.className = 'tangram-platformer-overlay';
@@ -1043,13 +1137,18 @@ function createCampaignMap(
   panel.innerHTML = `
     <p class="tangram-platformer-kicker">School map</p>
     <h2>Five-zone adventure</h2>
-    <p class="tangram-platformer-copy">Complete each zone to unlock the next class route and finish the school festival run.</p>`;
+    <p class="tangram-platformer-copy">Finish a zone to open the next one. You can replay any finished zone whenever you like.</p>`;
   const grid = document.createElement('div');
   grid.className = 'story-chapter-grid story-chapter-grid--map';
   panel.append(grid);
   overlay.append(panel);
   parent.append(overlay);
-  const render = (selectedLevelId: TangramLevelId, unlocked: readonly TangramLevelId[], completed: readonly TangramLevelId[]): void => {
+  const render = (
+    selectedLevelId: TangramLevelId,
+    unlocked: readonly TangramLevelId[],
+    completed: readonly TangramLevelId[],
+    bestByLevel: Partial<Record<TangramLevelId, TangramLevelBest>>,
+  ): void => {
     const unlockedSet = new Set(unlocked);
     const completedSet = new Set(completed);
     grid.innerHTML = CAMPAIGN_LEVELS.map((level, index) => {
@@ -1069,6 +1168,7 @@ function createCampaignMap(
           <span class="story-chapter-title">${level.title}</span>
           <span class="story-chapter-copy">${level.summary}</span>
           <span class="story-chapter-meta">${isCompleted ? 'Completed' : isUnlocked ? 'Unlocked' : 'Locked'} • ${level.collectibles.length} badges</span>
+          <span class="story-chapter-meta">${formatBest(bestByLevel[level.id])}</span>
         </button>`;
     }).join('');
     for (const button of grid.querySelectorAll<HTMLButtonElement>('[data-level-id]')) {
@@ -1088,7 +1188,7 @@ function createCompletionOverlay(
   },
 ): {
   overlay: HTMLDivElement;
-  show: (summary: LevelSummary) => void;
+  show: (summary: LevelSummary, personalBest?: TangramLevelBest) => void;
 } {
   const overlay = document.createElement('div');
   overlay.className = 'tangram-platformer-overlay tangram-platformer-overlay--complete';
@@ -1104,6 +1204,7 @@ function createCompletionOverlay(
         <span class="tangram-platformer-chip"><strong>Checkpoint</strong><span data-field="checkpoint"></span></span>
         <span class="tangram-platformer-chip"><strong>Falls</strong><span data-field="falls"></span></span>
       </div>
+      <p class="tangram-platformer-copy tangram-platformer-copy--soft" data-field="best"></p>
       <div class="tangram-platformer-action-row">
         <button class="tangram-platformer-button" type="button" data-action="next">Next zone</button>
         <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-action="map">Back to school map</button>
@@ -1123,10 +1224,11 @@ function createCompletionOverlay(
   const time = overlay.querySelector('[data-field="time"]') as HTMLSpanElement;
   const checkpoint = overlay.querySelector('[data-field="checkpoint"]') as HTMLSpanElement;
   const falls = overlay.querySelector('[data-field="falls"]') as HTMLSpanElement;
+  const best = overlay.querySelector('[data-field="best"]') as HTMLParagraphElement;
   const nextButton = overlay.querySelector('[data-action="next"]') as HTMLButtonElement;
   return {
     overlay,
-    show(summary) {
+    show(summary, personalBest?: TangramLevelBest) {
       const nextLevel = summary.nextLevelId ? getTangramLevel(summary.nextLevelId) : null;
       kicker.textContent = summary.campaignComplete ? 'Campaign complete' : 'Zone complete';
       title.textContent = summary.campaignComplete ? 'School festival complete!' : `${summary.levelTitle} cleared!`;
@@ -1137,6 +1239,7 @@ function createCompletionOverlay(
       time.textContent = `${summary.durationSeconds}s`;
       checkpoint.textContent = summary.checkpointLabel;
       falls.textContent = String(summary.falls);
+      best.textContent = formatBest(personalBest);
       nextButton.hidden = summary.nextLevelId === null;
       nextButton.textContent = summary.campaignComplete ? 'Back to school map' : `Next: ${nextLevel?.kicker ?? 'Next zone'}`;
       overlay.hidden = false;
@@ -1193,15 +1296,17 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
   let currentState: HookStateName = 'select';
   let pendingSummary: LevelSummary | null = null;
   let isPaused = false;
+  let audioMuted = progress.audioMuted;
+  let reducedMotion = progress.reducedMotion || (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false);
+  let playtestEnabled = progress.playtestEnabled;
 
   const pauseButton = createPauseButton(parent, () => togglePause());
   const pauseOverlay = createPauseOverlay(parent, {
     onResume: () => togglePause(false),
+    onRestart: () => startLevel(selectedLevelId),
     onMap: () => showMap(selectedLevelId),
   });
-  let audioMuted = progress.audioMuted;
-  const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
-  createAudioToggle(parent, audioMuted, (muted) => {
+  const audioToggle = createAudioToggle(parent, audioMuted, (muted) => {
     audioMuted = muted;
     progress = { ...progress, audioMuted };
     saveTangramProgress(progress);
@@ -1231,6 +1336,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
       poweredUp: lastHookState.poweredUp,
       audioMuted,
       reducedMotion,
+      playtestEnabled,
       bossActive: lastHookState.bossActive ?? false,
       bossHitsRemaining: lastHookState.bossHitsRemaining ?? 0,
       bossWarning: lastHookState.bossWarning ?? false,
@@ -1279,6 +1385,38 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
     () => showMap(selectedLevelId),
   );
 
+  const helpPanel = createChildHelpPanel(parent, {
+    reducedMotion,
+    playtestEnabled,
+    onReducedMotion(reduced) {
+      reducedMotion = reduced;
+      progress = { ...progress, reducedMotion };
+      saveTangramProgress(progress);
+      emitHook();
+    },
+    onPlaytest(enabled) {
+      playtestEnabled = enabled;
+      progress = { ...progress, playtestEnabled };
+      saveTangramProgress(progress);
+      emitHook();
+    },
+    onReset() {
+      progress = resetTangramProgress();
+      selectedCharacterId = progress.selectedCharacterId;
+      selectedLevelId = FIRST_LEVEL_ID;
+      completedLevelIds.splice(0, completedLevelIds.length);
+      unlockedLevelIds.splice(0, unlockedLevelIds.length, ...getUnlockedTangramLevelIds([]));
+      audioMuted = progress.audioMuted;
+      reducedMotion = progress.reducedMotion;
+      playtestEnabled = progress.playtestEnabled;
+      audioToggle.setMuted(audioMuted);
+      helpPanel.setReducedMotion(reducedMotion);
+      helpPanel.setPlaytestEnabled(playtestEnabled);
+      select.updateSelection(selectedCharacterId);
+      showCharacterSelect();
+    },
+  });
+
   const updateHudForScene = (snapshot: HudSnapshot): void => {
     hud.character.textContent = `${snapshot.characterName} • ${snapshot.characterClass}`;
     hud.zone.textContent = snapshot.zoneTitle;
@@ -1323,7 +1461,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
     selectedLevelId = unlockedLevelIds.includes(levelId) ? levelId : unlockedLevelIds[unlockedLevelIds.length - 1];
     select.overlay.hidden = true;
     completion.overlay.hidden = true;
-    map.render(selectedLevelId, unlockedLevelIds, completedLevelIds);
+    map.render(selectedLevelId, unlockedLevelIds, completedLevelIds, progress.bestByLevel);
     map.overlay.hidden = false;
     currentState = 'map';
     lastHookState = {
@@ -1352,6 +1490,12 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
         durationSeconds: pendingSummary.durationSeconds,
         falls: pendingSummary.falls,
       });
+      progress = recordTangramPlaytest(
+        progress,
+        levelId,
+        pendingSummary.durationSeconds,
+        pendingSummary.falls,
+      );
       saveTangramProgress(progress);
     }
   }
@@ -1392,7 +1536,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
           poweredUp: false,
           jumpAudit: buildJumpAudit(level, character),
         };
-        completion.show(summary);
+        completion.show(summary, progress.bestByLevel[levelId]);
         emitHook();
       },
     }, { muted: audioMuted, reducedMotion });

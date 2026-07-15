@@ -4,6 +4,7 @@ import {
   TANGRAM_MAX_FRAME_DT,
   TANGRAM_MAX_SUBSTEPS,
   createTangramPlatformerState,
+  getTangramCheckpointRespawn,
   isTangramPoweredUp,
   tickTangramPlatformer,
   type TangramMovementSpec,
@@ -67,6 +68,29 @@ function simulate(renderHz: number): ReturnType<typeof createTangramPlatformerSt
 }
 
 describe('Tangram platformer simulation', () => {
+  it('places a checkpoint respawn on its supporting platform', () => {
+    const simulationLevel = level();
+    expect(getTangramCheckpointRespawn(simulationLevel)).toEqual({
+      x: 1512,
+      y: 376,
+      label: 'Checkpoint',
+    });
+
+    const state = createTangramPlatformerState(simulationLevel);
+    state.player.x = 1500;
+    state.player.y = 300;
+    const events: TangramPlatformerEvent[] = [];
+    tickTangramPlatformer(state, simulationLevel, movement, { direction: 0, jumpPressed: false }, TANGRAM_FIXED_STEP, events);
+    expect(state.checkpointActivated).toBe(true);
+    expect(state.respawnPoint.y).toBe(376);
+
+    state.player.y = simulationLevel.worldHeight + 200;
+    tickTangramPlatformer(state, simulationLevel, movement, { direction: 0, jumpPressed: false }, TANGRAM_FIXED_STEP, events);
+    tickTangramPlatformer(state, simulationLevel, movement, { direction: 0, jumpPressed: false }, TANGRAM_FIXED_STEP, events);
+    expect(state.player.y).toBe(376);
+    expect(state.player.grounded).toBe(true);
+  });
+
   it('reaches the same state across 30, 60, and 120 Hz rendering', () => {
     const at30 = simulate(30);
     const at60 = simulate(60);

@@ -32,6 +32,38 @@ test('Penguins pause freezes the simulation and resume restores it', async ({ pa
   await expect(page.getByRole('heading', { name: 'Parade paused' })).toBeHidden();
 });
 
+test('Penguins can restart the current level from its starting point', async ({ page }) => {
+  await launchPenguinsOfTangram(page);
+  await page.evaluate(() => {
+    const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game.scene.getScene('PenguinsOfTangram') as {
+      simulation: { player: { x: number }; checkpointActivated: boolean; falls: number };
+    };
+    scene.simulation.player.x = 900;
+    scene.simulation.checkpointActivated = true;
+    scene.simulation.falls = 2;
+  });
+  await page.getByRole('button', { name: 'Pause' }).click();
+  await page.getByRole('button', { name: 'Restart level' }).click();
+  await page.waitForFunction(() => (
+    (window as unknown as { __penguinsOfTangram?: { state?: string } }).__penguinsOfTangram?.state === 'running'
+  ));
+  const restarted = await page.evaluate(() => {
+    const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game.scene.getScene('PenguinsOfTangram') as {
+      level: { start: { x: number } };
+      simulation: { player: { x: number }; checkpointActivated: boolean; falls: number };
+    };
+    return {
+      checkpointActivated: scene.simulation.checkpointActivated,
+      falls: scene.simulation.falls,
+      x: scene.simulation.player.x,
+      startX: scene.level.start.x,
+    };
+  });
+  expect(restarted).toEqual({ checkpointActivated: false, falls: 0, x: restarted.startX, startX: restarted.startX });
+});
+
 test('Penguins persists mute and campaign progress across reloads', async ({ page }) => {
   await launchPenguinsOfTangram(page, 'Lion');
 
@@ -43,15 +75,35 @@ test('Penguins persists mute and campaign progress across reloads', async ({ pag
     hook?.completeCurrentLevel?.();
   });
   await expect(page.getByText('School Gate Morning Run cleared!')).toBeVisible();
+  await expect(page.getByText(/Personal best:/)).toBeVisible();
 
   await page.reload();
   await page.getByRole('button', { name: 'Play Penguins of Tangram' }).click();
   await expect(page.getByRole('heading', { name: 'Penguins of Tangram' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Turn sound on' })).toBeVisible();
   await page.waitForFunction(() => {
-    const hook = (window as unknown as { __penguinsOfTangram?: { completedLevelIds?: string[] } })
+    const hook = (window as unknown as {
+      __penguinsOfTangram?: { state?: string; completedLevelIds?: string[] };
+    })
       .__penguinsOfTangram;
     return hook?.completedLevelIds?.includes('school-gate-morning-run') === true;
+  });
+  await page.getByRole('button', { name: 'Open school map' }).click();
+  await expect(page.getByText(/Personal best:/)).toBeVisible();
+  await page.getByRole('button', { name: 'How to play' }).click();
+  await expect(page.getByRole('heading', { name: 'How to play' })).toBeVisible();
+  await page.getByRole('button', { name: 'Motion: Normal' }).click();
+  await page.getByRole('button', { name: 'Route notes: Off' }).click();
+  await expect(page.getByRole('button', { name: 'Motion: Reduced' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Route notes: On' })).toBeVisible();
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: 'Reset campaign' }).click();
+  await page.waitForFunction(() => {
+    const hook = (window as unknown as {
+      __penguinsOfTangram?: { state?: string; completedLevelIds?: string[] };
+    })
+      .__penguinsOfTangram;
+    return hook?.state === 'select' && hook.completedLevelIds?.length === 0;
   });
 });
 

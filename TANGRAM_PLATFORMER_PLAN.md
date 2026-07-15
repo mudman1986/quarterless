@@ -260,47 +260,47 @@ largest-zone render loop.
 - **Art decision:** authored sprite frames remain deferred; procedural Canvas
   textures stay the measured, diffable, no-decode path.
 
-## Roadmap v3
+## Roadmap v3 — child-first release
 
 ### Re-evaluation
 
-The original feature roadmap and the v2 release-hardening pass are finished.
-Tangram is now a complete playable campaign rather than a vertical slice. The
-next risks are content depth, replay value, and observing real player behavior;
-new engine systems should wait until play data demonstrates a need.
+The v2 release-hardening pass is finished. Because Tangram is for children ages
+4–10, v3 prioritizes safe, readable, low-pressure play over leaderboards,
+complex menus, social features, or extra systems. A child should understand the
+next action from the screen, recover quickly from a mistake, and never need an
+account or network connection.
 
-### Phase 9 — Replay and accessibility polish
+### Phase 9 — Friendly play UX
 
-- [ ] add a lightweight in-game accessibility panel for sound, reduced motion,
-  and control reminders
-- [ ] add optional per-zone best-run comparison to the completion and map views
-- [ ] provide a clearly labeled campaign-reset action after confirming the
-  local-storage behavior with playtesters
-- [ ] keep all new settings in the existing versioned progress schema
+- [ ] add a large, discoverable How to play panel with keyboard and touch
+  instructions
+- [ ] make sound, reduced motion, route notes, and reset behavior understandable
+  in the same panel
+- [ ] show personal bests as friendly “your best” reminders, never as public
+  rankings or pressure
+- [ ] confirm campaign reset and keep it local to this device
 
-### Phase 10 — Measured content depth
+### Phase 10 — Safe replay and family playtesting
 
-- [ ] collect opt-in, local-only playtest summaries for falls, completion time,
-  boss attempts, and character selection
-- [ ] tune the weakest zone and character pairing from those summaries
-- [ ] add one replay modifier or finale shortcut only when a measured replay
-  problem justifies it
-- [ ] add one additional authored challenge only after the current five-zone
-  route remains stable for every character
+- [ ] keep route notes opt-in, local-only, bounded, and free of identifiers
+- [ ] use all-character route audits to protect the easiest age-appropriate path
+- [ ] provide replay without locking campaign progress behind a score or timer
+- [ ] tune only from measured local playtest summaries; do not add a shortcut or
+  new challenge without evidence that children need it
 
-### Phase 11 — Distribution and maintenance
+### Phase 11 — Child-safe release maintenance
 
-- [ ] run mobile Safari and Chromium touch checks against the production build
-- [ ] verify audio unlock, mute persistence, and reduced-motion behavior on
-  real-device playtests
-- [ ] keep the Phaser chunk isolated and monitor the Tangram chunk budget
-- [ ] retain deterministic core tests and browser smoke coverage as content
-  changes
+- [ ] keep large touch targets, readable contrast, reduced-motion behavior, and
+  audio unlock fallback covered in production browser checks
+- [ ] keep the Phaser vendor chunk isolated and watch the Tangram chunk budget
+- [ ] retain deterministic core tests and full browser smoke coverage
+- [ ] document that no account, network service, advertising, chat, or tracking
+  is required to play
 
 ### v3 exit criteria
 
-Roadmap v3 is complete when accessibility settings are discoverable, replay
-changes are backed by local playtest evidence, at least one measured content
-improvement ships without route regressions, and production mobile checks stay
-green. Do not add networking, a backend, or an asset pipeline unless a concrete
-release requirement makes one necessary.
+Roadmap v3 is complete when a first-time child can find the controls, pause,
+recover, replay, and reset without adult-only game knowledge; personal progress
+stays local; accessibility settings are discoverable; and mobile production
+checks remain green. New mechanics are deferred until child playtests show a
+clear, age-appropriate need.

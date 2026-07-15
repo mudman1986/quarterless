@@ -21,12 +21,21 @@ export type TangramLevelBest = {
   falls: number;
 };
 
+export type TangramPlaytestSummary = {
+  attempts: number;
+  totalDurationSeconds: number;
+  totalFalls: number;
+};
+
 export interface TangramProgress {
   version: 1;
   selectedCharacterId: TangramCharacterId;
   audioMuted: boolean;
+  reducedMotion: boolean;
+  playtestEnabled: boolean;
   completedLevelIds: TangramLevelId[];
   bestByLevel: Partial<Record<TangramLevelId, TangramLevelBest>>;
+  playtestByLevel: Partial<Record<TangramLevelId, TangramPlaytestSummary>>;
 }
 
 function isTangramLevelId(value: unknown): value is TangramLevelId {
@@ -38,8 +47,11 @@ function defaultProgress(): TangramProgress {
     version: PROGRESS_VERSION,
     selectedCharacterId: DEFAULT_CHARACTER_ID,
     audioMuted: false,
+    reducedMotion: false,
+    playtestEnabled: false,
     completedLevelIds: [],
     bestByLevel: {},
+    playtestByLevel: {},
   };
 }
 
@@ -87,9 +99,42 @@ function normalizeProgress(value: unknown): TangramProgress {
         ? candidate.selectedCharacterId
         : DEFAULT_CHARACTER_ID,
     audioMuted: candidate.audioMuted === true,
+    reducedMotion: candidate.reducedMotion === true,
+    playtestEnabled: candidate.playtestEnabled === true,
     completedLevelIds: [...new Set(completedLevelIds)],
     bestByLevel,
+    playtestByLevel: normalizePlaytestSummaries(candidate.playtestByLevel),
   };
+}
+
+function normalizePlaytestSummaries(
+  value: unknown,
+): Partial<Record<TangramLevelId, TangramPlaytestSummary>> {
+  const summaries: Partial<Record<TangramLevelId, TangramPlaytestSummary>> = {};
+  if (!value || typeof value !== 'object') return summaries;
+  for (const level of CAMPAIGN_LEVELS) {
+    const candidate = (value as Record<string, unknown>)[level.id];
+    if (!candidate || typeof candidate !== 'object') continue;
+    const summary = candidate as Partial<TangramPlaytestSummary>;
+    const attempts = Number(summary.attempts);
+    const totalDurationSeconds = Number(summary.totalDurationSeconds);
+    const totalFalls = Number(summary.totalFalls);
+    if (
+      Number.isFinite(attempts) &&
+      Number.isFinite(totalDurationSeconds) &&
+      Number.isFinite(totalFalls) &&
+      attempts > 0 &&
+      totalDurationSeconds >= 0 &&
+      totalFalls >= 0
+    ) {
+      summaries[level.id] = {
+        attempts: Math.min(20, Math.floor(attempts)),
+        totalDurationSeconds: Math.floor(totalDurationSeconds),
+        totalFalls: Math.floor(totalFalls),
+      };
+    }
+  }
+  return summaries;
 }
 
 export function loadTangramProgress(store: KeyValueStore = safeStorage()): TangramProgress {
@@ -104,6 +149,37 @@ export function loadTangramProgress(store: KeyValueStore = safeStorage()): Tangr
 
 export function saveTangramProgress(progress: TangramProgress, store: KeyValueStore = safeStorage()): void {
   store.setItem(TANGRAM_PROGRESS_KEY, JSON.stringify(normalizeProgress(progress)));
+}
+
+export function resetTangramProgress(store: KeyValueStore = safeStorage()): TangramProgress {
+  const progress = defaultProgress();
+  saveTangramProgress(progress, store);
+  return progress;
+}
+
+export function recordTangramPlaytest(
+  progress: TangramProgress,
+  levelId: TangramLevelId,
+  durationSeconds: number,
+  falls: number,
+): TangramProgress {
+  if (!progress.playtestEnabled) return progress;
+  const previous = progress.playtestByLevel[levelId] ?? {
+    attempts: 0,
+    totalDurationSeconds: 0,
+    totalFalls: 0,
+  };
+  return normalizeProgress({
+    ...progress,
+    playtestByLevel: {
+      ...progress.playtestByLevel,
+      [levelId]: {
+        attempts: Math.min(20, previous.attempts + 1),
+        totalDurationSeconds: previous.totalDurationSeconds + Math.max(0, Math.floor(durationSeconds)),
+        totalFalls: previous.totalFalls + Math.max(0, Math.floor(falls)),
+      },
+    },
+  });
 }
 
 export function getUnlockedTangramLevelIds(completedLevelIds: readonly TangramLevelId[]): TangramLevelId[] {
