@@ -1,4 +1,4 @@
-# Tangram Penguin Platformer Plan
+# Tangram Penguin Platformer — Roadmap v2
 
 ## Current status — 2026-07-15
 
@@ -14,8 +14,18 @@ slice in the arcade launcher:
   and jump, plus state-driven idle, walk, jump, and powered-up character poses.
   Touch controls are shown during gameplay on coarse-pointer devices and remain
   keyboard-compatible.
-- **Still open:** authored sprite frames and audio, persistent campaign progress,
-  and more advanced moving-platform or boss set pieces.
+- **Shipped in the current expanded slice:** validated local campaign persistence
+  (selected class, completed zones, and best run summaries), deterministic
+  moving platforms with player carry behavior, keyboard/button pause and resume,
+  and lightweight animated feedback for badges, enemies, bounce pads, checkpoints,
+  goals, and the power snack.
+- **Shipped to finish Phase 5:** managed procedural audio cues for jumps, landings,
+  badges, power snacks, boss hits, and completion; plus the Sports Day Relay
+  Captain finale with three stomp phases, stun windows, respawn handling, and a
+  locked final bell.
+- **Deliberately deferred:** binary/authored sprite frames remain optional. The
+  current procedural art pipeline is faster to diff, has no decode cost, and
+  matches the repository's asset policy.
 
 The simulation intentionally stays in `src/core/tangramPlatformer.ts`; Phaser only
 renders the scene and forwards keyboard or touch input.
@@ -212,8 +222,12 @@ Start with 3 to 5 themed zones:
 - [x] add progression map
 - [x] add bounce pads and themed set dressing
 - [x] add responsive touch controls
-- [ ] persist campaign progress between visits
-- [ ] add moving platforms, authored audio, and a boss/finale set piece
+- [x] persist campaign progress between visits
+- [x] add deterministic moving platforms and player carry behavior
+- [x] add pause/resume UX without advancing simulation while paused
+- [x] add animated feedback for interactive world objects
+- [x] add managed procedural audio feedback
+- [x] add a boss/finale set piece
 
 ## Name Options
 
@@ -226,8 +240,39 @@ Start with 3 to 5 themed zones:
 - **The Tangram Penguins**
 - **Penguin Paths of Tangram**
 
-## Next recommended slice
+## Roadmap v2
 
-Add local campaign persistence next, then authored audio or sprite frames if the
-visual polish still needs them. Keep both behind the existing pure-core /
-thin-render split; do not move gameplay rules into Phaser.
+### Re-evaluation
+
+The original expansion phase is complete. Tangram now has a complete five-zone
+campaign loop, six movement variants, persistent progression, deterministic
+moving traversal, pause-safe fixed-step simulation, procedural animation,
+procedural audio, and a distinct final encounter. The remaining risk is not
+missing framework code; it is finish quality and release confidence.
+
+### Phase 6 — Finish quality
+
+- [ ] add a mute/audio preference that persists beside campaign progress
+- [ ] add stronger boss telegraphs without changing the core collision model
+- [ ] add reduced-motion handling for world feedback animations
+- [ ] expose final encounter progress in the test hook
+
+### Phase 7 — Content tuning
+
+- [ ] playtest each zone with every character movement profile
+- [ ] tune moving-platform routes and boss spacing from collected telemetry
+- [ ] add one optional finale shortcut only if it improves replay value
+- [ ] keep authored sprite frames out of scope unless procedural art becomes a measured bottleneck
+
+### Phase 8 — Release hardening
+
+- [ ] add browser coverage for pause/resume, persistence reload, and boss gating
+- [ ] verify coarse-pointer controls and audio unlock behavior on mobile browsers
+- [ ] run a production performance pass against the largest zone
+- [ ] document the final player controls and campaign reset behavior
+
+### v2 exit criteria
+
+Roadmap v2 is complete when the accessibility, browser regression, persistence
+reload, boss-gating, and production-performance checks are green. Do not add a
+new content system before those checks expose a real need.

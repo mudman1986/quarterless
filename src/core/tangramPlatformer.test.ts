@@ -136,4 +136,98 @@ describe('Tangram platformer simulation', () => {
     expect(state.powerRemaining).toBeCloseTo(0, 8);
     expect(isTangramPoweredUp(state)).toBe(false);
   });
+
+  it('moves platforms deterministically and carries a grounded player', () => {
+    const simulationLevel: TangramSimulationLevel = {
+      ...level(),
+      platforms: [{ x: 0, y: 448, width: 2000, height: 92 }],
+      movingPlatforms: [{ x: 100, y: 300, width: 140, height: 20, axis: 'x', distance: 80, speed: 120 }],
+    };
+    const state = createTangramPlatformerState(simulationLevel);
+    const events: TangramPlatformerEvent[] = [];
+    state.player.x = 120;
+    state.player.y = 228;
+    state.player.grounded = true;
+
+    tickTangramPlatformer(
+      state,
+      simulationLevel,
+      movement,
+      { direction: 0, jumpPressed: false },
+      TANGRAM_FIXED_STEP,
+      events,
+    );
+
+    expect(state.movingPlatforms[0].x).toBeGreaterThan(100);
+    expect(state.player.x).toBeGreaterThan(120);
+
+    for (let tick = 0; tick < 50; tick += 1) {
+      tickTangramPlatformer(
+        state,
+        simulationLevel,
+        movement,
+        { direction: 0, jumpPressed: false },
+        TANGRAM_FIXED_STEP,
+        events,
+      );
+    }
+    expect(state.movingPlatforms[0].direction).toBe(-1);
+  });
+
+  it('requires three clean stomps to clear a finale boss', () => {
+    const simulationLevel: TangramSimulationLevel = {
+      ...level(),
+      platforms: [{ x: 0, y: 448, width: 2000, height: 92 }],
+      boss: { x: 140, y: 376, width: 72, height: 72, minX: 140, maxX: 240, speed: 0, hits: 3, label: 'Relay Captain' },
+    };
+    const state = createTangramPlatformerState(simulationLevel);
+    const events: TangramPlatformerEvent[] = [];
+    state.player.x = 150;
+    state.player.y = 304;
+    state.player.velocityY = 1000;
+
+    tickTangramPlatformer(
+      state,
+      simulationLevel,
+      movement,
+      { direction: 0, jumpPressed: false },
+      TANGRAM_FIXED_STEP,
+      events,
+    );
+
+    expect(state.boss?.hitsRemaining).toBe(2);
+    expect(state.boss?.active).toBe(true);
+
+    state.player.y = 304;
+    state.player.velocityY = 1000;
+    for (let hit = 0; hit < 2; hit += 1) {
+      state.player.x = 500;
+      state.player.y = 376;
+      state.player.grounded = true;
+      for (let tick = 0; tick < 48; tick += 1) {
+        tickTangramPlatformer(
+          state,
+          simulationLevel,
+          movement,
+          { direction: 0, jumpPressed: false },
+          TANGRAM_FIXED_STEP,
+          events,
+        );
+      }
+      state.player.x = 150;
+      state.player.y = 304;
+      state.player.velocityY = 1000;
+      tickTangramPlatformer(
+        state,
+        simulationLevel,
+        movement,
+        { direction: 0, jumpPressed: false },
+        TANGRAM_FIXED_STEP,
+        events,
+      );
+    }
+
+    expect(state.boss?.hitsRemaining).toBe(0);
+    expect(state.boss?.active).toBe(false);
+  });
 });

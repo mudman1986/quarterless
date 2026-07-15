@@ -12,6 +12,8 @@ export type EnemyDefinition = {
   speed: number;
 };
 export type BouncePad = Rect & { label: string; strength: number; color: number };
+export type MovingPlatform = Platform & { axis: 'x' | 'y'; distance: number; speed: number };
+export type BossPlacement = Rect & { minX: number; maxX: number; speed: number; hits: number; label: string };
 
 export type TangramLevelId =
   | 'school-gate-morning-run'
@@ -35,6 +37,8 @@ export interface TangramLevelDefinition {
   landmark: 'school' | 'playground' | 'classroom' | 'library' | 'stadium';
   signs: ReadonlyArray<{ x: number; label: string; color: string }>;
   platforms: readonly Platform[];
+  movingPlatforms?: readonly MovingPlatform[];
+  boss?: BossPlacement;
   collectibles: readonly CollectiblePlacement[];
   hazards: readonly HazardPlacement[];
   enemies: readonly EnemyDefinition[];
@@ -150,6 +154,9 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
       { x: 2620, y: 288, width: 140, height: 20, color: 0x8dc0ff, trim: 0x5f8ee0, label: 'Climber crown' },
       ground(2820, 300),
     ],
+    movingPlatforms: [
+      { x: 1040, y: 350, width: 132, height: 20, color: 0xff8f66, trim: 0xe56d4f, label: 'Traveling slide', axis: 'x', distance: 220, speed: 92 },
+    ],
     collectibles: [
       { x: 200, y: 386, label: 'Gate badge' },
       { x: 520, y: 338, label: 'Slide badge' },
@@ -214,6 +221,9 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
       { x: 2460, y: 280, width: 130, height: 20, color: 0x8dc0ff, trim: 0x5f8ee0, label: 'Shelf 2' },
       { x: 2670, y: 220, width: 150, height: 20, color: 0xffb3c7, trim: 0xff8ea8, label: 'Secret rope route', secret: true },
       ground(2760, 260),
+    ],
+    movingPlatforms: [
+      { x: 1040, y: 350, width: 132, height: 20, color: 0x71d2b6, trim: 0x4aa98d, label: 'Rolling desk', axis: 'x', distance: 220, speed: 84 },
     ],
     collectibles: [
       { x: 180, y: 386, label: 'Door badge' },
@@ -343,6 +353,9 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
       ground(3080, 280),
       { x: 3320, y: 326, width: 140, height: 20, color: 0x8dc0ff, trim: 0x5f8ee0, label: 'Final podium' },
     ],
+    movingPlatforms: [
+      { x: 1160, y: 350, width: 132, height: 20, color: 0xff8f66, trim: 0xe56d4f, label: 'Long-jump lift', axis: 'y', distance: 92, speed: 56 },
+    ],
     collectibles: [
       { x: 180, y: 386, label: 'Track badge' },
       { x: 540, y: 344, label: 'Hurdle badge 1' },
@@ -375,6 +388,7 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
     checkpoint: { x: 2450, y: 308, width: 54, height: 126, label: 'Podium Midway' },
     goal: { x: 3440, y: 244, width: 84, height: 170, label: 'Sports Day Bell' },
     powerup: { x: 2858, y: 182, width: 44, height: 56, label: 'Victory Snack' },
+    boss: { x: 3090, y: 376, width: 72, height: 72, minX: 3060, maxX: 3290, speed: 72, hits: 3, label: 'Relay Captain' },
   },
 ] as const;
 

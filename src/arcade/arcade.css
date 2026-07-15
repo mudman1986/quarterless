@@ -894,6 +894,33 @@ button {
   outline-offset: 3px;
 }
 
+.tangram-platformer-pause-button {
+  position: absolute;
+  top: max(14px, env(safe-area-inset-top));
+  right: max(14px, env(safe-area-inset-right));
+  z-index: 16;
+  min-height: 44px;
+  border: 1px solid rgba(16, 48, 71, 0.24);
+  border-radius: 12px;
+  padding: 0 16px;
+  background: rgba(255, 255, 255, 0.86);
+  color: #103047;
+  cursor: pointer;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.tangram-platformer-pause-button:active {
+  background: #ffef8e;
+  transform: translateY(1px);
+}
+
+.tangram-platformer-pause-button:focus-visible {
+  outline: 3px solid #103047;
+  outline-offset: 3px;
+}
+
 .tangram-platformer-chip-grid,
 .tangram-platformer-summary-grid {
   display: grid;

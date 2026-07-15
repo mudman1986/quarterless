@@ -88,6 +88,28 @@ describe('Sound', () => {
     expect(managedContext.oscillators[1]?.start).toHaveBeenCalledWith(12.22);
   });
 
+  it('schedules the small platformer cue set through the managed output', () => {
+    const managedContext = new FakeAudioContext();
+    const sound = new Sound({
+      context: managedContext as unknown as AudioContext,
+      destination: managedContext.destination as unknown as AudioNode,
+    });
+
+    sound.collect();
+    sound.powerup();
+    sound.bossHit();
+
+    expect(managedContext.oscillators).toHaveLength(6);
+    expect(managedContext.oscillators.map((oscillator) => oscillator.frequency.value)).toEqual([
+      660,
+      990,
+      523,
+      659,
+      784,
+      120,
+    ]);
+  });
+
   it('does not create an independent AudioContext', () => {
     let globalContextCount = 0;
     class GlobalAudioContext extends FakeAudioContext {

@@ -96,6 +96,34 @@ export class Sound {
     this.blip(220, 0.08, 'square', 0.035);
   }
 
+  /** A light step-up cue for platformer landings. */
+  land(): void {
+    this.blip(180, 0.06, 'sine', 0.025);
+  }
+
+  /** A quick lift cue for a platformer jump. */
+  jump(): void {
+    this.blip(330, 0.1, 'triangle', 0.03);
+  }
+
+  /** A bright cue for collecting a Tangram badge. */
+  collect(): void {
+    this.blip(660, 0.07, 'triangle', 0.035);
+    this.blip(990, 0.1, 'triangle', 0.03, 0.06);
+  }
+
+  /** A short flourish for a temporary power-up. */
+  powerup(): void {
+    this.blip(523, 0.08, 'triangle', 0.035);
+    this.blip(659, 0.08, 'triangle', 0.035, 0.07);
+    this.blip(784, 0.12, 'triangle', 0.035, 0.14);
+  }
+
+  /** A low confirmation cue for a boss stomp. */
+  bossHit(): void {
+    this.blip(120, 0.16, 'square', 0.05);
+  }
+
   /** A low thud for an elimination. */
   hit(): void {
     this.blip(130, 0.14, 'sawtooth', 0.05);
