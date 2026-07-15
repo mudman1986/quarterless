@@ -6,6 +6,7 @@ interface ArcadeGameTestHook {
 
 type TangramTestHook = {
   state?: string;
+  language?: 'nl' | 'en';
   audioMuted?: boolean;
   reducedMotion?: boolean;
   playtestEnabled?: boolean;
@@ -113,6 +114,12 @@ export async function launchPenguinsOfTangram(
   level: string = 'School Gate Morning Run',
 ): Promise<void> {
   await page.goto('/quarterless/');
+  await page.evaluate(() => {
+    const key = 'penguins-of-tangram.progress';
+    const raw = localStorage.getItem(key);
+    const progress = raw ? JSON.parse(raw) as Record<string, unknown> : { version: 1 };
+    localStorage.setItem(key, JSON.stringify({ ...progress, version: 1, language: 'en' }));
+  });
   await expect(page.getByRole('heading', { name: 'Retro Arcade' })).toBeVisible({ timeout: 10_000 });
   await page.getByRole('button', { name: 'Play Penguins of Tangram' }).click();
   await expect(page.getByRole('heading', { name: 'Penguins of Tangram' })).toBeVisible({

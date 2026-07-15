@@ -3,6 +3,27 @@ import { launchPenguinsOfTangram } from './helpers';
 
 const PROGRESS_KEY = 'penguins-of-tangram.progress';
 
+test('Penguins defaults to Dutch and can switch to English with persistence', async ({ page }) => {
+  await page.goto('/quarterless/');
+  await page.getByRole('button', { name: 'Play Penguins of Tangram' }).click();
+  await expect(page.getByRole('heading', { name: 'Penguins of Tangram' })).toBeVisible();
+  await page.waitForFunction(() => (
+    (window as unknown as { __penguinsOfTangram?: { language?: string } }).__penguinsOfTangram?.language === 'nl'
+  ));
+  await page.getByRole('button', { name: 'Zo speel je' }).click();
+  await expect(page.getByRole('heading', { name: 'Zo speel je' })).toBeVisible();
+  await page.getByRole('button', { name: 'Nederlands / English' }).click();
+  await page.waitForFunction(() => (
+    (window as unknown as { __penguinsOfTangram?: { language?: string } }).__penguinsOfTangram?.language === 'en'
+  ));
+  await expect(page.getByRole('heading', { name: 'How to play' })).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: 'Play Penguins of Tangram' }).click();
+  await expect(page.getByRole('button', { name: 'How to play' })).toBeVisible();
+  await page.getByRole('button', { name: 'How to play' }).click();
+  await expect(page.getByRole('heading', { name: 'How to play' })).toBeVisible();
+});
+
 test('Penguins pause freezes the simulation and resume restores it', async ({ page }) => {
   await launchPenguinsOfTangram(page);
 
@@ -132,6 +153,7 @@ test('Sports Day exposes boss telegraph state and locks the final bell', async (
       JSON.stringify({
         version: 1,
         selectedCharacterId: 'penguin',
+        language: 'en',
         audioMuted: false,
         completedLevelIds: [
           'school-gate-morning-run',
@@ -197,6 +219,7 @@ test('Sports Day keeps the largest zone render loop responsive', async ({ page }
       JSON.stringify({
         version: 1,
         selectedCharacterId: 'penguin',
+        language: 'en',
         audioMuted: true,
         completedLevelIds: [
           'school-gate-morning-run',

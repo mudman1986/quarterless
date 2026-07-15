@@ -1,4 +1,4 @@
-# Tangram Penguin Platformer — Roadmap v3
+# Penguins of Tangram — Roadmap v5
 
 ## Current status — 2026-07-15
 
@@ -23,6 +23,11 @@ slice in the arcade launcher:
   badges, power snacks, boss hits, and completion; plus the Sports Day Relay
   Captain finale with three stomp phases, stun windows, respawn handling, and a
   locked final bell.
+- **Shipped in the language slice:** Dutch is the default language, English is
+  available from the child-friendly settings panel, and the choice persists
+  locally across visits. Authored level text, character profiles, HUD labels,
+  Phaser scene labels, and simulation hints are translated without putting
+  localization code in the deterministic core.
 - **Deliberately deferred:** binary/authored sprite frames remain optional. The
   current procedural art pipeline is faster to diff, has no decode cost, and
   matches the repository's asset policy.
@@ -376,6 +381,15 @@ V4 now records just enough local evidence to guide a short adult-supervised
 playtest. V5 should turn those observations into small content edits, then stop.
 The game remains a quiet, local activity for ages 4–10; no online analytics or
 competitive layer is justified.
+
+### Phase 19 — Language access
+
+- [x] default new players to Dutch while preserving English as an option
+- [x] persist and validate the language choice with the existing version-1 save
+- [x] expose the language switch in the existing How to play/settings panel
+- [x] translate authored routes, character choices, HUD, overlays, and dynamic
+  child-facing feedback
+- [x] cover Dutch default, English switching, and language persistence in tests
 
 ### Phase 16 — Observe and listen
 

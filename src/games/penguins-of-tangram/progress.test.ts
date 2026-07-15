@@ -32,6 +32,7 @@ describe('Tangram progress', () => {
     expect(loadTangramProgress(store)).toEqual({
       version: 1,
       selectedCharacterId: 'lion',
+      language: 'nl',
       audioMuted: false,
       reducedMotion: false,
       playtestEnabled: false,
@@ -50,6 +51,15 @@ describe('Tangram progress', () => {
     expect(getUnlockedTangramLevelIds([])).toEqual(['school-gate-morning-run']);
   });
 
+  it('defaults to Dutch and preserves only supported language choices', () => {
+    const store = fakeStore();
+    expect(loadTangramProgress(store).language).toBe('nl');
+    store.setItem(TANGRAM_PROGRESS_KEY, JSON.stringify({ version: 1, language: 'en' }));
+    expect(loadTangramProgress(store).language).toBe('en');
+    store.setItem(TANGRAM_PROGRESS_KEY, JSON.stringify({ version: 1, language: 'fr' }));
+    expect(loadTangramProgress(store).language).toBe('nl');
+  });
+
   it('normalizes invalid saved entries instead of trusting storage', () => {
     const store = fakeStore();
     store.setItem(
@@ -65,6 +75,7 @@ describe('Tangram progress', () => {
     expect(loadTangramProgress(store)).toEqual({
       version: 1,
       selectedCharacterId: 'penguin',
+      language: 'nl',
       audioMuted: false,
       reducedMotion: false,
       playtestEnabled: false,
@@ -116,6 +127,7 @@ describe('Tangram progress', () => {
     store.setItem(TANGRAM_PROGRESS_KEY, JSON.stringify({
       version: 1,
       selectedCharacterId: 'penguin',
+      language: 'en',
       audioMuted: false,
       reducedMotion: false,
       playtestEnabled: true,

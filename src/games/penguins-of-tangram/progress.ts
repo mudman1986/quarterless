@@ -11,6 +11,11 @@ import {
   isTangramCharacterId,
   type TangramCharacterId,
 } from './data';
+import {
+  DEFAULT_TANGRAM_LANGUAGE,
+  isTangramLanguage,
+  type TangramLanguage,
+} from './language';
 
 export const TANGRAM_PROGRESS_KEY = 'penguins-of-tangram.progress';
 const PROGRESS_VERSION = 1;
@@ -31,6 +36,7 @@ export type TangramPlaytestSummary = {
 export interface TangramProgress {
   version: 1;
   selectedCharacterId: TangramCharacterId;
+  language: TangramLanguage;
   audioMuted: boolean;
   reducedMotion: boolean;
   playtestEnabled: boolean;
@@ -47,6 +53,7 @@ function defaultProgress(): TangramProgress {
   return {
     version: PROGRESS_VERSION,
     selectedCharacterId: DEFAULT_CHARACTER_ID,
+    language: DEFAULT_TANGRAM_LANGUAGE,
     audioMuted: false,
     reducedMotion: false,
     playtestEnabled: false,
@@ -99,6 +106,7 @@ function normalizeProgress(value: unknown): TangramProgress {
       typeof candidate.selectedCharacterId === 'string' && isTangramCharacterId(candidate.selectedCharacterId)
         ? candidate.selectedCharacterId
         : DEFAULT_CHARACTER_ID,
+    language: isTangramLanguage(candidate.language) ? candidate.language : DEFAULT_TANGRAM_LANGUAGE,
     audioMuted: candidate.audioMuted === true,
     reducedMotion: candidate.reducedMotion === true,
     playtestEnabled: candidate.playtestEnabled === true,
