@@ -1,3 +1,5 @@
+import { TANGRAM_PLAYER_WIDTH } from '../../core/tangramPlatformer';
+
 export type Rect = { x: number; y: number; width: number; height: number };
 export type Platform = Rect & { color: number; trim: number; label?: string; secret?: boolean };
 export type BreakableBlock = Rect & { color: number; trim: number; label: string };
@@ -432,6 +434,59 @@ function repeatRoute<T extends { x: number }>(
   return [1, 2].flatMap((copy) => items.map((item) => ({ ...item, x: item.x + width * copy })));
 }
 
+const BADGE_BOX_CLUSTER_SIZES = [
+  [3, 2, 3, 2, 3],
+  [3, 3, 2, 3, 3],
+  [3, 2, 3, 2, 3],
+] as const;
+
+const BADGE_BOX_CLUSTER_POSITIONS = [
+  [0.11, 0.26, 0.45, 0.68, 0.86],
+  [0.08, 0.31, 0.49, 0.63, 0.9],
+  [0.15, 0.28, 0.57, 0.72, 0.87],
+] as const;
+
+function distributeBadgeBoxes(
+  blocks: readonly BreakableBlock[],
+  platforms: readonly Platform[],
+  powerups: readonly Rect[],
+  width: number,
+  worldHeight: number,
+): BreakableBlock[] {
+  const block = blocks[0];
+  if (!block) return [];
+  const obstacles = [
+    ...platforms.filter((platform) => platform.y + platform.height < worldHeight),
+    ...powerups,
+  ];
+  return BADGE_BOX_CLUSTER_SIZES.flatMap((clusterSizes, section) => {
+    const occupied: Array<{ start: number; end: number }> = [];
+    return clusterSizes.flatMap((size, clusterIndex) => {
+      const clusterWidth = size * block.width + (size - 1) * 8;
+      const preferred = Math.round(width * BADGE_BOX_CLUSTER_POSITIONS[section][clusterIndex] - clusterWidth / 2);
+      for (let offset = 0; offset < width; offset += 16) {
+        for (const direction of offset === 0 ? [0] : [-1, 1]) {
+          const start = preferred + direction * offset;
+          const end = start + clusterWidth;
+          if (start < 0 || end > width) continue;
+          if (obstacles.some(
+            (platform) =>
+              start < platform.x + platform.width + TANGRAM_PLAYER_WIDTH &&
+              end + TANGRAM_PLAYER_WIDTH > platform.x,
+          )) continue;
+          if (occupied.some((range) => start <= range.end + 12 && end + 12 >= range.start)) continue;
+          occupied.push({ start, end });
+          return Array.from({ length: size }, (_, index) => ({
+            ...block,
+            x: width * section + start + index * (block.width + 8),
+          }));
+        }
+      }
+      throw new Error(`Unable to place badge-box cluster ${section}-${clusterIndex}.`);
+    });
+  });
+}
+
 function extendLevel(level: TangramLevelDefinition): TangramLevelDefinition {
   const addedWidth = level.worldWidth * 2;
   const worldWidth = level.worldWidth + addedWidth;
@@ -452,7 +507,7 @@ function extendLevel(level: TangramLevelDefinition): TangramLevelDefinition {
     collectibles: [...level.collectibles, ...repeatRoute(level.collectibles, level.worldWidth)],
     powerups: [...level.powerups, ...repeatRoute(level.powerups, level.worldWidth)],
     breakableBlocks: level.breakableBlocks
-      ? [...level.breakableBlocks, ...repeatRoute(level.breakableBlocks, level.worldWidth)]
+      ? distributeBadgeBoxes(level.breakableBlocks, level.platforms, level.powerups, level.worldWidth, level.worldHeight)
       : undefined,
     enemies: [...level.enemies, ...enemies],
     hazards: [...level.hazards, ...repeatRoute(level.hazards, level.worldWidth)],

@@ -8,6 +8,7 @@ import {
 import { CAMPAIGN_LEVELS } from './levels';
 import {
   TANGRAM_FIXED_STEP,
+  TANGRAM_PLAYER_WIDTH,
   buildTangramJumpAudit,
   createTangramPlatformerState,
   getTangramCheckpointSupport,
@@ -114,7 +115,29 @@ describe('penguins of tangram character roster', () => {
       expect(extension(level.collectibles)).toHaveLength(level.collectibles.length * 2 / 3);
       expect(extension(level.enemies)).toHaveLength(level.enemies.length * 2 / 3);
       expect(extension(level.hazards)).toHaveLength(level.hazards.length * 2 / 3);
-      if (level.breakableBlocks) expect(extension(level.breakableBlocks)).toHaveLength(level.breakableBlocks.length * 2 / 3);
+      if (level.breakableBlocks) {
+        expect(level.breakableBlocks).toHaveLength(40);
+        expect([0, 1, 2].map((section) => level.breakableBlocks?.filter(
+          (block) => block.x >= originalWidth * section && block.x < originalWidth * (section + 1),
+        ).length)).toEqual([13, 14, 13]);
+        const clusters = [...level.breakableBlocks]
+          .sort((left, right) => left.x - right.x)
+          .reduce<number[]>((sizes, block, index, blocks) => {
+            if (index === 0 || block.x - blocks[index - 1].x > block.width + 12) sizes.push(0);
+            sizes[sizes.length - 1] += 1;
+            return sizes;
+          }, []);
+        expect(clusters).toHaveLength(15);
+        expect(clusters.filter((size) => size === 3)).toHaveLength(10);
+        expect(clusters.filter((size) => size === 2)).toHaveLength(5);
+        for (const block of level.breakableBlocks) {
+          expect(level.platforms.some(
+            (platform) => platform.y + platform.height < level.worldHeight &&
+              block.x < platform.x + platform.width + TANGRAM_PLAYER_WIDTH &&
+              block.x + block.width + TANGRAM_PLAYER_WIDTH > platform.x,
+          ), `${level.id} badge box leaves too little ground access beside a stand-on platform`).toBe(false);
+        }
+      }
       if (level.bouncePads) expect(extension(level.bouncePads)).toHaveLength(level.bouncePads.length * 2 / 3);
       if (level.movingPlatforms) expect(extension(level.movingPlatforms)).toHaveLength(level.movingPlatforms.length * 2 / 3);
       const originalPlatforms = level.platforms.filter(

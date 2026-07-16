@@ -279,6 +279,8 @@ describe('Tangram platformer simulation', () => {
     );
     expect(state.breakableBlocksBroken[0]).toBe(true);
     expect(state.badgesCollected).toBe(1);
+    expect(state.player.y).toBe(348);
+    expect(state.player.velocityY).toBe(0);
     expect(events).toContainEqual({ type: 'badge', x: 324, y: 324, count: 1 });
     expect(events).toContainEqual({ type: 'shake' });
   });
@@ -329,6 +331,8 @@ describe('Tangram platformer simulation', () => {
 
     expect(state.powerBlockHit).toEqual([true, false]);
     expect(state.powerSnackAvailable).toEqual([true, true]);
+    expect(state.player.y).toBe(356);
+    expect(state.player.velocityY).toBe(0);
     expect(events).toContainEqual({ type: 'hud' });
 
     state.player.y = 250;

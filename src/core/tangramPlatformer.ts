@@ -525,7 +525,6 @@ function resolveVertical(
         awardBadges(state, 1, block.x + block.width / 2, block.y + block.height / 2, events);
         setHint(state, `${block.label} broken! Badge earned.`, events);
         events.push({ type: 'shake' });
-        continue;
       }
       state.player.y = platform.y + platform.height;
       state.player.velocityY = 0;
@@ -557,6 +556,8 @@ function handleBadgeBoxes(
       previousX >= block.x + block.width
     ) continue;
     state.breakableBlocksBroken[index] = true;
+    state.player.y = block.y + block.height;
+    state.player.velocityY = 0;
     awardBadges(state, 1, block.x + block.width / 2, block.y + block.height / 2, events);
     setHint(state, `${block.label} broken! Badge earned.`, events);
     events.push({ type: 'shake' });
@@ -801,6 +802,8 @@ function handlePowerSnack(
       player.x + player.width > block.x;
     if (hitBlockFromBelow) {
       state.powerBlockHit[index] = true;
+      state.player.y = block.y + block.height;
+      state.player.velocityY = 0;
       setHint(state, 'A super Tangram popped out!', events);
       continue;
     }

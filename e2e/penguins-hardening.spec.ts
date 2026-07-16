@@ -182,7 +182,7 @@ test('Penguins can finish the opening route without collecting field badges', as
     }
   });
   await expect(page.getByText('School Gate Morning Run cleared!')).toBeVisible();
-  await expect(page.locator('.tangram-platformer-overlay--complete [data-field="badges"]')).toHaveText('3/42');
+  await expect(page.locator('.tangram-platformer-overlay--complete [data-field="badges"]')).toHaveText('3/79');
   await page.waitForTimeout(1_100);
   await expect(page.getByText('School Gate Morning Run cleared!')).toBeVisible();
   await expect(page.getByText('Level complete')).toBeVisible();
@@ -428,6 +428,17 @@ test.describe('coarse pointer controls', () => {
         simulation: { player: { x: number } };
       }).simulation.player.x;
     })).toBeGreaterThan(before);
+    expect(await page.evaluate(() => !document.dispatchEvent(
+      new Event('gesturestart', { cancelable: true }),
+    ))).toBe(true);
+    await moveZone.dispatchEvent('lostpointercapture');
+    await expect.poll(async () => page.evaluate(() => {
+      const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
+      const controls = (game.scene.getScene('PenguinsOfTangram') as {
+        touchControls: { left: boolean; right: boolean };
+      }).touchControls;
+      return { left: controls.left, right: controls.right };
+    })).toEqual({ left: false, right: false });
     await page.mouse.up();
     await expect.poll(async () => page.evaluate(() => {
       const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;

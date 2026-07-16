@@ -221,6 +221,12 @@ function createTouchControls(parent: HTMLElement, language: TangramLanguage): Ta
   const stopMovement = (event: PointerEvent): void => {
     if (event.pointerId === movementPointerId) resetMovement();
   };
+  const preventPinchZoom = (event: Event): void => {
+    if (!controls.hidden) event.preventDefault();
+  };
+  const resetWhenHidden = (): void => {
+    if (document.visibilityState !== 'visible') reset();
+  };
   const pressJump = (event: PointerEvent): void => {
     event.preventDefault();
     touchControls.jumpPressed = true;
@@ -229,17 +235,25 @@ function createTouchControls(parent: HTMLElement, language: TangramLanguage): Ta
   movePad.addEventListener('pointermove', moveMovement);
   movePad.addEventListener('pointerup', stopMovement);
   movePad.addEventListener('pointercancel', stopMovement);
+  movePad.addEventListener('lostpointercapture', resetMovement);
   jumpButton.addEventListener('pointerdown', pressJump);
   window.addEventListener('pointerup', stopMovement);
   window.addEventListener('pointercancel', stopMovement);
+  document.addEventListener('gesturestart', preventPinchZoom, { passive: false });
+  document.addEventListener('gesturechange', preventPinchZoom, { passive: false });
+  document.addEventListener('visibilitychange', resetWhenHidden);
   cleanups.push(
     () => movePad.removeEventListener('pointerdown', startMovement),
     () => movePad.removeEventListener('pointermove', moveMovement),
     () => movePad.removeEventListener('pointerup', stopMovement),
     () => movePad.removeEventListener('pointercancel', stopMovement),
+    () => movePad.removeEventListener('lostpointercapture', resetMovement),
     () => jumpButton.removeEventListener('pointerdown', pressJump),
     () => window.removeEventListener('pointerup', stopMovement),
     () => window.removeEventListener('pointercancel', stopMovement),
+    () => document.removeEventListener('gesturestart', preventPinchZoom),
+    () => document.removeEventListener('gesturechange', preventPinchZoom),
+    () => document.removeEventListener('visibilitychange', resetWhenHidden),
   );
   window.addEventListener('blur', reset);
   cleanups.push(() => window.removeEventListener('blur', reset));
@@ -855,7 +869,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
         alpha: 0,
         scaleX: 0.9,
         scaleY: 0.9,
-        duration: 520,
+        duration: 650,
         delay: index * 75,
         ease: 'Cubic.easeOut',
         onComplete: () => badge.destroy(),
