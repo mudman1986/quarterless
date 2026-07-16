@@ -49,6 +49,8 @@ import {
 const VIEWPORT_WIDTH = 960;
 const VIEWPORT_HEIGHT = 540;
 const COMPLETION_AUTO_RESUME_MS = 10_000;
+const BACKDROP_DISPLAY_SCALE = 4 / 3;
+const CLOUD_POSITIONS = [[0.3, 0.18], [0.72, 0.29]] as const;
 
 type Collectible = {
   sprite: Phaser.GameObjects.Container;
@@ -244,6 +246,9 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   private enemies: Enemy[] = [];
   private movingPlatforms: MovingPlatformSprite[] = [];
   private bouncePads: Phaser.GameObjects.Container[] = [];
+  private cloudClusters: Phaser.GameObjects.Container[] = [];
+  private backdropLandmark: Phaser.GameObjects.Container | null = null;
+  private backdropLandmarkWidth = 0;
   private readonly simulation: TangramPlatformerState;
   private readonly simulationEvents: TangramPlatformerEvent[] = [];
   private effects: TangramSound | null = null;
@@ -257,8 +262,6 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   accumulator = 0;
   private lastJumpDown = false;
   private paused = false;
-  private lastCameraWidth = 0;
-  private lastCameraHeight = 0;
 
   constructor(
     character: TangramCharacterDefinition,
@@ -286,7 +289,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   create(): void {
     this.cameras.main.setBackgroundColor(this.level.skyColor);
     this.cameras.main.setBounds(0, 0, this.level.worldWidth, this.level.worldHeight);
-    this.updateCameraLayout();
+    this.applyCameraZoom();
     this.createBackdrop();
     this.createPlatforms();
     this.createDecor();
@@ -301,7 +304,12 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     this.player = this.createPlayer();
     this.playerAura = this.add.ellipse(0, 0, 88, 92, 0xffef8e, 0.24).setVisible(false);
     this.playerAura.setDepth(4);
-    this.cameras.main.startFollow(this.player, true, 0.12, 0.12, 120, 30);
+    this.cameras.main.startFollow(this.player, true, 0.12, 0, 120, 30);
+    this.syncBackdropLayout();
+    this.scale.on('resize', this.onResize, this);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.scale.off('resize', this.onResize, this);
+    });
     this.keys = this.input.keyboard?.addKeys({
       left: 'LEFT',
       right: 'RIGHT',
@@ -324,7 +332,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
 
   update(_: number, deltaMs: number): void {
     if (this.simulation.finished || this.paused) return;
-    this.updateCameraLayout();
+    this.syncBackdropLayout();
     const leftDown = Boolean(this.keys?.left.isDown || this.keys?.a.isDown || this.touchControls.left);
     const rightDown = Boolean(this.keys?.right.isDown || this.keys?.d.isDown || this.touchControls.right);
     const jumpDown = Boolean(this.keys?.up.isDown || this.keys?.w.isDown || this.keys?.space.isDown);
@@ -395,10 +403,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     this.applySimulationEvents();
   }
 
-  private updateCameraLayout(): void {
-    if (this.scale.width === this.lastCameraWidth && this.scale.height === this.lastCameraHeight) return;
-    this.lastCameraWidth = this.scale.width;
-    this.lastCameraHeight = this.scale.height;
+  private applyCameraZoom(): void {
     const widthZoom = this.scale.width / VIEWPORT_WIDTH;
     const heightZoom = this.scale.height / VIEWPORT_HEIGHT;
     this.cameras.main.setZoom(Math.max(1, widthZoom, heightZoom));
@@ -408,15 +413,40 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     this.add.rectangle(this.level.worldWidth / 2, this.level.worldHeight / 2, this.level.worldWidth, this.level.worldHeight, Phaser.Display.Color.HexStringToColor(this.level.skyColor).color)
       .setScrollFactor(0, 0)
       .setAlpha(0.82);
-    for (let index = 0; index < 2; index += 1) {
-      const cloudX = 350 + index * 380;
-      const cloudY = 120 + index * 70;
-      this.add.ellipse(cloudX, cloudY + 4, 96, 34, 0x5ca8c7, 0.45).setScrollFactor(0).setDepth(1);
-      this.add.ellipse(cloudX, cloudY, 90, 32, 0xffffff, 0.85).setScrollFactor(0).setDepth(1);
-      this.add.ellipse(cloudX + 30, cloudY + 5, 62, 24, 0xffffff, 0.85).setScrollFactor(0).setDepth(1);
-      this.add.ellipse(cloudX - 32, cloudY + 6, 54, 22, 0xffffff, 0.85).setScrollFactor(0).setDepth(1);
+    for (let index = 0; index < CLOUD_POSITIONS.length; index += 1) {
+      const cloud = this.add.container().setScrollFactor(0).setDepth(1);
+      cloud.add([
+        this.add.ellipse(0, 4, 96, 34, 0x5ca8c7, 0.45),
+        this.add.ellipse(0, 0, 90, 32, 0xffffff, 0.85),
+        this.add.ellipse(30, 5, 62, 24, 0xffffff, 0.85),
+        this.add.ellipse(-32, 6, 54, 22, 0xffffff, 0.85),
+      ]);
+      this.cloudClusters.push(cloud);
     }
     this.createLandmark();
+  }
+
+  private onResize(): void {
+    this.applyCameraZoom();
+    this.syncBackdropLayout();
+  }
+
+  private syncBackdropLayout(): void {
+    const camera = this.cameras.main;
+    const objectX = (screenX: number): number => screenX / camera.zoom - camera.scrollX;
+    const objectY = (screenY: number): number => screenY / camera.zoom - camera.scrollY;
+    const counterScale = BACKDROP_DISPLAY_SCALE / camera.zoom;
+    this.cloudClusters.forEach((cloud, index) => {
+      const [x, y] = CLOUD_POSITIONS[index];
+      cloud
+        .setPosition(objectX(this.scale.width * x), objectY(this.scale.height * y))
+        .setScale(counterScale);
+    });
+    if (!this.backdropLandmark) return;
+    const displayWidth = Math.min(this.scale.width * 0.86, this.backdropLandmarkWidth * BACKDROP_DISPLAY_SCALE);
+    this.backdropLandmark
+      .setPosition(objectX(this.scale.width * 0.5), objectY(this.scale.height * 0.39))
+      .setScale(displayWidth / this.backdropLandmarkWidth * counterScale);
   }
 
   private createLandmark(): void {
@@ -436,6 +466,8 @@ class PenguinsOfTangramScene extends Phaser.Scene {
           this.add.rectangle(0, 66, 68, 76, 0x8d5b34),
           this.add.triangle(0, -18, -24, 0, 24, 0, 0, 26, 0x59d0ff),
         ]);
+        this.backdropLandmark = school.setScrollFactor(0);
+        this.backdropLandmarkWidth = 380;
         break;
       }
       case 'playground': {
@@ -449,6 +481,8 @@ class PenguinsOfTangramScene extends Phaser.Scene {
           this.add.rectangle(130, 44, 22, 92, 0x5bb4ff),
           this.add.rectangle(0, 94, 320, 18, 0x7ad46e),
         ]);
+        this.backdropLandmark = playground.setScrollFactor(0);
+        this.backdropLandmarkWidth = 320;
         break;
       }
       case 'classroom': {
@@ -462,6 +496,8 @@ class PenguinsOfTangramScene extends Phaser.Scene {
           this.add.rectangle(108, 36, 80, 52, 0xd8b27e),
           this.add.circle(0, -44, 14, 0xffd166),
         ]);
+        this.backdropLandmark = classroom.setScrollFactor(0);
+        this.backdropLandmarkWidth = 360;
         break;
       }
       case 'library': {
@@ -475,6 +511,8 @@ class PenguinsOfTangramScene extends Phaser.Scene {
           this.add.rectangle(0, -46, 280, 50, 0xff93c2),
           this.add.triangle(0, -46, -22, 14, 22, 14, 0, -18, 0xffd166),
         ]);
+        this.backdropLandmark = library.setScrollFactor(0);
+        this.backdropLandmarkWidth = 360;
         break;
       }
       case 'stadium': {
@@ -488,6 +526,8 @@ class PenguinsOfTangramScene extends Phaser.Scene {
           this.add.rectangle(120, 24, 82, 22, 0xffd166),
           this.add.circle(0, -10, 14, 0xffd166),
         ]);
+        this.backdropLandmark = stadium.setScrollFactor(0);
+        this.backdropLandmarkWidth = 420;
         break;
       }
     }

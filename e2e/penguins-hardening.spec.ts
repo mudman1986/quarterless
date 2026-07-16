@@ -52,6 +52,36 @@ test('Penguins pause freezes the simulation and resume restores it', async ({ pa
   await expect(page.getByRole('heading', { name: 'Parade paused' })).toBeHidden();
 });
 
+test('Penguins keeps the ground still while jumping', async ({ page }) => {
+  await launchPenguinsOfTangram(page);
+  const initial = await page.evaluate(() => {
+    const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game.scene.getScene('PenguinsOfTangram') as {
+      simulation: { player: { y: number } };
+      cameras: { main: { scrollY: number; lerp: { y: number } } };
+    };
+    return { playerY: scene.simulation.player.y, cameraY: scene.cameras.main.scrollY, cameraLerpY: scene.cameras.main.lerp.y };
+  });
+
+  await page.locator('#game canvas').click();
+  await page.keyboard.press('Space');
+  await page.waitForTimeout(150);
+
+  const jumped = await page.evaluate(() => {
+    const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game.scene.getScene('PenguinsOfTangram') as {
+      simulation: { player: { y: number } };
+      cameras: { main: { scrollY: number; lerp: { y: number } } };
+    };
+    return { playerY: scene.simulation.player.y, cameraY: scene.cameras.main.scrollY, cameraLerpY: scene.cameras.main.lerp.y };
+  });
+
+  expect(jumped.playerY).toBeLessThan(initial.playerY);
+  expect(initial.cameraLerpY).toBe(0);
+  expect(jumped.cameraLerpY).toBe(0);
+  expect(jumped.cameraY).toBeCloseTo(initial.cameraY, 6);
+});
+
 test('Penguins keeps the arcade return inside the pause menu', async ({ page }) => {
   await launchPenguinsOfTangram(page);
 
@@ -277,6 +307,43 @@ test.describe('reduced motion', () => {
 
 test.describe('coarse pointer controls', () => {
   test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
+
+  test('keeps the complete backdrop aligned on narrow screens', async ({ page }) => {
+    await launchPenguinsOfTangram(page);
+    const backdrop = await page.evaluate(() => {
+      const game = (window as unknown as {
+        __game: { scene: { getScene(name: string): unknown } };
+      }).__game;
+      const scene = game.scene.getScene('PenguinsOfTangram') as {
+        backdropLandmark: { x: number; y: number; scrollFactorX: number; scrollFactorY: number };
+        cloudClusters: Array<{ scrollFactorX: number; scrollFactorY: number }>;
+        cameras: { main: { zoom: number; scrollX: number; scrollY: number } };
+        scale: { width: number; height: number };
+      };
+      const camera = scene.cameras.main;
+      const landmark = scene.backdropLandmark;
+      return {
+        clouds: scene.cloudClusters.map(({ scrollFactorX, scrollFactorY }) => ({ scrollFactorX, scrollFactorY })),
+        landmark: {
+          screenX: (landmark.x + camera.scrollX) * camera.zoom,
+          screenY: (landmark.y + camera.scrollY) * camera.zoom,
+          scrollFactorX: landmark.scrollFactorX,
+          scrollFactorY: landmark.scrollFactorY,
+        },
+        viewport: { width: scene.scale.width, height: scene.scale.height },
+      };
+    });
+
+    expect(backdrop.viewport).toEqual({ width: 390, height: 844 });
+    expect(backdrop.clouds).toEqual([
+      { scrollFactorX: 0, scrollFactorY: 0 },
+      { scrollFactorX: 0, scrollFactorY: 0 },
+    ]);
+    expect(backdrop.landmark.screenX).toBeCloseTo(195, 1);
+    expect(backdrop.landmark.screenY).toBeCloseTo(329.16, 1);
+    expect(backdrop.landmark.scrollFactorX).toBe(0);
+    expect(backdrop.landmark.scrollFactorY).toBe(0);
+  });
 
   test('renders and forwards touch controls', async ({ page }) => {
     await launchPenguinsOfTangram(page);
