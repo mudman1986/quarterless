@@ -27,6 +27,8 @@ const DUTCH: Record<string, string> = {
   'Badges collected': 'Verzamelde badges',
   'Motion: Reduced': 'Beweging: Minder',
   'Motion: Normal': 'Beweging: Normaal',
+  'Touch controls: Off': 'Aanraakbediening: Uit',
+  'Touch controls: On': 'Aanraakbediening: Aan',
   'Reset game': 'Spel resetten',
   'Yes, reset game': 'Ja, spel resetten',
   'Keep playing': 'Blijf spelen',

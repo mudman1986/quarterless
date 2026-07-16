@@ -98,6 +98,7 @@ type TestHook = {
   poweredUp: boolean;
   audioMuted: boolean;
   reducedMotion: boolean;
+  touchControlsEnabled: boolean;
   language: TangramLanguage;
   bossActive: boolean;
   bossHitsRemaining: number;
@@ -303,6 +304,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   private readonly reducedMotion: boolean;
   private readonly muted: boolean;
   private readonly language: TangramLanguage;
+  private touchControlsEnabled: boolean;
   accumulator = 0;
   private lastJumpDown = false;
   private paused = false;
@@ -316,7 +318,12 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       onSceneState: (snapshot: SceneHookState) => void;
       onComplete: (summary: LevelSummary) => void;
     },
-    options: { muted: boolean; reducedMotion: boolean; language: TangramLanguage },
+    options: {
+      muted: boolean;
+      reducedMotion: boolean;
+      touchControlsEnabled: boolean;
+      language: TangramLanguage;
+    },
   ) {
     super('PenguinsOfTangram');
     this.character = character;
@@ -325,6 +332,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     this.callbacks = callbacks;
     this.muted = options.muted;
     this.reducedMotion = options.reducedMotion;
+    this.touchControlsEnabled = options.touchControlsEnabled;
     this.language = options.language;
     this.jumpAudit = buildJumpAudit(level, character);
     this.simulation = createTangramPlatformerState(level);
@@ -375,7 +383,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   }
 
   update(_: number, deltaMs: number): void {
-    if (this.simulation.finished || this.paused) return;
+    if (this.simulation.finished || this.paused || this.respawnTransition) return;
     this.syncBackdropLayout();
     const leftDown = Boolean(this.keys?.left.isDown || this.keys?.a.isDown || this.touchControls.left);
     const rightDown = Boolean(this.keys?.right.isDown || this.keys?.d.isDown || this.touchControls.right);
@@ -409,7 +417,12 @@ class PenguinsOfTangramScene extends Phaser.Scene {
 
   setPaused(paused: boolean): void {
     this.paused = paused;
-    this.touchControls.setVisible(!paused);
+    this.touchControls.setVisible(!paused && this.touchControlsEnabled);
+  }
+
+  setTouchControlsEnabled(enabled: boolean): void {
+    this.touchControlsEnabled = enabled;
+    this.touchControls.setVisible(!this.paused && enabled);
   }
 
   setMuted(muted: boolean): void {
@@ -1355,7 +1368,7 @@ function createPauseButton(parent: HTMLElement, language: TangramLanguage, onPau
 function createPauseOverlay(
   parent: HTMLElement,
   language: TangramLanguage,
-  settings: { muted: boolean; reducedMotion: boolean },
+  settings: { muted: boolean; reducedMotion: boolean; touchControlsEnabled: boolean },
   actions: {
     onResume: () => void;
     onMap: () => void;
@@ -1363,6 +1376,7 @@ function createPauseOverlay(
     onExit: () => void;
     onMuted: (muted: boolean) => void;
     onReducedMotion: (reduced: boolean) => void;
+    onTouchControlsEnabled: (enabled: boolean) => void;
     onLanguage: (language: TangramLanguage) => void;
     onReset: () => void;
   },
@@ -1373,6 +1387,7 @@ function createPauseOverlay(
   setLanguage: (language: TangramLanguage) => void;
   setMuted: (muted: boolean) => void;
   setReducedMotion: (reduced: boolean) => void;
+  setTouchControlsEnabled: (enabled: boolean) => void;
 } {
   const overlay = document.createElement('div');
   overlay.className = 'tangram-platformer-overlay tangram-platformer-overlay--pause';
@@ -1396,6 +1411,7 @@ function createPauseOverlay(
         <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-setting-action="sound"></button>
         <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-setting-action="language"></button>
         <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-setting-action="motion"></button>
+        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-setting-action="touch-controls"></button>
         <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-setting-action="reset"></button>
         <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-action="arcade">Back to arcade hall</button>
       </div>
@@ -1414,6 +1430,7 @@ function createPauseOverlay(
   overlay.querySelector<HTMLButtonElement>('[data-action="arcade"]')?.addEventListener('click', actions.onExit);
   const soundButton = overlay.querySelector<HTMLButtonElement>('[data-setting-action="sound"]');
   const motionButton = overlay.querySelector<HTMLButtonElement>('[data-setting-action="motion"]');
+  const touchControlsButton = overlay.querySelector<HTMLButtonElement>('[data-setting-action="touch-controls"]');
   const languageButton = overlay.querySelector<HTMLButtonElement>('[data-setting-action="language"]');
   const resetConfirmation = overlay.querySelector<HTMLElement>('[data-reset-confirmation]');
   let currentLanguage = language;
@@ -1428,6 +1445,14 @@ function createPauseOverlay(
     motionButton.textContent = tangramText(currentLanguage, reduced ? 'Motion: Reduced' : 'Motion: Normal');
     motionButton.setAttribute('aria-pressed', String(reduced));
   };
+  const setTouchControlsEnabled = (enabled: boolean): void => {
+    if (!touchControlsButton) return;
+    touchControlsButton.textContent = tangramText(
+      currentLanguage,
+      enabled ? 'Touch controls: On' : 'Touch controls: Off',
+    );
+    touchControlsButton.setAttribute('aria-pressed', String(enabled));
+  };
   soundButton?.addEventListener('click', () => {
     const muted = soundButton.getAttribute('aria-pressed') !== 'true';
     setMuted(muted);
@@ -1437,6 +1462,11 @@ function createPauseOverlay(
     const reduced = motionButton.getAttribute('aria-pressed') !== 'true';
     setReducedMotion(reduced);
     actions.onReducedMotion(reduced);
+  });
+  touchControlsButton?.addEventListener('click', () => {
+    const enabled = touchControlsButton.getAttribute('aria-pressed') !== 'true';
+    setTouchControlsEnabled(enabled);
+    actions.onTouchControlsEnabled(enabled);
   });
   languageButton?.addEventListener('click', () => {
     actions.onLanguage(currentLanguage === 'nl' ? 'en' : 'nl');
@@ -1479,9 +1509,11 @@ function createPauseOverlay(
     overlay.querySelector<HTMLButtonElement>('[data-setting-action="cancel-reset"]')!.textContent = tangramText(nextLanguage, 'Keep playing');
     setMuted(soundButton?.getAttribute('aria-pressed') === 'true');
     setReducedMotion(motionButton?.getAttribute('aria-pressed') === 'true');
+    setTouchControlsEnabled(touchControlsButton?.getAttribute('aria-pressed') === 'true');
   };
   setMuted(settings.muted);
   setReducedMotion(settings.reducedMotion);
+  setTouchControlsEnabled(settings.touchControlsEnabled);
   setLanguage(language);
   return {
     overlay,
@@ -1496,6 +1528,7 @@ function createPauseOverlay(
     setLanguage,
     setMuted,
     setReducedMotion,
+    setTouchControlsEnabled,
   };
 }
 
@@ -1716,6 +1749,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
   let isPaused = false;
   let audioMuted = progress.audioMuted;
   let reducedMotion = progress.reducedMotion || (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false);
+  let touchControlsEnabled = progress.touchControlsEnabled;
   let lastSingleTouchEnd = -Infinity;
   let multiTouchGesture = false;
   const isTouchControlGesture = (event: TouchEvent): boolean => event.composedPath().some(
@@ -1749,7 +1783,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
   const pauseOverlay = createPauseOverlay(
     parent,
     language,
-    { muted: audioMuted, reducedMotion },
+    { muted: audioMuted, reducedMotion, touchControlsEnabled },
     {
       onResume: () => togglePause(false),
       onRestart: () => startLevel(selectedLevelId),
@@ -1768,6 +1802,13 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
         saveTangramProgress(progress);
         emitHook();
       },
+      onTouchControlsEnabled(enabled) {
+        touchControlsEnabled = enabled;
+        progress = { ...progress, touchControlsEnabled };
+        saveTangramProgress(progress);
+        activeScene?.setTouchControlsEnabled(enabled);
+        emitHook();
+      },
       onLanguage: applyLanguage,
       onReset() {
         progress = resetTangramProgress();
@@ -1778,12 +1819,14 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
         unlockedLevelIds.splice(0, unlockedLevelIds.length, ...getUnlockedTangramLevelIds([]));
         audioMuted = progress.audioMuted;
         reducedMotion = progress.reducedMotion;
+        touchControlsEnabled = progress.touchControlsEnabled;
         touchControls.setLanguage(language);
         score.setLanguage(language);
         pauseButton.setLanguage(language);
         pauseOverlay.setLanguage(language);
         pauseOverlay.setMuted(audioMuted);
         pauseOverlay.setReducedMotion(reducedMotion);
+        pauseOverlay.setTouchControlsEnabled(touchControlsEnabled);
         select.setLanguage(language);
         completion.setLanguage(language);
         select.updateSelection(selectedCharacterId);
@@ -1814,6 +1857,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
       poweredUp: lastHookState.poweredUp,
       audioMuted,
       reducedMotion,
+      touchControlsEnabled,
       language,
       bossActive: lastHookState.bossActive ?? false,
       bossHitsRemaining: lastHookState.bossHitsRemaining ?? 0,
@@ -1955,9 +1999,9 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
         }
         emitHook();
       },
-    }, { muted: audioMuted, reducedMotion, language });
+    }, { muted: audioMuted, reducedMotion, touchControlsEnabled, language });
     activeScene = scene;
-    touchControls.setVisible(true);
+    touchControls.setVisible(touchControlsEnabled);
     pauseButton.setVisible(true);
     currentState = 'running';
     lastHookState = {

@@ -32,6 +32,7 @@ export interface TangramProgress {
   language: TangramLanguage;
   audioMuted: boolean;
   reducedMotion: boolean;
+  touchControlsEnabled: boolean;
   completedLevelIds: TangramLevelId[];
   bestByLevel: Partial<Record<TangramLevelId, TangramLevelBest>>;
 }
@@ -47,6 +48,7 @@ function defaultProgress(): TangramProgress {
     language: DEFAULT_TANGRAM_LANGUAGE,
     audioMuted: false,
     reducedMotion: false,
+    touchControlsEnabled: true,
     completedLevelIds: [],
     bestByLevel: {},
   };
@@ -98,6 +100,7 @@ function normalizeProgress(value: unknown): TangramProgress {
     language: isTangramLanguage(candidate.language) ? candidate.language : DEFAULT_TANGRAM_LANGUAGE,
     audioMuted: candidate.audioMuted === true,
     reducedMotion: candidate.reducedMotion === true,
+    touchControlsEnabled: candidate.touchControlsEnabled !== false,
     completedLevelIds: [...new Set(completedLevelIds)],
     bestByLevel,
   };

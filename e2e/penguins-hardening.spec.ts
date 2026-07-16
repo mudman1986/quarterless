@@ -102,6 +102,74 @@ test('Penguins pause freezes the simulation and resume restores it', async ({ pa
   await expect(page.getByRole('heading', { name: 'Parade paused' })).toBeHidden();
 });
 
+test('Penguins freezes held movement until the respawn transition finishes', async ({ page }) => {
+  await launchPenguinsOfTangram(page);
+  await page.keyboard.down('ArrowRight');
+  const respawnPoint = await page.evaluate(() => {
+    const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game.scene.getScene('PenguinsOfTangram') as {
+      level: { enemies: Array<{ y: number }> };
+      simulation: {
+        enemies: Array<{ x: number }>;
+        invulnerableRemaining: number;
+        player: { x: number; y: number; velocityX: number; velocityY: number };
+        respawnPoint: { x: number; y: number };
+      };
+    };
+    const enemy = scene.simulation.enemies[0];
+    scene.simulation.invulnerableRemaining = 0;
+    scene.simulation.player.x = enemy.x;
+    scene.simulation.player.y = scene.level.enemies[0].y - 28;
+    scene.simulation.player.velocityX = 0;
+    scene.simulation.player.velocityY = 0;
+    return { ...scene.simulation.respawnPoint };
+  });
+
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game.scene.getScene('PenguinsOfTangram') as {
+      respawnTransition: boolean;
+      simulation: { falls: number };
+    };
+    return scene.simulation.falls === 1 && scene.respawnTransition;
+  });
+  await page.waitForTimeout(500);
+
+  const duringTransition = await page.evaluate(() => {
+    const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game.scene.getScene('PenguinsOfTangram') as {
+      simulation: { player: { x: number; y: number; velocityX: number; velocityY: number } };
+    };
+    const { x, y, velocityX, velocityY } = scene.simulation.player;
+    return { x, y, velocityX, velocityY };
+  });
+  await page.keyboard.up('ArrowRight');
+
+  expect(duringTransition).toEqual({
+    x: respawnPoint.x,
+    y: respawnPoint.y,
+    velocityX: 0,
+    velocityY: 0,
+  });
+});
+
+test('Penguins can disable and persist touch controls from the pause menu', async ({ page }) => {
+  await launchPenguinsOfTangram(page);
+  const touchControls = page.locator('.tangram-platformer-touch-controls');
+  await expect(touchControls).not.toHaveAttribute('hidden', '');
+
+  await page.getByRole('button', { name: 'Pause' }).click();
+  await page.getByRole('button', { name: 'Touch controls: On' }).click();
+  await expect(page.getByRole('button', { name: 'Touch controls: Off' })).toBeVisible();
+  await page.getByRole('button', { name: 'Resume run' }).click();
+  await expect(touchControls).toHaveAttribute('hidden', '');
+
+  await page.reload();
+  await page.getByRole('button', { name: 'Play Penguins of Tangram' }).click();
+  await page.getByRole('button', { name: /^Penguin/ }).click();
+  await expect(page.locator('.tangram-platformer-touch-controls')).toHaveAttribute('hidden', '');
+});
+
 test('Penguins keeps the ground still while jumping', async ({ page }) => {
   await launchPenguinsOfTangram(page);
   const initial = await page.evaluate(() => {

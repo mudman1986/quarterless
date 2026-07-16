@@ -34,6 +34,7 @@ describe('Tangram progress', () => {
       language: 'nl',
       audioMuted: false,
       reducedMotion: false,
+      touchControlsEnabled: true,
       completedLevelIds: ['school-gate-morning-run'],
       bestByLevel: {
         'school-gate-morning-run': { badgesCollected: 12, durationSeconds: 48, falls: 2 },
@@ -75,11 +76,23 @@ describe('Tangram progress', () => {
       language: 'nl',
       audioMuted: false,
       reducedMotion: false,
+      touchControlsEnabled: true,
       completedLevelIds: ['school-gate-morning-run'],
       bestByLevel: {
         'school-gate-morning-run': { badgesCollected: 12, durationSeconds: 48, falls: 2 },
       },
     });
+  });
+
+  it('defaults touch controls on and preserves an explicit opt-out', () => {
+    const store = fakeStore();
+    expect(loadTangramProgress(store).touchControlsEnabled).toBe(true);
+
+    store.setItem(
+      TANGRAM_PROGRESS_KEY,
+      JSON.stringify({ version: 1, touchControlsEnabled: false }),
+    );
+    expect(loadTangramProgress(store).touchControlsEnabled).toBe(false);
   });
 
   it('keeps the strongest result when a later replay is worse', () => {
