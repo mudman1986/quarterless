@@ -141,7 +141,7 @@ test('Penguins can finish the opening route without collecting every bonus badge
     }
   });
   await expect(page.getByText('School Gate Morning Run cleared!')).toBeVisible();
-  await expect(page.locator('.tangram-platformer-overlay--complete [data-field="badges"]')).toHaveText('0/12');
+  await expect(page.locator('.tangram-platformer-overlay--complete [data-field="badges"]')).toHaveText('0/36');
   await page.waitForTimeout(1_100);
   await expect(page.getByText('School Gate Morning Run cleared!')).toBeVisible();
   await expect(page.getByText('Level complete')).toBeVisible();

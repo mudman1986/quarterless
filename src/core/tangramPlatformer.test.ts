@@ -34,7 +34,7 @@ function level(platformY = 448): TangramSimulationLevel {
     collectibles: [],
     hazards: [],
     enemies: [],
-    checkpoint: { x: 1500, y: 300, width: 50, height: 120, label: 'Checkpoint' },
+    checkpoints: [{ x: 1500, y: 300, width: 50, height: 120, label: 'Checkpoint' }],
     goal: { x: 1800, y: 300, width: 80, height: 150 },
     powerup: { x: 900, y: 300, width: 40, height: 50, label: 'Snack' },
   };
@@ -71,7 +71,7 @@ function simulate(renderHz: number): ReturnType<typeof createTangramPlatformerSt
 describe('Tangram platformer simulation', () => {
   it('places a checkpoint respawn on its supporting platform', () => {
     const simulationLevel = level();
-    expect(getTangramCheckpointRespawn(simulationLevel)).toEqual({
+    expect(getTangramCheckpointRespawn(simulationLevel, simulationLevel.checkpoints[0])).toEqual({
       x: 1512,
       y: 376,
       label: 'Checkpoint',
@@ -90,6 +90,29 @@ describe('Tangram platformer simulation', () => {
     tickTangramPlatformer(state, simulationLevel, movement, { direction: 0, jumpPressed: false }, TANGRAM_FIXED_STEP, events);
     expect(state.player.y).toBe(376);
     expect(state.player.grounded).toBe(true);
+  });
+
+  it('keeps the furthest checkpoint as the respawn point', () => {
+    const simulationLevel = {
+      ...level(),
+      checkpoints: [
+        { x: 600, y: 300, width: 50, height: 120, label: 'First' },
+        { x: 1400, y: 300, width: 50, height: 120, label: 'Second' },
+      ],
+    };
+    const state = createTangramPlatformerState(simulationLevel);
+    const events: TangramPlatformerEvent[] = [];
+
+    state.player.x = 600;
+    state.player.y = 300;
+    tickTangramPlatformer(state, simulationLevel, movement, { direction: 0, jumpPressed: false }, TANGRAM_FIXED_STEP, events);
+    state.player.x = 1400;
+    tickTangramPlatformer(state, simulationLevel, movement, { direction: 0, jumpPressed: false }, TANGRAM_FIXED_STEP, events);
+    state.player.x = 600;
+    tickTangramPlatformer(state, simulationLevel, movement, { direction: 0, jumpPressed: false }, TANGRAM_FIXED_STEP, events);
+
+    expect(state.respawnPoint.label).toBe('Second');
+    expect(state.checkpointIndex).toBe(1);
   });
 
   it('lets the first route finish without collecting bonus badges', () => {

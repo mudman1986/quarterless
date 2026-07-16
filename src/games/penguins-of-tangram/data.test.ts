@@ -74,13 +74,16 @@ describe('penguins of tangram character roster', () => {
 
   it('gives every checkpoint a platform to stand on', () => {
     for (const level of CAMPAIGN_LEVELS) {
-      const support = getTangramCheckpointSupport(level);
-      expect(support, `${level.id} checkpoint is unsupported`).not.toBeNull();
-      expect(support?.x).toBeLessThanOrEqual(level.checkpoint.x + level.checkpoint.width / 2);
-      expect((support?.x ?? 0) + (support?.width ?? 0)).toBeGreaterThanOrEqual(
-        level.checkpoint.x + level.checkpoint.width / 2,
-      );
-      expect(support?.y).toBeGreaterThanOrEqual(level.checkpoint.y);
+      expect(level.checkpoints).toHaveLength(3);
+      for (const checkpoint of level.checkpoints) {
+        const support = getTangramCheckpointSupport(level, checkpoint);
+        expect(support, `${level.id} checkpoint is unsupported`).not.toBeNull();
+        expect(support?.x).toBeLessThanOrEqual(checkpoint.x + checkpoint.width / 2);
+        expect((support?.x ?? 0) + (support?.width ?? 0)).toBeGreaterThanOrEqual(
+          checkpoint.x + checkpoint.width / 2,
+        );
+        expect(support?.y).toBeGreaterThanOrEqual(checkpoint.y);
+      }
     }
   });
 
@@ -94,6 +97,32 @@ describe('penguins of tangram character roster', () => {
       );
       expect(flagGround, `${level.id} flagpole has no ground`).toBeDefined();
       expect((flagGround?.x ?? 0) + (flagGround?.width ?? 0)).toBe(level.worldWidth);
+    }
+  });
+
+  it('keeps every level at least three times as long as its original route', () => {
+    expect(CAMPAIGN_LEVELS.map((level) => level.worldWidth)).toEqual([13200, 12000, 11400, 12600, 13500]);
+    for (const level of CAMPAIGN_LEVELS) {
+      expect(level.goal.x).toBeGreaterThan(level.worldWidth * 0.98);
+    }
+  });
+
+  it('fills extended level space with the same gameplay density as the original route', () => {
+    for (const level of CAMPAIGN_LEVELS) {
+      const originalWidth = level.worldWidth / 3;
+      const extension = (items: readonly { x: number }[]) => items.filter((item) => item.x >= originalWidth);
+      expect(extension(level.collectibles)).toHaveLength(level.collectibles.length * 2 / 3);
+      expect(extension(level.enemies)).toHaveLength(level.enemies.length * 2 / 3);
+      expect(extension(level.hazards)).toHaveLength(level.hazards.length * 2 / 3);
+      if (level.bouncePads) expect(extension(level.bouncePads)).toHaveLength(level.bouncePads.length * 2 / 3);
+      if (level.movingPlatforms) expect(extension(level.movingPlatforms)).toHaveLength(level.movingPlatforms.length * 2 / 3);
+      const originalPlatforms = level.platforms.filter(
+        (platform) => platform.x < originalWidth && platform.y + platform.height < level.worldHeight,
+      );
+      const extensionPlatforms = level.platforms.filter(
+        (platform) => platform.x >= originalWidth && platform.y + platform.height < level.worldHeight,
+      );
+      expect(extensionPlatforms).toHaveLength(originalPlatforms.length * 2);
     }
   });
 

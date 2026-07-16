@@ -233,7 +233,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   private playerShadow!: Phaser.GameObjects.Ellipse;
   private playerFlippers!: Phaser.GameObjects.Rectangle[];
   private playerFeet!: Phaser.GameObjects.Ellipse[];
-  private checkpointBanner!: Phaser.GameObjects.Container;
+  private checkpointBanners: Phaser.GameObjects.Container[] = [];
   private goalBanner!: Phaser.GameObjects.Container;
   private goalFlag!: Phaser.GameObjects.Container;
   private powerBlock!: Phaser.GameObjects.Container;
@@ -297,7 +297,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     this.createHazards();
     this.createEnemies();
     this.createBoss();
-    this.createCheckpoint();
+    this.createCheckpoints();
     this.createGoal();
     this.createBouncePads();
     this.createPowerSnack();
@@ -382,7 +382,8 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     this.simulation.collected.fill(true);
     this.simulation.badgesCollected = this.collectibles.length;
     this.simulation.checkpointActivated = true;
-    this.simulation.respawnPoint = getTangramCheckpointRespawn(this.level) ?? this.simulation.respawnPoint;
+    const checkpoint = this.level.checkpoints[this.level.checkpoints.length - 1];
+    this.simulation.respawnPoint = getTangramCheckpointRespawn(this.level, checkpoint) ?? this.simulation.respawnPoint;
     this.simulation.player.x = this.level.goal.x;
     this.simulation.player.y = this.level.goal.y;
     if (this.simulation.boss) {
@@ -634,14 +635,17 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     ]);
   }
 
-  private createCheckpoint(): void {
-    this.checkpointBanner = this.add.container(this.level.checkpoint.x + 20, this.level.checkpoint.y + 60);
-    this.checkpointBanner.setDepth(4);
-    this.checkpointBanner.add([
-      this.add.rectangle(0, 24, 10, 120, 0x8d5b34),
-      this.add.rectangle(34, -16, 66, 34, 0xffd166),
-      this.add.circle(34, -16, 8, 0x59d0ff),
-    ]);
+  private createCheckpoints(): void {
+    this.checkpointBanners = this.level.checkpoints.map((checkpoint) => {
+      const banner = this.add.container(checkpoint.x + 20, checkpoint.y + 60);
+      banner.setDepth(4);
+      banner.add([
+        this.add.rectangle(0, 24, 10, 120, 0x8d5b34),
+        this.add.rectangle(34, -16, 66, 34, 0xffd166),
+        this.add.circle(34, -16, 8, 0x59d0ff),
+      ]);
+      return banner;
+    });
   }
 
   private createGoal(): void {
@@ -956,18 +960,22 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     this.powerSnack.y = this.level.powerup.y - 18 + (this.reducedMotion ? 0 : Math.sin(this.time.now * 0.004) * 5);
     this.powerSnack.rotation = this.reducedMotion ? 0 : Math.sin(this.time.now * 0.002) * 0.12;
     this.powerSnack.setScale(this.reducedMotion ? 1 : 1 + Math.sin(this.time.now * 0.006) * 0.06);
-    this.checkpointBanner.y = this.level.checkpoint.y + 60 + (this.reducedMotion ? 0 : Math.sin(this.time.now * 0.003) * 2);
+    for (let index = 0; index < this.checkpointBanners.length; index += 1) {
+      const checkpoint = this.level.checkpoints[index];
+      const banner = this.checkpointBanners[index];
+      banner.y = checkpoint.y + 60 + (this.reducedMotion ? 0 : Math.sin(this.time.now * 0.003 + index) * 2);
+      if (this.simulation.checkpointIndex >= index) {
+        banner.list.forEach((child) => {
+          if ('setTint' in child && typeof child.setTint === 'function') child.setTint(0x7dfc8a);
+        });
+      }
+    }
     this.goalFlag.y = this.simulation.goalPhase === 'none'
       ? this.level.goal.y + 28
       : this.simulation.goalFlagY + 28;
     this.playerAura.setVisible(powered);
     this.playerAura.x = this.player.x;
     this.playerAura.y = this.player.y - 10;
-    if (this.simulation.checkpointActivated) {
-      this.checkpointBanner.list.forEach((child) => {
-        if ('setTint' in child && typeof child.setTint === 'function') child.setTint(0x7dfc8a);
-      });
-    }
   }
 
   private animatePlayer(): void {

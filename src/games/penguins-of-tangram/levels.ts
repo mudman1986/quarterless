@@ -53,7 +53,7 @@ export interface TangramLevelDefinition {
   hazards: readonly HazardPlacement[];
   enemies: readonly EnemyDefinition[];
   bouncePads?: readonly BouncePad[];
-  checkpoint: Rect & { label: string };
+  checkpoints: readonly (Rect & { label: string })[];
   goal: Rect & { label: string };
   powerup: Rect & { label: string };
   requiredBadges?: number;
@@ -68,7 +68,7 @@ const ground = (x: number, width: number): Platform => ({
   trim: 0x5aa65a,
 });
 
-export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
+const AUTHORED_LEVELS: readonly TangramLevelDefinition[] = [
   {
     id: 'school-gate-morning-run',
     title: 'School Gate Morning Run',
@@ -123,7 +123,7 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
       { x: 2010, y: 404, width: 44, height: 40, minX: 1980, maxX: 2440, speed: 84, kind: 'backpack' },
       { x: 3098, y: 404, width: 44, height: 40, minX: 3070, maxX: 3370, speed: 88, kind: 'backpack' },
     ],
-    checkpoint: { x: 2140, y: 300, width: 54, height: 132, label: 'Library Steps' },
+    checkpoints: [{ x: 2140, y: 300, width: 54, height: 132, label: 'Library Steps' }],
     goal: { x: 4200, y: 80, width: 84, height: 368, label: 'Festival Flag' },
     breakableBlocks: [
       { x: 1280, y: 300, width: 48, height: 48, color: 0xffd166, trim: 0xe3a938, label: 'Tangram block' },
@@ -193,7 +193,7 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
       { x: 392, y: 426, width: 54, height: 22, label: 'Slide spring', strength: 910, color: 0xff8f66 },
       { x: 1788, y: 426, width: 54, height: 22, label: 'Swing spring', strength: 920, color: 0x71d2b6 },
     ],
-    checkpoint: { x: 1460, y: 306, width: 54, height: 126, label: 'Swing Midway' },
+    checkpoints: [{ x: 1460, y: 306, width: 54, height: 126, label: 'Swing Midway' }],
     goal: { x: 3780, y: 80, width: 84, height: 368, label: 'Playground Flag' },
     breakableBlocks: [
       { x: 2080, y: 286, width: 48, height: 48, color: 0xffd166, trim: 0xe3a938, label: 'Tangram block' },
@@ -260,7 +260,7 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
       { x: 1400, y: 404, width: 44, height: 40, minX: 1180, maxX: 1880, speed: 82, kind: 'chalkbug' },
       { x: 2380, y: 404, width: 44, height: 40, minX: 2020, maxX: 2840, speed: 90, kind: 'chalkbug' },
     ],
-    checkpoint: { x: 1490, y: 254, width: 54, height: 126, label: 'Window Middle' },
+    checkpoints: [{ x: 1490, y: 254, width: 54, height: 126, label: 'Window Middle' }],
     goal: { x: 3600, y: 80, width: 84, height: 368, label: 'Classroom Flag' },
     breakableBlocks: [
       { x: 1980, y: 300, width: 48, height: 48, color: 0xffd166, trim: 0xe3a938, label: 'Tangram block' },
@@ -329,7 +329,7 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
     bouncePads: [
       { x: 1916, y: 426, width: 54, height: 22, label: 'Art-room spring', strength: 930, color: 0xff93c2 },
     ],
-    checkpoint: { x: 2320, y: 302, width: 54, height: 126, label: 'Art Room Midway' },
+    checkpoints: [{ x: 2320, y: 302, width: 54, height: 126, label: 'Art Room Midway' }],
     goal: { x: 4080, y: 80, width: 84, height: 368, label: 'Library Flag' },
     breakableBlocks: [
       { x: 2020, y: 300, width: 48, height: 48, color: 0xffd166, trim: 0xe3a938, label: 'Tangram block' },
@@ -403,7 +403,7 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
       { x: 1420, y: 426, width: 54, height: 22, label: 'Long-jump spring', strength: 940, color: 0xffd166 },
       { x: 2988, y: 426, width: 54, height: 22, label: 'Victory spring', strength: 940, color: 0xff8f66 },
     ],
-    checkpoint: { x: 2450, y: 308, width: 54, height: 126, label: 'Podium Midway' },
+    checkpoints: [{ x: 2450, y: 308, width: 54, height: 126, label: 'Podium Midway' }],
     goal: { x: 4220, y: 80, width: 84, height: 368, label: 'Sports Day Flag' },
     breakableBlocks: [
       { x: 2180, y: 300, width: 48, height: 48, color: 0xffd166, trim: 0xe3a938, label: 'Tangram block' },
@@ -423,7 +423,43 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
       chargeSpeed: 260,
     },
   },
-] as const;
+];
+
+function repeatRoute<T extends { x: number }>(
+  items: readonly T[],
+  width: number,
+): T[] {
+  return [1, 2].flatMap((copy) => items.map((item) => ({ ...item, x: item.x + width * copy })));
+}
+
+function extendLevel(level: TangramLevelDefinition): TangramLevelDefinition {
+  const addedWidth = level.worldWidth * 2;
+  const worldWidth = level.worldWidth + addedWidth;
+  const routePlatforms = repeatRoute(
+    level.platforms.filter((platform) => platform.y + platform.height < level.worldHeight),
+    level.worldWidth,
+  );
+  const enemies = [1, 2].flatMap((copy) => level.enemies.map((enemy) => ({
+    ...enemy,
+    x: enemy.x + level.worldWidth * copy,
+    minX: enemy.minX + level.worldWidth * copy,
+    maxX: enemy.maxX + level.worldWidth * copy,
+  })));
+  return {
+    ...level,
+    worldWidth,
+    platforms: [...level.platforms, ground(level.worldWidth, addedWidth), ...routePlatforms],
+    collectibles: [...level.collectibles, ...repeatRoute(level.collectibles, level.worldWidth)],
+    enemies: [...level.enemies, ...enemies],
+    hazards: [...level.hazards, ...repeatRoute(level.hazards, level.worldWidth)],
+    bouncePads: level.bouncePads ? [...level.bouncePads, ...repeatRoute(level.bouncePads, level.worldWidth)] : undefined,
+    movingPlatforms: level.movingPlatforms ? [...level.movingPlatforms, ...repeatRoute(level.movingPlatforms, level.worldWidth)] : undefined,
+    checkpoints: [...level.checkpoints, ...repeatRoute(level.checkpoints, level.worldWidth)],
+    goal: { ...level.goal, x: worldWidth - 180 },
+  };
+}
+
+export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = AUTHORED_LEVELS.map(extendLevel);
 
 export const FIRST_LEVEL_ID: TangramLevelId = CAMPAIGN_LEVELS[0].id;
 

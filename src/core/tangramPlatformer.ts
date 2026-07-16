@@ -63,7 +63,7 @@ export interface TangramSimulationLevel {
     TangramRect & { minX: number; maxX: number; speed: number }
   >;
   bouncePads?: ReadonlyArray<TangramRect & { label: string; strength: number }>;
-  checkpoint: TangramRect & { label: string };
+  checkpoints: readonly (TangramRect & { label: string })[];
   goal: TangramRect;
   powerup: TangramRect & { label: string };
   requiredBadges?: number;
@@ -71,8 +71,9 @@ export interface TangramSimulationLevel {
 
 export function getTangramCheckpointSupport(
   level: TangramSimulationLevel,
+  checkpoint: TangramRect,
 ): TangramRect | null {
-  const checkpointCenter = level.checkpoint.x + level.checkpoint.width / 2;
+  const checkpointCenter = checkpoint.x + checkpoint.width / 2;
   const platforms = level.platforms;
   return (
     platforms
@@ -80,8 +81,8 @@ export function getTangramCheckpointSupport(
         (platform) =>
           checkpointCenter > platform.x &&
           checkpointCenter < platform.x + platform.width &&
-          platform.y >= level.checkpoint.y &&
-          platform.y <= level.checkpoint.y + level.checkpoint.height + TANGRAM_PLAYER_HEIGHT,
+          platform.y >= checkpoint.y &&
+          platform.y <= checkpoint.y + checkpoint.height + TANGRAM_PLAYER_HEIGHT,
       )
       .sort((a, b) => a.y - b.y)[0] ?? null
   );
@@ -89,17 +90,18 @@ export function getTangramCheckpointSupport(
 
 export function getTangramCheckpointRespawn(
   level: TangramSimulationLevel,
+  checkpoint: TangramRect & { label: string },
 ): { x: number; y: number; label: string } | null {
-  const support = getTangramCheckpointSupport(level);
+  const support = getTangramCheckpointSupport(level, checkpoint);
   if (!support) return null;
   return {
     x: clamp(
-      level.checkpoint.x + 12,
+      checkpoint.x + 12,
       support.x,
       support.x + support.width - TANGRAM_PLAYER_WIDTH,
     ),
     y: support.y - TANGRAM_PLAYER_HEIGHT,
-    label: level.checkpoint.label,
+    label: checkpoint.label,
   };
 }
 
@@ -143,6 +145,7 @@ export interface TangramPlatformerState {
   collected: boolean[];
   badgesCollected: number;
   checkpointActivated: boolean;
+  checkpointIndex: number;
   respawnPoint: { x: number; y: number; label: string };
   falls: number;
   powerRemaining: number;
@@ -178,9 +181,10 @@ export interface TangramJumpAudit {
 export function createTangramPlatformerState(
   level: TangramSimulationLevel,
 ): TangramPlatformerState {
-  const checkpointRespawn = getTangramCheckpointRespawn(level);
-  if (!checkpointRespawn) {
-    throw new Error(`Tangram checkpoint has no supporting platform: ${level.title}`);
+  for (const checkpoint of level.checkpoints) {
+    if (!getTangramCheckpointRespawn(level, checkpoint)) {
+      throw new Error(`Tangram checkpoint has no supporting platform: ${level.title}`);
+    }
   }
   return {
     player: {
@@ -217,6 +221,7 @@ export function createTangramPlatformerState(
     collected: level.collectibles.map(() => false),
     badgesCollected: 0,
     checkpointActivated: false,
+    checkpointIndex: -1,
     respawnPoint: { ...level.start },
     falls: 0,
     powerRemaining: 0,
@@ -720,10 +725,15 @@ function handleCheckpoint(
   level: TangramSimulationLevel,
   events: TangramPlatformerEvent[],
 ): void {
-  if (state.checkpointActivated || !intersects(tangramPlayerRect(state), level.checkpoint)) return;
-  state.checkpointActivated = true;
-  state.respawnPoint = getTangramCheckpointRespawn(level) ?? state.respawnPoint;
-  setHint(state, `Checkpoint reached: ${level.checkpoint.label}`, events);
+  for (let index = level.checkpoints.length - 1; index > state.checkpointIndex; index -= 1) {
+    const checkpoint = level.checkpoints[index];
+    if (!intersects(tangramPlayerRect(state), checkpoint)) continue;
+    state.checkpointActivated = true;
+    state.checkpointIndex = index;
+    state.respawnPoint = getTangramCheckpointRespawn(level, checkpoint) ?? state.respawnPoint;
+    setHint(state, `Checkpoint reached: ${checkpoint.label}`, events);
+    return;
+  }
 }
 
 function handlePowerSnack(
