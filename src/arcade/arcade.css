@@ -23,7 +23,7 @@ body.is-landing {
 body.is-playing,
 body.is-loading {
   overflow: hidden;
-  touch-action: pinch-zoom;
+  touch-action: none;
 }
 
 button {
@@ -607,7 +607,7 @@ button {
   width: 100vw;
   height: 100vh;
   height: 100dvh;
-  touch-action: pinch-zoom;
+  touch-action: none;
 }
 
 .mini-game-pause {

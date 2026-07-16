@@ -168,6 +168,7 @@ export interface TangramPlatformerInput {
 
 export type TangramPlatformerEvent =
   | { type: 'hud' }
+  | { type: 'respawn' }
   | { type: 'shake' }
   | { type: 'badge'; x: number; y: number; count: number }
   | { type: 'complete' };
@@ -305,7 +306,7 @@ function respawn(
   state.player.grounded = false;
   state.invulnerableRemaining = movement.respawnShieldMs / 1000;
   setHint(state, message, events);
-  events.push({ type: 'shake' });
+  events.push({ type: 'respawn' });
 }
 
 function updateTimers(
@@ -525,7 +526,6 @@ function resolveVertical(
         state.breakableBlocksBroken[breakableIndex] = true;
         awardBadges(state, 1, block.x + block.width / 2, block.y + block.height / 2, events);
         setHint(state, `${block.label} broken! Badge earned.`, events);
-        events.push({ type: 'shake' });
       }
       state.player.y = platform.y + platform.height;
       state.player.velocityY = 0;
@@ -561,7 +561,6 @@ function handleBadgeBoxes(
     state.player.velocityY = 0;
     awardBadges(state, 1, block.x + block.width / 2, block.y + block.height / 2, events);
     setHint(state, `${block.label} broken! Badge earned.`, events);
-    events.push({ type: 'shake' });
     return;
   }
 }

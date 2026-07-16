@@ -531,6 +531,15 @@ test.describe('coarse pointer controls', () => {
       return { firstTap, secondTap, pinchEnd };
     });
     expect(touchDefaults).toEqual({ firstTap: false, secondTap: true, pinchEnd: false });
+    const controlTouchDefault = await jumpButton.evaluate((button) => {
+      const event = new Event('touchend', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'touches', { value: { length: 1 } });
+      button.dispatchEvent(event);
+      return event.defaultPrevented;
+    });
+    expect(controlTouchDefault).toBe(true);
+    await expect(moveZone).toHaveCSS('touch-action', 'none');
+    await expect(jumpButton).toHaveCSS('touch-action', 'none');
     await moveZone.dispatchEvent('lostpointercapture', { pointerId: 1, buttons: 1 });
     await expect.poll(async () => page.evaluate(() => {
       const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
@@ -558,5 +567,35 @@ test.describe('coarse pointer controls', () => {
       }).touchControls;
       return { left: controls.left, right: controls.right };
     })).toEqual({ left: false, right: false });
+  });
+
+  test('pans to a respawn checkpoint before revealing the player', async ({ page }) => {
+    await launchPenguinsOfTangram(page);
+    await page.evaluate(() => {
+      const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
+      const scene = game.scene.getScene('PenguinsOfTangram') as {
+        level: { worldHeight: number };
+        simulation: { player: { y: number } };
+      };
+      scene.simulation.player.y = scene.level.worldHeight + 200;
+    });
+    await expect.poll(async () => page.evaluate(() => {
+      const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
+      return (game.scene.getScene('PenguinsOfTangram') as {
+        simulation: { falls: number };
+      }).simulation.falls;
+    })).toBe(1);
+    expect(await page.evaluate(() => {
+      const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
+      return (game.scene.getScene('PenguinsOfTangram') as {
+        player: { visible: boolean };
+      }).player.visible;
+    })).toBe(false);
+    await expect.poll(async () => page.evaluate(() => {
+      const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
+      return (game.scene.getScene('PenguinsOfTangram') as {
+        player: { visible: boolean };
+      }).player.visible;
+    })).toBe(true);
   });
 });

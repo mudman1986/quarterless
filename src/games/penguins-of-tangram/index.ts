@@ -299,6 +299,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   private previousGrounded = false;
   private previousPowered = false;
   private previousBossHits: number | null = null;
+  private respawnTransition = false;
   private readonly reducedMotion: boolean;
   private readonly muted: boolean;
   private readonly language: TangramLanguage;
@@ -1171,7 +1172,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     this.goalFlag.y = this.simulation.goalPhase === 'none'
       ? this.level.goal.y + 28
       : this.simulation.goalFlagY + 28;
-    this.playerAura.setVisible(powered);
+    this.playerAura.setVisible(powered && !this.respawnTransition);
     this.playerAura.x = this.player.x;
     this.playerAura.y = this.player.y - 10;
     this.playerAura.setScale(ACTOR_DISPLAY_SCALE);
@@ -1229,6 +1230,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     let shouldUpdateHud = false;
     for (const event of this.simulationEvents) {
       if (event.type === 'hud') shouldUpdateHud = true;
+      if (event.type === 'respawn') this.transitionToRespawn();
       if (event.type === 'shake' && !this.reducedMotion) this.cameras.main.shake(180, 0.004);
       if (event.type === 'badge') this.emitBadges(event.x, event.y, event.count);
       if (event.type === 'complete') {
@@ -1238,6 +1240,20 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     }
     this.simulationEvents.length = 0;
     if (shouldUpdateHud && !this.simulation.finished) this.updateHud();
+  }
+
+  private transitionToRespawn(): void {
+    if (this.reducedMotion) return;
+    const camera = this.cameras.main;
+    this.respawnTransition = true;
+    this.player.setVisible(false);
+    this.playerAura.setVisible(false);
+    camera.stopFollow();
+    camera.pan(this.player.x, camera.centerY, 420, 'Sine.easeInOut', true, () => {
+      this.respawnTransition = false;
+      this.player.setVisible(true);
+      camera.startFollow(this.player, true, 0.12, 0, 0, 30);
+    });
   }
 
   private completeLevel(): void {
@@ -1687,10 +1703,20 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
   let reducedMotion = progress.reducedMotion || (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false);
   let lastSingleTouchEnd = -Infinity;
   let multiTouchGesture = false;
+  const isTouchControlGesture = (event: TouchEvent): boolean => event.composedPath().some(
+    (target) => target instanceof HTMLElement
+      && target.classList.contains('tangram-platformer-touch-controls'),
+  );
   const trackTouchStart = (event: TouchEvent): void => {
     multiTouchGesture ||= event.touches.length > 1;
   };
   const preventDoubleTapZoom = (event: TouchEvent): void => {
+    if (isTouchControlGesture(event)) {
+      event.preventDefault();
+      multiTouchGesture = false;
+      lastSingleTouchEnd = -Infinity;
+      return;
+    }
     if (event.touches.length > 0) return;
     if (multiTouchGesture) {
       multiTouchGesture = false;

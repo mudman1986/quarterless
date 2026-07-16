@@ -94,6 +94,7 @@ describe('Tangram platformer simulation', () => {
     tickTangramPlatformer(state, simulationLevel, movement, { direction: 0, jumpPressed: false }, TANGRAM_FIXED_STEP, events);
     expect(state.player.y).toBe(376);
     expect(state.player.grounded).toBe(true);
+    expect(events).toContainEqual({ type: 'respawn' });
   });
 
   it('keeps the furthest checkpoint as the respawn point', () => {
@@ -282,7 +283,7 @@ describe('Tangram platformer simulation', () => {
     expect(state.player.y).toBe(348);
     expect(state.player.velocityY).toBe(0);
     expect(events).toContainEqual({ type: 'badge', x: 324, y: 324, count: 1 });
-    expect(events).toContainEqual({ type: 'shake' });
+    expect(events).not.toContainEqual({ type: 'shake' });
   });
 
   it('awards more badges for reaching higher on the flagpole', () => {
