@@ -591,21 +591,58 @@ test.describe('coarse pointer controls', () => {
     expect(await page.evaluate(() => {
       const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
       const scene = game.scene.getScene('PenguinsOfTangram') as {
-        player: { visible: boolean };
+        player: { visible: boolean; x: number };
         respawnTransition: boolean;
         reducedMotion: boolean;
+        cameras: { main: { scrollX: number; panEffect: { isRunning: boolean; duration: number } } };
       };
       return {
         visible: scene.player.visible,
+        playerX: scene.player.x,
         transitioning: scene.respawnTransition,
         reducedMotion: scene.reducedMotion,
+        scrollX: scene.cameras.main.scrollX,
+        panning: scene.cameras.main.panEffect.isRunning,
+        duration: scene.cameras.main.panEffect.duration,
       };
-    })).toEqual({ visible: false, transitioning: true, reducedMotion: false });
+    })).toMatchObject({
+      visible: true,
+      transitioning: true,
+      reducedMotion: false,
+      panning: true,
+      duration: 2000,
+    });
+    const initialPlayerX = await page.evaluate(() => {
+      const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
+      return (game.scene.getScene('PenguinsOfTangram') as {
+        player: { x: number };
+      }).player.x;
+    });
+    const initialScrollX = await page.evaluate(() => {
+      const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
+      return (game.scene.getScene('PenguinsOfTangram') as {
+        cameras: { main: { scrollX: number } };
+      }).cameras.main.scrollX;
+    });
+    await page.waitForTimeout(100);
+    expect(await page.evaluate(() => {
+      const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
+      return (game.scene.getScene('PenguinsOfTangram') as {
+        cameras: { main: { scrollX: number } };
+      }).cameras.main.scrollX;
+    })).toBeLessThan(initialScrollX);
+    await page.waitForTimeout(400);
+    expect(await page.evaluate(() => {
+      const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
+      return (game.scene.getScene('PenguinsOfTangram') as {
+        player: { x: number };
+      }).player.x;
+    })).toBeLessThan(initialPlayerX);
     await expect.poll(async () => page.evaluate(() => {
       const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
       return (game.scene.getScene('PenguinsOfTangram') as {
-        player: { visible: boolean };
-      }).player.visible;
-    })).toBe(true);
+        respawnTransition: boolean;
+      }).respawnTransition;
+    }), { timeout: 15_000 }).toBe(false);
   });
 });

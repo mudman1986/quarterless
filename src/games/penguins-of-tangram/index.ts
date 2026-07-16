@@ -1086,8 +1086,10 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     this.previousGrounded = playerState.grounded;
     this.previousPowered = powered;
     this.previousBossHits = this.simulation.boss?.hitsRemaining ?? null;
-    this.player.x = playerState.x + TANGRAM_PLAYER_WIDTH / 2;
-    this.player.y = playerState.y + TANGRAM_PLAYER_HEIGHT / 2;
+    if (!this.respawnTransition) {
+      this.player.x = playerState.x + TANGRAM_PLAYER_WIDTH / 2;
+      this.player.y = playerState.y + TANGRAM_PLAYER_HEIGHT / 2;
+    }
     const playerScale = (powered ? 1.18 : 1) * ACTOR_DISPLAY_SCALE;
     this.player.scaleX = playerState.facing * playerScale;
     this.player.scaleY = playerScale;
@@ -1230,7 +1232,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     let shouldUpdateHud = false;
     for (const event of this.simulationEvents) {
       if (event.type === 'hud') shouldUpdateHud = true;
-      if (event.type === 'respawn') this.transitionToRespawn();
+      if (event.type === 'respawn') this.transitionToRespawn(event.fromX, event.fromY);
       if (event.type === 'shake' && !this.reducedMotion) this.cameras.main.shake(180, 0.004);
       if (event.type === 'badge') this.emitBadges(event.x, event.y, event.count);
       if (event.type === 'complete') {
@@ -1242,18 +1244,30 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     if (shouldUpdateHud && !this.simulation.finished) this.updateHud();
   }
 
-  private transitionToRespawn(): void {
+  private transitionToRespawn(fromX: number, fromY: number): void {
     if (this.reducedMotion) return;
     const camera = this.cameras.main;
+    const targetX = this.player.x;
+    const targetY = this.player.y;
     this.respawnTransition = true;
-    this.player.setVisible(false);
+    this.player.setPosition(
+      fromX + TANGRAM_PLAYER_WIDTH / 2,
+      fromY + TANGRAM_PLAYER_HEIGHT / 2,
+    ).setVisible(true);
     this.playerAura.setVisible(false);
     camera.stopFollow();
-    camera.pan(this.player.x, camera.centerY, 420, 'Sine.easeInOut', true, (_camera, progress) => {
-      if (progress < 1) return;
-      this.respawnTransition = false;
-      this.player.setVisible(true);
-      camera.startFollow(this.player, true, 0.12, 0, 0, 30);
+    camera.pan(targetX, camera.centerY, 2000, 'Sine.easeInOut', true);
+    this.tweens.killTweensOf(this.player);
+    this.tweens.add({
+      targets: this.player,
+      x: targetX,
+      y: targetY,
+      duration: 2000,
+      ease: 'Sine.easeInOut',
+      onComplete: () => {
+        this.respawnTransition = false;
+        camera.startFollow(this.player, true, 0.12, 0, 0, 30);
+      },
     });
   }
 

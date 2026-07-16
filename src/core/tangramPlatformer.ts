@@ -168,7 +168,7 @@ export interface TangramPlatformerInput {
 
 export type TangramPlatformerEvent =
   | { type: 'hud' }
-  | { type: 'respawn' }
+  | { type: 'respawn'; fromX: number; fromY: number }
   | { type: 'shake' }
   | { type: 'badge'; x: number; y: number; count: number }
   | { type: 'complete' };
@@ -298,6 +298,8 @@ function respawn(
   message: string,
   events: TangramPlatformerEvent[],
 ): void {
+  const fromX = state.player.x;
+  const fromY = state.player.y;
   state.falls += 1;
   state.player.x = state.respawnPoint.x;
   state.player.y = state.respawnPoint.y;
@@ -306,7 +308,7 @@ function respawn(
   state.player.grounded = false;
   state.invulnerableRemaining = movement.respawnShieldMs / 1000;
   setHint(state, message, events);
-  events.push({ type: 'respawn' });
+  events.push({ type: 'respawn', fromX, fromY });
 }
 
 function updateTimers(

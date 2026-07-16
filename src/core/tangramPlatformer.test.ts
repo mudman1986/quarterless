@@ -94,7 +94,7 @@ describe('Tangram platformer simulation', () => {
     tickTangramPlatformer(state, simulationLevel, movement, { direction: 0, jumpPressed: false }, TANGRAM_FIXED_STEP, events);
     expect(state.player.y).toBe(376);
     expect(state.player.grounded).toBe(true);
-    expect(events).toContainEqual({ type: 'respawn' });
+    expect(events).toContainEqual(expect.objectContaining({ type: 'respawn', fromX: 1500 }));
   });
 
   it('keeps the furthest checkpoint as the respawn point', () => {
