@@ -23,7 +23,7 @@ body.is-landing {
 body.is-playing,
 body.is-loading {
   overflow: hidden;
-  touch-action: none;
+  touch-action: pinch-zoom;
 }
 
 button {
@@ -607,7 +607,7 @@ button {
   width: 100vw;
   height: 100vh;
   height: 100dvh;
-  touch-action: none;
+  touch-action: pinch-zoom;
 }
 
 .mini-game-pause {
@@ -904,7 +904,7 @@ button {
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.42);
   pointer-events: auto;
-  touch-action: none;
+  touch-action: pinch-zoom;
   user-select: none;
 }
 
@@ -936,7 +936,7 @@ button {
   font-size: 3.2rem;
   font-weight: 800;
   pointer-events: auto;
-  touch-action: none;
+  touch-action: pinch-zoom;
   user-select: none;
 }
 

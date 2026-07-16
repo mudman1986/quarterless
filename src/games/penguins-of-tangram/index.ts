@@ -221,9 +221,6 @@ function createTouchControls(parent: HTMLElement, language: TangramLanguage): Ta
   const stopMovement = (event: PointerEvent): void => {
     if (event.pointerId === movementPointerId) resetMovement();
   };
-  const preventPinchZoom = (event: Event): void => {
-    if (!controls.hidden) event.preventDefault();
-  };
   const resetWhenHidden = (): void => {
     if (document.visibilityState !== 'visible') reset();
   };
@@ -239,8 +236,6 @@ function createTouchControls(parent: HTMLElement, language: TangramLanguage): Ta
   jumpButton.addEventListener('pointerdown', pressJump);
   window.addEventListener('pointerup', stopMovement);
   window.addEventListener('pointercancel', stopMovement);
-  document.addEventListener('gesturestart', preventPinchZoom, { passive: false });
-  document.addEventListener('gesturechange', preventPinchZoom, { passive: false });
   document.addEventListener('visibilitychange', resetWhenHidden);
   cleanups.push(
     () => movePad.removeEventListener('pointerdown', startMovement),
@@ -251,8 +246,6 @@ function createTouchControls(parent: HTMLElement, language: TangramLanguage): Ta
     () => jumpButton.removeEventListener('pointerdown', pressJump),
     () => window.removeEventListener('pointerup', stopMovement),
     () => window.removeEventListener('pointercancel', stopMovement),
-    () => document.removeEventListener('gesturestart', preventPinchZoom),
-    () => document.removeEventListener('gesturechange', preventPinchZoom),
     () => document.removeEventListener('visibilitychange', resetWhenHidden),
   );
   window.addEventListener('blur', reset);

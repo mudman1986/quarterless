@@ -429,9 +429,10 @@ test.describe('coarse pointer controls', () => {
         simulation: { player: { x: number } };
       }).simulation.player.x;
     })).toBeGreaterThan(before);
-    expect(await page.evaluate(() => !document.dispatchEvent(
+    expect(await page.evaluate(() => document.dispatchEvent(
       new Event('gesturestart', { cancelable: true }),
     ))).toBe(true);
+    await expect(page.locator('#game')).toHaveCSS('touch-action', 'pinch-zoom');
     await moveZone.dispatchEvent('lostpointercapture');
     await expect.poll(async () => page.evaluate(() => {
       const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
