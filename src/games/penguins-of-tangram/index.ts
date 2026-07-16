@@ -408,12 +408,13 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     this.add.rectangle(this.level.worldWidth / 2, this.level.worldHeight / 2, this.level.worldWidth, this.level.worldHeight, Phaser.Display.Color.HexStringToColor(this.level.skyColor).color)
       .setScrollFactor(0, 0)
       .setAlpha(0.82);
-    for (let index = 0; index < Math.ceil(this.level.worldWidth / 440); index += 1) {
-      const cloudX = 160 + index * 440;
-      const cloudY = 90 + (index % 3) * 38;
-      this.add.ellipse(cloudX, cloudY, 120, 44, 0xffffff, 0.65).setScrollFactor(0.12, 0.08);
-      this.add.ellipse(cloudX + 40, cloudY + 6, 88, 36, 0xffffff, 0.65).setScrollFactor(0.12, 0.08);
-      this.add.ellipse(cloudX - 46, cloudY + 8, 76, 32, 0xffffff, 0.65).setScrollFactor(0.12, 0.08);
+    for (let index = 0; index < 2; index += 1) {
+      const cloudX = 350 + index * 380;
+      const cloudY = 120 + index * 70;
+      this.add.ellipse(cloudX, cloudY + 4, 96, 34, 0x5ca8c7, 0.45).setScrollFactor(0).setDepth(1);
+      this.add.ellipse(cloudX, cloudY, 90, 32, 0xffffff, 0.85).setScrollFactor(0).setDepth(1);
+      this.add.ellipse(cloudX + 30, cloudY + 5, 62, 24, 0xffffff, 0.85).setScrollFactor(0).setDepth(1);
+      this.add.ellipse(cloudX - 32, cloudY + 6, 54, 22, 0xffffff, 0.85).setScrollFactor(0).setDepth(1);
     }
     this.createLandmark();
   }
