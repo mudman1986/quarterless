@@ -50,6 +50,7 @@ const VIEWPORT_WIDTH = 960;
 const VIEWPORT_HEIGHT = 540;
 const COMPLETION_AUTO_RESUME_MS = 10_000;
 const BACKDROP_DISPLAY_SCALE = 4 / 3;
+const ACTOR_DISPLAY_SCALE = 0.7;
 const CLOUD_POSITIONS = [[0.3, 0.18], [0.72, 0.29]] as const;
 
 type Collectible = {
@@ -304,7 +305,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     this.player = this.createPlayer();
     this.playerAura = this.add.ellipse(0, 0, 88, 92, 0xffef8e, 0.24).setVisible(false);
     this.playerAura.setDepth(4);
-    this.cameras.main.startFollow(this.player, true, 0.12, 0, 120, 30);
+    this.cameras.main.startFollow(this.player, true, 0.12, 0, 0, 30);
     this.syncBackdropLayout();
     this.scale.on('resize', this.onResize, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -897,7 +898,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     this.previousBossHits = this.simulation.boss?.hitsRemaining ?? null;
     this.player.x = playerState.x + TANGRAM_PLAYER_WIDTH / 2;
     this.player.y = playerState.y + TANGRAM_PLAYER_HEIGHT / 2;
-    const playerScale = powered ? 1.18 : 1;
+    const playerScale = (powered ? 1.18 : 1) * ACTOR_DISPLAY_SCALE;
     this.player.scaleX = playerState.facing * playerScale;
     this.player.scaleY = playerScale;
     this.player.rotation = this.simulation.goalPhase === 'none'
@@ -913,14 +914,16 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       sprite.x = enemyState.x + definition.width / 2;
       sprite.y = definition.y + definition.height / 2
         + (this.reducedMotion ? 0 : Math.sin(this.time.now * 0.004 + index) * 2);
-      sprite.scaleX = enemyState.direction;
+      sprite.scaleX = enemyState.direction * ACTOR_DISPLAY_SCALE;
+      sprite.scaleY = ACTOR_DISPLAY_SCALE;
     }
     if (this.bossSprite && this.simulation.boss && this.level.boss) {
       const bossState = this.simulation.boss;
       this.bossSprite.setVisible(bossState.active);
       this.bossSprite.x = bossState.x + this.level.boss.width / 2;
       this.bossSprite.y = this.level.boss.y + this.level.boss.height / 2;
-      this.bossSprite.scaleX = bossState.direction;
+      this.bossSprite.scaleX = bossState.direction * ACTOR_DISPLAY_SCALE;
+      this.bossSprite.scaleY = ACTOR_DISPLAY_SCALE;
       this.bossSprite.alpha = bossState.stunRemaining > 0
         ? this.reducedMotion ? 0.65 : 0.55 + Math.sin(this.time.now * 0.04) * 0.35
         : 1;
@@ -948,7 +951,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       sprite.setVisible(!this.simulation.collected[index]);
       if (!this.simulation.collected[index]) {
         const pulse = this.reducedMotion ? 1 : 1 + Math.sin(this.time.now * 0.005 + index) * 0.08;
-        sprite.setScale(pulse);
+        sprite.setScale(pulse * ACTOR_DISPLAY_SCALE);
         sprite.rotation = this.reducedMotion ? 0 : Math.sin(this.time.now * 0.002 + index) * 0.08;
       }
     }
@@ -959,7 +962,9 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     }
     this.powerSnack.y = this.level.powerup.y - 18 + (this.reducedMotion ? 0 : Math.sin(this.time.now * 0.004) * 5);
     this.powerSnack.rotation = this.reducedMotion ? 0 : Math.sin(this.time.now * 0.002) * 0.12;
-    this.powerSnack.setScale(this.reducedMotion ? 1 : 1 + Math.sin(this.time.now * 0.006) * 0.06);
+    this.powerSnack.setScale(
+      (this.reducedMotion ? 1 : 1 + Math.sin(this.time.now * 0.006) * 0.06) * ACTOR_DISPLAY_SCALE,
+    );
     for (let index = 0; index < this.checkpointBanners.length; index += 1) {
       const checkpoint = this.level.checkpoints[index];
       const banner = this.checkpointBanners[index];
@@ -976,6 +981,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     this.playerAura.setVisible(powered);
     this.playerAura.x = this.player.x;
     this.playerAura.y = this.player.y - 10;
+    this.playerAura.setScale(ACTOR_DISPLAY_SCALE);
   }
 
   private animatePlayer(): void {

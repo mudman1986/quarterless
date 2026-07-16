@@ -3,6 +3,47 @@ import { launchPenguinsOfTangram } from './helpers';
 
 const PROGRESS_KEY = 'penguins-of-tangram.progress';
 
+test('Penguins shrinks moving gameplay visuals without changing the laptop camera', async ({ page }) => {
+  await page.setViewportSize({ width: 1366, height: 768 });
+  await launchPenguinsOfTangram(page);
+  const view = await page.evaluate(() => {
+    const game = (window as unknown as {
+      __game: { scene: { getScene(name: string): unknown } };
+    }).__game;
+    const scene = game.scene.getScene('PenguinsOfTangram') as {
+      enemies: Array<{ sprite: { scaleX: number; scaleY: number } }>;
+      player: { scaleX: number; scaleY: number };
+      cameras: { main: { zoom: number } };
+      scale: { width: number; height: number };
+    };
+    return {
+      cameraZoom: scene.cameras.main.zoom,
+      enemyScales: scene.enemies.map(({ sprite }) => ({ x: Math.abs(sprite.scaleX), y: sprite.scaleY })),
+      playerScale: { x: Math.abs(scene.player.scaleX), y: scene.player.scaleY },
+      baseZoom: Math.max(1, scene.scale.width / 960, scene.scale.height / 540),
+    };
+  });
+
+  expect(view.cameraZoom).toBeCloseTo(view.baseZoom, 3);
+  expect(view.playerScale).toEqual({ x: 0.7, y: 0.7 });
+  expect(view.enemyScales).toEqual(expect.arrayContaining([{ x: 0.7, y: 0.7 }]));
+});
+
+test('Penguins follows the running player from the horizontal center', async ({ page }) => {
+  await launchPenguinsOfTangram(page);
+  const followOffset = await page.evaluate(() => {
+    const game = (window as unknown as {
+      __game: { scene: { getScene(name: string): unknown } };
+    }).__game;
+    const scene = game.scene.getScene('PenguinsOfTangram') as {
+      cameras: { main: { followOffset: { x: number; y: number } } };
+    };
+    return scene.cameras.main.followOffset;
+  });
+
+  expect(followOffset).toEqual({ x: 0, y: 30 });
+});
+
 test('Penguins defaults to Dutch and can switch to English with persistence', async ({ page }) => {
   await page.goto('/quarterless/');
   await page.getByRole('button', { name: 'Play Penguins of Tangram' }).click();
