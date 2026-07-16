@@ -144,6 +144,7 @@ test('Penguins can finish the opening route without collecting every bonus badge
   await expect(page.locator('.tangram-platformer-overlay--complete [data-field="badges"]')).toHaveText('0/12');
   await page.waitForTimeout(1_100);
   await expect(page.getByText('School Gate Morning Run cleared!')).toBeVisible();
+  await expect(page.getByText('Level complete')).toBeVisible();
   await page.getByRole('button', { name: 'Resume' }).click();
   await page.waitForFunction(() => (
     (window as unknown as { __penguinsOfTangram?: { state?: string } }).__penguinsOfTangram?.state === 'running'
@@ -182,9 +183,9 @@ test('Penguins persists mute and campaign progress across reloads', async ({ pag
   await expect(page.getByRole('button', { name: 'Turn sound on' })).toBeVisible();
   await page.getByRole('button', { name: 'Motion: Normal' }).click();
   await expect(page.getByRole('button', { name: 'Motion: Reduced' })).toBeVisible();
-  await page.getByRole('button', { name: 'Reset campaign' }).click();
-  await expect(page.getByText('Reset the adventure and start again?')).toBeVisible();
-  await page.getByRole('button', { name: 'Yes, reset campaign' }).click();
+  await page.getByRole('button', { name: 'Reset game' }).click();
+  await expect(page.getByText('Reset the game and start again?')).toBeVisible();
+  await page.getByRole('button', { name: 'Yes, reset game' }).click();
   await page.waitForFunction(() => {
     const hook = (window as unknown as {
       __penguinsOfTangram?: { state?: string; completedLevelIds?: string[] };
@@ -244,7 +245,7 @@ test('Sports Day exposes a boss and always accepts the final flag', async ({ pag
   );
 });
 
-test('Sports Day keeps the largest zone render loop responsive', async ({ page }) => {
+test('Sports Day keeps the largest level render loop responsive', async ({ page }) => {
   await page.goto('/quarterless/');
   await page.evaluate((key) => {
     localStorage.setItem(

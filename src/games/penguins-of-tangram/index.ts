@@ -1144,9 +1144,9 @@ function createPauseOverlay(
         <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-action="arcade">Back to arcade hall</button>
       </div>
       <div class="tangram-platformer-reset-confirmation" data-reset-confirmation hidden>
-        <p data-label="reset-copy">Reset the adventure and start again?</p>
+        <p data-label="reset-copy">Reset the game and start again?</p>
         <div class="tangram-platformer-action-row">
-          <button class="tangram-platformer-button" type="button" data-setting-action="confirm-reset">Yes, reset campaign</button>
+          <button class="tangram-platformer-button" type="button" data-setting-action="confirm-reset">Yes, reset game</button>
           <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-setting-action="cancel-reset">Keep playing</button>
         </div>
       </div>
@@ -1208,7 +1208,7 @@ function createPauseOverlay(
       'keyboard-copy': 'Arrow keys or A/D move. Space, W, or Up jumps.',
       touch: 'Touch',
       'touch-copy': 'Tap ahead or behind the player to move. Tap the big circle to jump.',
-      'reset-copy': 'Reset the adventure and start again?',
+      'reset-copy': 'Reset the game and start again?',
     };
     for (const [key, value] of Object.entries(labels)) {
       overlay.querySelector<HTMLElement>(`[data-label="${key}"]`)!.textContent = tangramText(nextLanguage, value);
@@ -1218,8 +1218,8 @@ function createPauseOverlay(
       overlay.querySelector<HTMLButtonElement>(`[data-action="${action}"]`)!.textContent = tangramText(nextLanguage, text);
     }
     if (languageButton) languageButton.textContent = `${tangramLanguageLabel(nextLanguage)} / ${nextLanguage === 'nl' ? 'English' : 'Nederlands'}`;
-    overlay.querySelector<HTMLButtonElement>('[data-setting-action="reset"]')!.textContent = tangramText(nextLanguage, 'Reset campaign');
-    overlay.querySelector<HTMLButtonElement>('[data-setting-action="confirm-reset"]')!.textContent = tangramText(nextLanguage, 'Yes, reset campaign');
+    overlay.querySelector<HTMLButtonElement>('[data-setting-action="reset"]')!.textContent = tangramText(nextLanguage, 'Reset game');
+    overlay.querySelector<HTMLButtonElement>('[data-setting-action="confirm-reset"]')!.textContent = tangramText(nextLanguage, 'Yes, reset game');
     overlay.querySelector<HTMLButtonElement>('[data-setting-action="cancel-reset"]')!.textContent = tangramText(nextLanguage, 'Keep playing');
     setMuted(soundButton?.getAttribute('aria-pressed') === 'true');
     setReducedMotion(motionButton?.getAttribute('aria-pressed') === 'true');
@@ -1359,7 +1359,7 @@ function createCompletionOverlay(
       <div class="tangram-platformer-action-row">
         <button class="tangram-platformer-button" type="button" data-action="resume">Resume</button>
         <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-action="map">Choose class</button>
-        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-action="replay">Replay zone</button>
+        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-action="replay">Replay level</button>
         <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-action="choose">Choose another class</button>
       </div>
     </section>`;
@@ -1384,7 +1384,7 @@ function createCompletionOverlay(
       overlay.querySelector<HTMLElement>(`[data-label="${key}"]`)!.textContent = tangramText(nextLanguage, value);
     }
     for (const action of ['resume', 'map', 'replay', 'choose'] as const) {
-      const text = action === 'resume' ? 'Resume' : action === 'map' ? 'Choose class' : action === 'replay' ? 'Replay zone' : 'Choose another class';
+      const text = action === 'resume' ? 'Resume' : action === 'map' ? 'Choose class' : action === 'replay' ? 'Replay level' : 'Choose another class';
       overlay.querySelector<HTMLButtonElement>(`[data-action="${action}"]`)!.textContent = tangramText(nextLanguage, text);
     }
   };
@@ -1393,13 +1393,13 @@ function createCompletionOverlay(
     overlay,
     show(summary, personalBest?: TangramLevelBest) {
       const nextLevel = summary.nextLevelId ? getTangramLevel(summary.nextLevelId) : null;
-      kicker.textContent = tangramText(currentLanguage, summary.campaignComplete ? 'Campaign complete' : 'Zone complete');
+      kicker.textContent = tangramText(currentLanguage, summary.campaignComplete ? 'Game complete' : 'Level complete');
       title.textContent = summary.campaignComplete
         ? tangramText(currentLanguage, 'School festival complete!')
         : `${tangramText(currentLanguage, summary.levelTitle)} ${currentLanguage === 'nl' ? 'afgerond!' : 'cleared!'}`;
       summaryText.textContent = summary.campaignComplete
         ? `${tangramText(currentLanguage, summary.characterName)} ${currentLanguage === 'nl' ? 'bracht elke klassenparade naar de laatste bel en maakte de hele Tangram-schooldag af.' : 'carried every class parade to the final bell and wrapped the full Tangram school day.'}`
-        : `${tangramText(currentLanguage, summary.characterName)} ${currentLanguage === 'nl' ? 'maakte' : 'cleared'} ${tangramText(currentLanguage, summary.levelTitle)} ${currentLanguage === 'nl' ? 'af en opende' : 'and unlocked'} ${tangramText(currentLanguage, nextLevel?.title ?? 'Next route')}.`;
+        : `${tangramText(currentLanguage, summary.characterName)} ${currentLanguage === 'nl' ? 'maakte' : 'cleared'} ${tangramText(currentLanguage, summary.levelTitle)} ${currentLanguage === 'nl' ? 'af en opende' : 'and unlocked'} ${tangramText(currentLanguage, nextLevel?.title ?? 'Next level')}.`;
       badges.textContent = `${summary.badgesCollected}/${summary.totalBadges}`;
       time.textContent = `${summary.durationSeconds}s`;
       checkpoint.textContent = tangramText(currentLanguage, summary.checkpointLabel);

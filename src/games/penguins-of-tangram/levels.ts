@@ -72,7 +72,7 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
   {
     id: 'school-gate-morning-run',
     title: 'School Gate Morning Run',
-    kicker: 'Zone 1',
+    kicker: 'Level 1',
     summary: 'Race from the gate through benches, monkey bars, and the opening badge line.',
     worldWidth: 4400,
     worldHeight: 540,
@@ -133,7 +133,7 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
   {
     id: 'playground-adventure',
     title: 'Playground Adventure',
-    kicker: 'Zone 2',
+    kicker: 'Level 2',
     summary: 'Bounce across jungle-gym platforms and race over the slide-yard set piece.',
     worldWidth: 4000,
     worldHeight: 540,
@@ -203,7 +203,7 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
   {
     id: 'classroom-maze',
     title: 'Classroom Maze',
-    kicker: 'Zone 3',
+    kicker: 'Level 3',
     summary: 'Thread through desk islands, chalk shelves, and a winding classroom obstacle lane.',
     worldWidth: 3800,
     worldHeight: 540,
@@ -270,7 +270,7 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
   {
     id: 'library-art-room-secrets',
     title: 'Library and Art Room Secrets',
-    kicker: 'Zone 4',
+    kicker: 'Level 4',
     summary: 'Climb book stacks, thread art-room rafters, and find the hidden badge route overhead.',
     worldWidth: 4200,
     worldHeight: 540,
@@ -339,7 +339,7 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
   {
     id: 'sports-day-finale',
     title: 'Sports Day Finale',
-    kicker: 'Zone 5',
+    kicker: 'Level 5',
     summary: 'Sprint over hurdles, podium lifts, and the final stadium banner before the school celebration ends.',
     worldWidth: 4500,
     worldHeight: 540,
