@@ -221,6 +221,9 @@ function createTouchControls(parent: HTMLElement, language: TangramLanguage): Ta
   const stopMovement = (event: PointerEvent): void => {
     if (event.pointerId === movementPointerId) resetMovement();
   };
+  const stopLostMovement = (event: PointerEvent): void => {
+    if (event.pointerId === movementPointerId && event.buttons === 0) resetMovement();
+  };
   const resetWhenHidden = (): void => {
     if (document.visibilityState !== 'visible') reset();
   };
@@ -232,7 +235,7 @@ function createTouchControls(parent: HTMLElement, language: TangramLanguage): Ta
   movePad.addEventListener('pointermove', moveMovement);
   movePad.addEventListener('pointerup', stopMovement);
   movePad.addEventListener('pointercancel', stopMovement);
-  movePad.addEventListener('lostpointercapture', resetMovement);
+  movePad.addEventListener('lostpointercapture', stopLostMovement);
   jumpButton.addEventListener('pointerdown', pressJump);
   window.addEventListener('pointerup', stopMovement);
   window.addEventListener('pointercancel', stopMovement);
@@ -242,7 +245,7 @@ function createTouchControls(parent: HTMLElement, language: TangramLanguage): Ta
     () => movePad.removeEventListener('pointermove', moveMovement),
     () => movePad.removeEventListener('pointerup', stopMovement),
     () => movePad.removeEventListener('pointercancel', stopMovement),
-    () => movePad.removeEventListener('lostpointercapture', resetMovement),
+    () => movePad.removeEventListener('lostpointercapture', stopLostMovement),
     () => jumpButton.removeEventListener('pointerdown', pressJump),
     () => window.removeEventListener('pointerup', stopMovement),
     () => window.removeEventListener('pointercancel', stopMovement),
@@ -270,7 +273,8 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   private playerBody!: Phaser.GameObjects.Ellipse;
   private playerBelly!: Phaser.GameObjects.Ellipse;
   private playerShadow!: Phaser.GameObjects.Ellipse;
-  private playerFlippers!: Phaser.GameObjects.Rectangle[];
+  private playerFlippers!: Array<Phaser.GameObjects.Ellipse | Phaser.GameObjects.Rectangle>;
+  private playerInnerFlippers: Phaser.GameObjects.Ellipse[] = [];
   private playerFeet!: Phaser.GameObjects.Ellipse[];
   private checkpointBanners: Phaser.GameObjects.Container[] = [];
   private goalBanner!: Phaser.GameObjects.Container;
@@ -763,26 +767,57 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     const accentColor = Phaser.Display.Color.HexStringToColor(this.character.accent).color;
     const accessoryColor = Phaser.Display.Color.HexStringToColor(this.character.accessory).color;
     const shadow = this.add.ellipse(0, 22, 38, 14, 0x000000, 0.18);
+    const isPenguin = this.character.id === 'penguin';
     const isCrocodile = this.character.id === 'crocodile';
     const isTurtle = this.character.id === 'turtle';
-    const body = this.add.ellipse(0, -8, isCrocodile ? 58 : isTurtle ? 42 : 44, isCrocodile ? 34 : isTurtle ? 44 : 56, bodyColor);
-    const belly = this.add.ellipse(0, -2, isCrocodile ? 34 : isTurtle ? 22 : 24, isCrocodile ? 14 : isTurtle ? 24 : 30, isTurtle ? 0x9fd8b4 : this.character.id === 'penguin' ? 0xf7fbff : accessoryColor);
-    const limbWidth = isCrocodile ? 12 : 10;
-    const limbHeight = isCrocodile ? 10 : 24;
-    const limbY = isCrocodile ? 8 : -8;
-    const leftFlipper = this.add.rectangle(-20, limbY, limbWidth, limbHeight, accessoryColor);
-    const rightFlipper = this.add.rectangle(20, limbY, limbWidth, limbHeight, accessoryColor);
-    const footColor = isCrocodile || isTurtle ? bodyColor : this.character.id === 'penguin' ? 0xffb15f : accessoryColor;
-    const leftFoot = this.add.ellipse(-10, 22, 14, 8, footColor);
-    const rightFoot = this.add.ellipse(10, 22, 14, 8, footColor);
-    const eyeCenterX = isCrocodile || isTurtle ? 24 : this.character.id === 'penguin' ? 7 : 8;
+    const body = this.add.ellipse(
+      0,
+      -8,
+      isCrocodile ? 58 : isTurtle ? 42 : isPenguin ? 46 : 44,
+      isCrocodile ? 34 : isTurtle ? 44 : isPenguin ? 70 : 56,
+      bodyColor,
+    );
+    const belly = this.add.ellipse(
+      isPenguin ? 1 : 0,
+      isPenguin ? -1 : -2,
+      isCrocodile ? 34 : isTurtle ? 22 : isPenguin ? 32 : 24,
+      isCrocodile ? 14 : isTurtle ? 24 : isPenguin ? 48 : 30,
+      isTurtle ? 0x9fd8b4 : isPenguin ? 0xf7fbff : accessoryColor,
+    );
+    const limbWidth = isCrocodile ? 12 : isPenguin ? 12 : 10;
+    const limbHeight = isCrocodile ? 10 : isPenguin ? 30 : 24;
+    const limbY = isCrocodile ? 8 : isPenguin ? -4 : -8;
+    const flipperColor = isPenguin ? 0x274a67 : accessoryColor;
+    const leftFlipper = isPenguin
+      ? this.add.ellipse(-24, limbY, limbWidth, limbHeight, flipperColor)
+      : this.add.rectangle(-20, limbY, limbWidth, limbHeight, flipperColor);
+    const rightFlipper = isPenguin
+      ? this.add.ellipse(24, limbY, limbWidth, limbHeight, flipperColor)
+      : this.add.rectangle(20, limbY, limbWidth, limbHeight, flipperColor);
+    const innerFlippers = isPenguin
+      ? [
+        this.add.ellipse(-24, limbY, 5, 18, 0xf7fbff),
+        this.add.ellipse(24, limbY, 5, 18, 0xf7fbff),
+      ]
+      : [];
+    const footColor = isCrocodile || isTurtle ? bodyColor : isPenguin ? 0xffb15f : accessoryColor;
+    const leftFoot = this.add.ellipse(-11, 22, isPenguin ? 18 : 14, 8, footColor);
+    const rightFoot = this.add.ellipse(11, 22, isPenguin ? 18 : 14, 8, footColor);
+    const eyeCenterX = isCrocodile || isTurtle ? 24 : isPenguin ? 8 : 8;
     const eyeY = isCrocodile || isTurtle ? -19 : -18;
-    const eyes = [
-      this.add.circle(eyeCenterX - 5, eyeY, 4, 0xffffff),
-      this.add.circle(eyeCenterX + 5, eyeY, 4, 0xffffff),
-      this.add.circle(eyeCenterX - 5, eyeY, 2, 0x103047),
-      this.add.circle(eyeCenterX + 5, eyeY, 2, 0x103047),
-    ];
+    const eyes = isPenguin
+      ? [
+        this.add.ellipse(2, -20, 11, 14, 0xf7fbff).setStrokeStyle(2, 0x103047, 1),
+        this.add.ellipse(14, -20, 11, 14, 0xf7fbff).setStrokeStyle(2, 0x103047, 1),
+        this.add.circle(2, -19, 3, 0x103047),
+        this.add.circle(14, -19, 3, 0x103047),
+      ]
+      : [
+        this.add.circle(eyeCenterX - 5, eyeY, 4, 0xffffff),
+        this.add.circle(eyeCenterX + 5, eyeY, 4, 0xffffff),
+        this.add.circle(eyeCenterX - 5, eyeY, 2, 0x103047),
+        this.add.circle(eyeCenterX + 5, eyeY, 2, 0x103047),
+      ];
     const speciesArt: Phaser.GameObjects.GameObject[] = [];
     switch (this.character.id) {
       case 'crocodile':
@@ -816,10 +851,23 @@ class PenguinsOfTangramScene extends Phaser.Scene {
           this.add.circle(18, -32, 8, accentColor),
         );
         break;
-      default:
-        speciesArt.push(this.add.ellipse(24, -10, 16, 10, 0xffb15f).setStrokeStyle(2, 0x103047, 1));
-        break;
     }
+    const penguinFace: Phaser.GameObjects.GameObject[] = isPenguin
+      ? [this.add.ellipse(5, -18, 32, 27, 0xf7fbff)]
+      : [];
+    const penguinDetails: Phaser.GameObjects.GameObject[] = isPenguin
+      ? [
+        this.add.ellipse(-8, -34, 16, 6, 0x5f8ee0, 0.45),
+        this.add.ellipse(23, -10, 16, 10, 0xffb15f).setStrokeStyle(2, 0x103047, 1),
+        this.add.ellipse(24, -6, 10, 4, 0xe37b3f),
+        this.add.circle(1, -22, 1.3, 0xf7fbff),
+        this.add.circle(13, -22, 1.3, 0xf7fbff),
+        this.add.ellipse(-18, 1, 5, 17, 0x5f8ee0, 0.45),
+        this.add.ellipse(18, 1, 5, 17, 0x5f8ee0, 0.45),
+        this.add.ellipse(-8, 14, 8, 3, 0xd9e3ea),
+        this.add.ellipse(8, 14, 8, 3, 0xd9e3ea),
+      ]
+      : [];
     body.setStrokeStyle(5, 0x103047, 1);
     belly.setStrokeStyle(3, 0x103047, 1);
     leftFlipper.setStrokeStyle(3, 0x103047, 1);
@@ -831,9 +879,12 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       ...speciesArt,
       body,
       belly,
+      ...penguinFace,
       leftFlipper,
       rightFlipper,
+      ...innerFlippers,
       ...eyes,
+      ...penguinDetails,
       leftFoot,
       rightFoot,
     ]);
@@ -841,6 +892,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     this.playerBody = body;
     this.playerBelly = belly;
     this.playerFlippers = [leftFlipper, rightFlipper];
+    this.playerInnerFlippers = innerFlippers;
     this.playerFeet = [leftFoot, rightFoot];
     return container;
   }
@@ -1056,8 +1108,12 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       const playerState = this.simulation.player;
       const speed = Math.abs(playerState.velocityX);
       const walking = playerState.grounded && speed > 12;
-      const phase = this.reducedMotion ? 0 : this.time.now * (walking ? 0.024 : 0.008);
-      const stride = walking ? Math.sin(phase) * 5 : 0;
+      const phase = this.reducedMotion ? 0 : this.time.now * (walking ? 0.012 : 0.008);
+      const isPenguin = this.character.id === 'penguin';
+      const step = walking ? Math.sin(this.time.now * 0.012) : 0;
+      const stride = step * (isPenguin ? 11 : 5);
+      const leftFootLift = isPenguin ? Math.max(0, step) * 12 : 0;
+      const rightFootLift = isPenguin ? Math.max(0, -step) * 12 : 0;
       const bob = playerState.grounded
         ? walking
           ? Math.abs(Math.sin(phase)) * 1.4
@@ -1077,10 +1133,15 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       this.playerFlippers[1].y = limbRestY + bob - tuck * 3;
       this.playerFlippers[0].rotation = -0.18 - Math.sin(phase) * (walking ? 0.22 : 0.04);
       this.playerFlippers[1].rotation = 0.18 + Math.sin(phase) * (walking ? 0.22 : 0.04);
-      this.playerFeet[0].x = -10 + stride;
-      this.playerFeet[1].x = 10 - stride;
-      this.playerFeet[0].y = 22 + bob - tuck * 5;
-      this.playerFeet[1].y = 22 + bob - tuck * 5;
+      this.playerInnerFlippers.forEach((flipper, index) => {
+        flipper.y = limbRestY + bob - tuck * 3;
+        flipper.rotation = this.playerFlippers[index].rotation;
+      });
+      const footSpacing = isPenguin ? 11 : 10;
+      this.playerFeet[0].x = -footSpacing + stride;
+      this.playerFeet[1].x = footSpacing - stride;
+      this.playerFeet[0].y = 22 + bob - tuck * 5 - leftFootLift;
+      this.playerFeet[1].y = 22 + bob - tuck * 5 - rightFootLift;
   }
 
   private applySimulationEvents(): void {

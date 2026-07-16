@@ -166,6 +166,68 @@ test('Penguins can restart the current level from its starting point', async ({ 
   expect(restarted).toEqual({ checkpointActivated: false, falls: 0, x: restarted.startX, startX: restarted.startX });
 });
 
+test('Penguin has a distinct layered character design', async ({ page }) => {
+  await launchPenguinsOfTangram(page);
+  const penguin = await page.evaluate(() => {
+    const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game.scene.getScene('PenguinsOfTangram') as {
+      player: { list: unknown[] };
+      playerBody: { width: number; height: number; type: string };
+      playerBelly: { width: number; height: number; type: string };
+      playerInnerFlippers?: Array<{ fillColor: number }>;
+    };
+    return {
+      body: { width: scene.playerBody.width, height: scene.playerBody.height, type: scene.playerBody.type },
+      belly: { width: scene.playerBelly.width, height: scene.playerBelly.height, type: scene.playerBelly.type },
+      whiteInnerArms: scene.playerInnerFlippers?.filter((flipper) => flipper.fillColor === 0xf7fbff).length,
+      layers: scene.player.list.length,
+    };
+  });
+
+  expect(penguin.body).toEqual({ width: 46, height: 70, type: 'Ellipse' });
+  expect(penguin.belly).toEqual({ width: 32, height: 48, type: 'Ellipse' });
+  expect(penguin.whiteInnerArms).toBe(2);
+  expect(penguin.layers).toBeGreaterThanOrEqual(20);
+});
+
+test('Penguin lifts alternating feet while walking', async ({ page }) => {
+  await launchPenguinsOfTangram(page);
+  await page.keyboard.down('ArrowRight');
+  await expect.poll(async () => page.evaluate(() => {
+    const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game.scene.getScene('PenguinsOfTangram') as {
+      playerFeet: Array<{ y: number }>;
+    };
+    return Math.abs(scene.playerFeet[0].y - scene.playerFeet[1].y);
+  })).toBeGreaterThan(8);
+  await page.keyboard.up('ArrowRight');
+});
+
+test('Penguin steps while walking with reduced motion', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await launchPenguinsOfTangram(page);
+  await page.keyboard.down('ArrowRight');
+  await expect.poll(async () => page.evaluate(() => {
+    const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game.scene.getScene('PenguinsOfTangram') as {
+      playerFeet: Array<{ y: number }>;
+      reducedMotion: boolean;
+    };
+    return {
+      footSeparation: Math.abs(scene.playerFeet[0].y - scene.playerFeet[1].y),
+      reducedMotion: scene.reducedMotion,
+    };
+  })).toEqual(expect.objectContaining({ footSeparation: expect.any(Number), reducedMotion: true }));
+  await expect.poll(async () => page.evaluate(() => {
+    const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
+    const scene = game.scene.getScene('PenguinsOfTangram') as {
+      playerFeet: Array<{ y: number }>;
+    };
+    return Math.abs(scene.playerFeet[0].y - scene.playerFeet[1].y);
+  })).toBeGreaterThan(8);
+  await page.keyboard.up('ArrowRight');
+});
+
 test('Penguins can finish the opening route without collecting field badges', async ({ page }) => {
   await launchPenguinsOfTangram(page);
   await page.evaluate(() => {
@@ -429,11 +491,18 @@ test.describe('coarse pointer controls', () => {
         simulation: { player: { x: number } };
       }).simulation.player.x;
     })).toBeGreaterThan(before);
+    await moveZone.dispatchEvent('lostpointercapture', { pointerId: 1, buttons: 1 });
+    await expect.poll(async () => page.evaluate(() => {
+      const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
+      return (game.scene.getScene('PenguinsOfTangram') as {
+        touchControls: { right: boolean };
+      }).touchControls.right;
+    })).toBe(true);
     expect(await page.evaluate(() => document.dispatchEvent(
       new Event('gesturestart', { cancelable: true }),
     ))).toBe(true);
     await expect(page.locator('#game')).toHaveCSS('touch-action', 'pinch-zoom');
-    await moveZone.dispatchEvent('lostpointercapture');
+    await moveZone.dispatchEvent('lostpointercapture', { pointerId: 1, buttons: 0 });
     await expect.poll(async () => page.evaluate(() => {
       const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
       const controls = (game.scene.getScene('PenguinsOfTangram') as {
