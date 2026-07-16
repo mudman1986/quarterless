@@ -114,6 +114,7 @@ describe('penguins of tangram character roster', () => {
       expect(extension(level.collectibles)).toHaveLength(level.collectibles.length * 2 / 3);
       expect(extension(level.enemies)).toHaveLength(level.enemies.length * 2 / 3);
       expect(extension(level.hazards)).toHaveLength(level.hazards.length * 2 / 3);
+      if (level.breakableBlocks) expect(extension(level.breakableBlocks)).toHaveLength(level.breakableBlocks.length * 2 / 3);
       if (level.bouncePads) expect(extension(level.bouncePads)).toHaveLength(level.bouncePads.length * 2 / 3);
       if (level.movingPlatforms) expect(extension(level.movingPlatforms)).toHaveLength(level.movingPlatforms.length * 2 / 3);
       const originalPlatforms = level.platforms.filter(
@@ -130,23 +131,25 @@ describe('penguins of tangram character roster', () => {
     for (const level of CAMPAIGN_LEVELS) {
       const state = createTangramPlatformerState(level);
       const events: TangramPlatformerEvent[] = [];
-      const snack = level.powerup;
-      state.player.x = snack.x;
-      state.player.y = snack.y + snack.height + 20;
-      state.player.velocityY = -740;
+      for (let index = 0; index < level.powerups.length; index += 1) {
+        const snack = level.powerups[index];
+        state.player.x = snack.x;
+        state.player.y = snack.y + snack.height + 20;
+        state.player.velocityY = -740;
 
-      for (let tick = 0; tick < 30 && !state.powerBlockHit; tick += 1) {
-        tickTangramPlatformer(
-          state,
-          level,
-          getTangramCharacter('penguin').movement,
-          { direction: 0, jumpPressed: false },
-          TANGRAM_FIXED_STEP,
-          events,
-        );
+        for (let tick = 0; tick < 30 && !state.powerBlockHit[index]; tick += 1) {
+          tickTangramPlatformer(
+            state,
+            level,
+            getTangramCharacter('penguin').movement,
+            { direction: 0, jumpPressed: false },
+            TANGRAM_FIXED_STEP,
+            events,
+          );
+        }
+
+        expect(state.powerBlockHit[index], `${level.id} power snack ${index} cannot be hit`).toBe(true);
       }
-
-      expect(state.powerBlockHit, `${level.id} power snack cannot be hit`).toBe(true);
     }
   });
 

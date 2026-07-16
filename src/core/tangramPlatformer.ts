@@ -3,7 +3,7 @@ export const TANGRAM_MAX_SUBSTEPS = 5;
 export const TANGRAM_MAX_FRAME_DT = 0.25;
 export const TANGRAM_PLAYER_WIDTH = 52;
 export const TANGRAM_PLAYER_HEIGHT = 72;
-export const TANGRAM_POWER_DURATION = 12;
+export const TANGRAM_POWER_DURATION = 5;
 
 const PLAYER_GRAVITY = 2200;
 const PLAYER_MAX_FALL_SPEED = 960;
@@ -65,7 +65,7 @@ export interface TangramSimulationLevel {
   bouncePads?: ReadonlyArray<TangramRect & { label: string; strength: number }>;
   checkpoints: readonly (TangramRect & { label: string })[];
   goal: TangramRect;
-  powerup: TangramRect & { label: string };
+  powerups: ReadonlyArray<TangramRect & { label: string }>;
   requiredBadges?: number;
 }
 
@@ -149,8 +149,8 @@ export interface TangramPlatformerState {
   respawnPoint: { x: number; y: number; label: string };
   falls: number;
   powerRemaining: number;
-  powerSnackAvailable: boolean;
-  powerBlockHit: boolean;
+  powerSnackAvailable: boolean[];
+  powerBlockHit: boolean[];
   breakableBlocksBroken: boolean[];
   invulnerableRemaining: number;
   hint: string;
@@ -169,6 +169,7 @@ export interface TangramPlatformerInput {
 export type TangramPlatformerEvent =
   | { type: 'hud' }
   | { type: 'shake' }
+  | { type: 'badge'; x: number; y: number; count: number }
   | { type: 'complete' };
 
 export interface TangramJumpAudit {
@@ -225,8 +226,8 @@ export function createTangramPlatformerState(
     respawnPoint: { ...level.start },
     falls: 0,
     powerRemaining: 0,
-    powerSnackAvailable: true,
-    powerBlockHit: false,
+    powerSnackAvailable: level.powerups.map(() => true),
+    powerBlockHit: level.powerups.map(() => false),
     breakableBlocksBroken: (level.breakableBlocks ?? []).map(() => false),
     invulnerableRemaining: 0,
     hint: level.hint,
@@ -251,6 +252,10 @@ export function isTangramPoweredUp(state: TangramPlatformerState): boolean {
   return state.powerRemaining > 0;
 }
 
+export function tangramBadgeTotal(level: TangramSimulationLevel): number {
+  return level.collectibles.length + (level.breakableBlocks?.length ?? 0) + 3;
+}
+
 function intersects(a: TangramRect, b: TangramRect): boolean {
   return (
     a.x < b.x + b.width &&
@@ -271,6 +276,18 @@ function setHint(
 ): void {
   state.hint = message;
   state.hintRemaining = 3.2;
+  events.push({ type: 'hud' });
+}
+
+function awardBadges(
+  state: TangramPlatformerState,
+  count: number,
+  x: number,
+  y: number,
+  events: TangramPlatformerEvent[],
+): void {
+  state.badgesCollected += count;
+  events.push({ type: 'badge', x, y, count });
   events.push({ type: 'hud' });
 }
 
@@ -502,9 +519,11 @@ function resolveVertical(
       const breakableIndex = (level.breakableBlocks ?? []).findIndex(
         (block) => block === platform,
       );
-      if (breakableIndex >= 0 && isTangramPoweredUp(state)) {
+      if (breakableIndex >= 0) {
+        const block = level.breakableBlocks![breakableIndex];
         state.breakableBlocksBroken[breakableIndex] = true;
-        setHint(state, `${level.breakableBlocks?.[breakableIndex].label} broken!`, events);
+        awardBadges(state, 1, block.x + block.width / 2, block.y + block.height / 2, events);
+        setHint(state, `${block.label} broken! Badge earned.`, events);
         events.push({ type: 'shake' });
         continue;
       }
@@ -516,6 +535,32 @@ function resolveVertical(
       state.player.grounded = true;
     }
     playerRect.y = state.player.y;
+  }
+}
+
+function handleBadgeBoxes(
+  state: TangramPlatformerState,
+  level: TangramSimulationLevel,
+  previousX: number,
+  previousY: number,
+  events: TangramPlatformerEvent[],
+): void {
+  if (state.player.velocityY >= 0) return;
+  const player = tangramPlayerRect(state);
+  for (let index = 0; index < (level.breakableBlocks?.length ?? 0); index += 1) {
+    const block = level.breakableBlocks![index];
+    if (
+      state.breakableBlocksBroken[index] ||
+      previousY < block.y + block.height ||
+      player.y + player.height <= block.y ||
+      previousX + player.width <= block.x ||
+      previousX >= block.x + block.width
+    ) continue;
+    state.breakableBlocksBroken[index] = true;
+    awardBadges(state, 1, block.x + block.width / 2, block.y + block.height / 2, events);
+    setHint(state, `${block.label} broken! Badge earned.`, events);
+    events.push({ type: 'shake' });
+    return;
   }
 }
 
@@ -569,6 +614,7 @@ function updatePlayer(
   );
   player.y += player.velocityY * dt;
   player.grounded = false;
+  handleBadgeBoxes(state, level, previousX, previousY, events);
   resolveVertical(state, level, previousY, events);
 
   if (player.y > level.worldHeight + 120 && player.x + TANGRAM_PLAYER_WIDTH < level.goal.x) {
@@ -742,34 +788,35 @@ function handlePowerSnack(
   previousY: number,
   events: TangramPlatformerEvent[],
 ): void {
-  const block = level.powerup;
   const player = tangramPlayerRect(state);
-  const hitBlockFromBelow =
-    !state.powerBlockHit &&
-    state.player.velocityY < 0 &&
-    previousY >= block.y + block.height &&
-    player.y + player.height > block.y &&
-    player.y < block.y + block.height &&
-    player.x < block.x + block.width &&
-    player.x + player.width > block.x;
-  if (hitBlockFromBelow) {
-    state.powerBlockHit = true;
-    setHint(state, 'A super Tangram popped out!', events);
-    events.push({ type: 'hud' });
-    return;
+  for (let index = 0; index < level.powerups.length; index += 1) {
+    const block = level.powerups[index];
+    const hitBlockFromBelow =
+      !state.powerBlockHit[index] &&
+      state.player.velocityY < 0 &&
+      previousY >= block.y + block.height &&
+      player.y + player.height > block.y &&
+      player.y < block.y + block.height &&
+      player.x < block.x + block.width &&
+      player.x + player.width > block.x;
+    if (hitBlockFromBelow) {
+      state.powerBlockHit[index] = true;
+      setHint(state, 'A super Tangram popped out!', events);
+      continue;
+    }
+    if (
+      !state.powerBlockHit[index] ||
+      !state.powerSnackAvailable[index] ||
+      !intersects(player, { ...block, y: block.y - 42 })
+    ) continue;
+    state.powerSnackAvailable[index] = false;
+    state.powerRemaining = TANGRAM_POWER_DURATION;
+    setHint(
+      state,
+      `${block.label} active! Bigger jumps and faster waddles for a short time.`,
+      events,
+    );
   }
-  if (
-    !state.powerBlockHit ||
-    !state.powerSnackAvailable ||
-    !intersects(player, { ...block, y: block.y - 42 })
-  ) return;
-  state.powerSnackAvailable = false;
-  state.powerRemaining = TANGRAM_POWER_DURATION;
-  setHint(
-    state,
-    `${level.powerup.label} active! Bigger jumps and faster waddles for a short time.`,
-    events,
-  );
 }
 
 function handleGoal(
@@ -780,6 +827,15 @@ function handleGoal(
   if (state.goalPhase !== 'none') return;
   const player = tangramPlayerRect(state);
   if (!intersects(player, level.goal) && player.x + player.width < level.goal.x) return;
+  const height = level.goal.y + level.goal.height - player.y;
+  const badgeCount = clamp(Math.ceil(height / (level.goal.height / 3)), 1, 3);
+  awardBadges(
+    state,
+    badgeCount,
+    level.goal.x + level.goal.width / 2,
+    player.y,
+    events,
+  );
   state.goalPhase = 'grab';
   state.goalFlagY = level.goal.y;
   state.player.x = level.goal.x + level.goal.width / 2 - TANGRAM_PLAYER_WIDTH / 2;

@@ -55,7 +55,7 @@ export interface TangramLevelDefinition {
   bouncePads?: readonly BouncePad[];
   checkpoints: readonly (Rect & { label: string })[];
   goal: Rect & { label: string };
-  powerup: Rect & { label: string };
+  powerups: readonly (Rect & { label: string })[];
   requiredBadges?: number;
 }
 
@@ -128,7 +128,7 @@ const AUTHORED_LEVELS: readonly TangramLevelDefinition[] = [
     breakableBlocks: [
       { x: 1280, y: 300, width: 48, height: 48, color: 0xffd166, trim: 0xe3a938, label: 'Tangram block' },
     ],
-    powerup: { x: 1360, y: 300, width: 44, height: 56, label: 'Super Snack' },
+    powerups: [{ x: 1360, y: 300, width: 44, height: 56, label: 'Super Snack' }],
   },
   {
     id: 'playground-adventure',
@@ -198,7 +198,7 @@ const AUTHORED_LEVELS: readonly TangramLevelDefinition[] = [
     breakableBlocks: [
       { x: 2080, y: 286, width: 48, height: 48, color: 0xffd166, trim: 0xe3a938, label: 'Tangram block' },
     ],
-    powerup: { x: 1280, y: 300, width: 44, height: 56, label: 'Rocket Juice' },
+    powerups: [{ x: 1280, y: 300, width: 44, height: 56, label: 'Rocket Juice' }],
   },
   {
     id: 'classroom-maze',
@@ -265,7 +265,7 @@ const AUTHORED_LEVELS: readonly TangramLevelDefinition[] = [
     breakableBlocks: [
       { x: 1980, y: 300, width: 48, height: 48, color: 0xffd166, trim: 0xe3a938, label: 'Tangram block' },
     ],
-    powerup: { x: 2140, y: 300, width: 44, height: 56, label: 'Focus Snack' },
+    powerups: [{ x: 2140, y: 300, width: 44, height: 56, label: 'Focus Snack' }],
   },
   {
     id: 'library-art-room-secrets',
@@ -334,7 +334,7 @@ const AUTHORED_LEVELS: readonly TangramLevelDefinition[] = [
     breakableBlocks: [
       { x: 2020, y: 300, width: 48, height: 48, color: 0xffd166, trim: 0xe3a938, label: 'Tangram block' },
     ],
-    powerup: { x: 2220, y: 300, width: 44, height: 56, label: 'Painter Snack' },
+    powerups: [{ x: 2220, y: 300, width: 44, height: 56, label: 'Painter Snack' }],
   },
   {
     id: 'sports-day-finale',
@@ -408,7 +408,7 @@ const AUTHORED_LEVELS: readonly TangramLevelDefinition[] = [
     breakableBlocks: [
       { x: 2180, y: 300, width: 48, height: 48, color: 0xffd166, trim: 0xe3a938, label: 'Tangram block' },
     ],
-    powerup: { x: 2280, y: 300, width: 44, height: 56, label: 'Victory Snack' },
+    powerups: [{ x: 2280, y: 300, width: 44, height: 56, label: 'Victory Snack' }],
     boss: {
       x: 3090,
       y: 376,
@@ -450,6 +450,10 @@ function extendLevel(level: TangramLevelDefinition): TangramLevelDefinition {
     worldWidth,
     platforms: [...level.platforms, ground(level.worldWidth, addedWidth), ...routePlatforms],
     collectibles: [...level.collectibles, ...repeatRoute(level.collectibles, level.worldWidth)],
+    powerups: [...level.powerups, ...repeatRoute(level.powerups, level.worldWidth)],
+    breakableBlocks: level.breakableBlocks
+      ? [...level.breakableBlocks, ...repeatRoute(level.breakableBlocks, level.worldWidth)]
+      : undefined,
     enemies: [...level.enemies, ...enemies],
     hazards: [...level.hazards, ...repeatRoute(level.hazards, level.worldWidth)],
     bouncePads: level.bouncePads ? [...level.bouncePads, ...repeatRoute(level.bouncePads, level.worldWidth)] : undefined,

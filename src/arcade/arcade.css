@@ -894,10 +894,29 @@ button {
 
 .tangram-platformer-touch-zone {
   position: absolute;
-  inset: 0;
+  left: max(22px, env(safe-area-inset-left));
+  bottom: max(22px, env(safe-area-inset-bottom));
+  display: grid;
+  width: 208px;
+  height: 208px;
+  place-items: center;
+  border: 1px solid rgba(16, 48, 71, 0.24);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.42);
   pointer-events: auto;
   touch-action: none;
   user-select: none;
+}
+
+.tangram-platformer-touch-stick {
+  width: 88px;
+  height: 88px;
+  border: 1px solid rgba(16, 48, 71, 0.32);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 3px 10px rgba(16, 48, 71, 0.16);
+  pointer-events: none;
+  transform: translateX(var(--stick-offset-x, 0));
 }
 
 .tangram-platformer-touch-controls button {

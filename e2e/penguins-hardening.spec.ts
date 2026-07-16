@@ -166,7 +166,7 @@ test('Penguins can restart the current level from its starting point', async ({ 
   expect(restarted).toEqual({ checkpointActivated: false, falls: 0, x: restarted.startX, startX: restarted.startX });
 });
 
-test('Penguins can finish the opening route without collecting every bonus badge', async ({ page }) => {
+test('Penguins can finish the opening route without collecting field badges', async ({ page }) => {
   await launchPenguinsOfTangram(page);
   await page.evaluate(() => {
     const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
@@ -182,7 +182,7 @@ test('Penguins can finish the opening route without collecting every bonus badge
     }
   });
   await expect(page.getByText('School Gate Morning Run cleared!')).toBeVisible();
-  await expect(page.locator('.tangram-platformer-overlay--complete [data-field="badges"]')).toHaveText('0/36');
+  await expect(page.locator('.tangram-platformer-overlay--complete [data-field="badges"]')).toHaveText('3/42');
   await page.waitForTimeout(1_100);
   await expect(page.getByText('School Gate Morning Run cleared!')).toBeVisible();
   await expect(page.getByText('Level complete')).toBeVisible();
@@ -390,21 +390,32 @@ test.describe('coarse pointer controls', () => {
   test('renders and forwards touch controls', async ({ page }) => {
     await launchPenguinsOfTangram(page);
     const moveZone = page.locator('[data-control="move"]');
+    const jumpButton = page.locator('[data-control="jump"]');
     await expect(moveZone).toBeVisible();
+    const moveBox = await moveZone.boundingBox();
+    const jumpBox = await jumpButton.boundingBox();
+    expect(moveBox?.width).toBeCloseTo((jumpBox?.width ?? 0) * 2, 0);
     const before = await page.evaluate(() => {
       const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
       return (game.scene.getScene('PenguinsOfTangram') as {
         simulation: { player: { x: number } };
       }).simulation.player.x;
     });
-    await moveZone.dispatchEvent('pointerdown', { pointerType: 'touch', clientX: 350 });
+    await page.mouse.move(
+      (moveBox?.x ?? 0) + (moveBox?.width ?? 0) - 12,
+      (moveBox?.y ?? 0) + (moveBox?.height ?? 0) / 2,
+    );
+    await page.mouse.down();
     await expect.poll(async () => page.evaluate(() => {
       const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
       return (game.scene.getScene('PenguinsOfTangram') as {
         touchControls: { right: boolean };
       }).touchControls.right;
     })).toBe(true);
-    await moveZone.dispatchEvent('pointerleave', { pointerType: 'touch' });
+    await page.mouse.move(
+      (moveBox?.x ?? 0) + (moveBox?.width ?? 0) + 80,
+      (moveBox?.y ?? 0) + (moveBox?.height ?? 0) / 2,
+    );
     await expect.poll(async () => page.evaluate(() => {
       const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
       return (game.scene.getScene('PenguinsOfTangram') as {
@@ -417,6 +428,13 @@ test.describe('coarse pointer controls', () => {
         simulation: { player: { x: number } };
       }).simulation.player.x;
     })).toBeGreaterThan(before);
-    await moveZone.dispatchEvent('pointerup', { pointerType: 'touch' });
+    await page.mouse.up();
+    await expect.poll(async () => page.evaluate(() => {
+      const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
+      const controls = (game.scene.getScene('PenguinsOfTangram') as {
+        touchControls: { left: boolean; right: boolean };
+      }).touchControls;
+      return { left: controls.left, right: controls.right };
+    })).toEqual({ left: false, right: false });
   });
 });

@@ -11,6 +11,7 @@ import {
   createTangramPlatformerState,
   getTangramCheckpointRespawn,
   isTangramPoweredUp,
+  tangramBadgeTotal,
   tickTangramPlatformer,
   type TangramPlatformerEvent,
   type TangramPlatformerState,
@@ -152,21 +153,32 @@ function createTouchControls(parent: HTMLElement, language: TangramLanguage): Ta
   controls.className = 'tangram-platformer-touch-controls';
   controls.hidden = true;
   controls.innerHTML = `
-    <div class="tangram-platformer-touch-zone" data-control="move" aria-hidden="true"></div>
+    <div class="tangram-platformer-touch-zone" data-control="move" aria-hidden="true">
+      <div class="tangram-platformer-touch-stick"></div>
+    </div>
     <button type="button" data-control="jump" aria-label="${tangramText(language, 'Jump')}">↟</button>`;
   parent.append(controls);
+  const movePad = controls.querySelector<HTMLElement>('[data-control="move"]');
+  const moveStick = controls.querySelector<HTMLElement>('.tangram-platformer-touch-stick');
+  const jumpButton = controls.querySelector<HTMLButtonElement>('[data-control="jump"]');
+  if (!movePad || !moveStick || !jumpButton) {
+    throw new Error('Unable to create Tangram touch controls.');
+  }
   const setLanguage = (nextLanguage: TangramLanguage): void => {
-    const jump = controls.querySelector<HTMLButtonElement>('[data-control="jump"]');
-    if (jump) {
-      jump.textContent = '↟';
-      jump.setAttribute('aria-label', tangramText(nextLanguage, 'Jump'));
-    }
+    jumpButton.textContent = '↟';
+    jumpButton.setAttribute('aria-label', tangramText(nextLanguage, 'Jump'));
   };
 
   const cleanups: Array<() => void> = [];
-  const reset = (): void => {
+  let movementPointerId: number | undefined;
+  const resetMovement = (): void => {
+    movementPointerId = undefined;
     touchControls.left = false;
     touchControls.right = false;
+    moveStick.style.removeProperty('--stick-offset-x');
+  };
+  const reset = (): void => {
+    resetMovement();
     touchControls.jumpPressed = false;
   };
   const touchControls: TangramTouchControls = {
@@ -184,31 +196,50 @@ function createTouchControls(parent: HTMLElement, language: TangramLanguage): Ta
       controls.remove();
     },
   };
-  const pointerDown = (event: PointerEvent): void => {
-    const target = event.target as HTMLElement;
-    const button = target.closest<HTMLButtonElement>('[data-control="jump"]');
-    event.preventDefault();
-    if (button) {
-      touchControls.jumpPressed = true;
-    } else {
-      const bounds = controls.getBoundingClientRect();
-      const forward = event.clientX >= bounds.left + bounds.width / 2;
-      touchControls.left = !forward;
-      touchControls.right = forward;
-    }
-    if (event.pointerId) controls.setPointerCapture(event.pointerId);
+  const updateMovement = (event: PointerEvent): void => {
+    const bounds = movePad.getBoundingClientRect();
+    const horizontalOffset = event.clientX - (bounds.left + bounds.width / 2);
+    const deadZone = bounds.width * 0.1;
+    const stickLimit = bounds.width * 0.25;
+    const stickOffset = Math.max(-stickLimit, Math.min(stickLimit, horizontalOffset));
+    moveStick.style.setProperty('--stick-offset-x', `${stickOffset}px`);
+    touchControls.left = horizontalOffset < -deadZone;
+    touchControls.right = horizontalOffset > deadZone;
   };
-  controls.addEventListener('pointerdown', pointerDown);
-  controls.addEventListener('pointerup', reset);
-  controls.addEventListener('pointercancel', reset);
-  window.addEventListener('pointerup', reset);
-  window.addEventListener('pointercancel', reset);
+  const startMovement = (event: PointerEvent): void => {
+    if (movementPointerId !== undefined) return;
+    event.preventDefault();
+    movementPointerId = event.pointerId;
+    updateMovement(event);
+    movePad.setPointerCapture(event.pointerId);
+  };
+  const moveMovement = (event: PointerEvent): void => {
+    if (event.pointerId !== movementPointerId) return;
+    event.preventDefault();
+    updateMovement(event);
+  };
+  const stopMovement = (event: PointerEvent): void => {
+    if (event.pointerId === movementPointerId) resetMovement();
+  };
+  const pressJump = (event: PointerEvent): void => {
+    event.preventDefault();
+    touchControls.jumpPressed = true;
+  };
+  movePad.addEventListener('pointerdown', startMovement);
+  movePad.addEventListener('pointermove', moveMovement);
+  movePad.addEventListener('pointerup', stopMovement);
+  movePad.addEventListener('pointercancel', stopMovement);
+  jumpButton.addEventListener('pointerdown', pressJump);
+  window.addEventListener('pointerup', stopMovement);
+  window.addEventListener('pointercancel', stopMovement);
   cleanups.push(
-    () => controls.removeEventListener('pointerdown', pointerDown),
-    () => controls.removeEventListener('pointerup', reset),
-    () => controls.removeEventListener('pointercancel', reset),
-    () => window.removeEventListener('pointerup', reset),
-    () => window.removeEventListener('pointercancel', reset),
+    () => movePad.removeEventListener('pointerdown', startMovement),
+    () => movePad.removeEventListener('pointermove', moveMovement),
+    () => movePad.removeEventListener('pointerup', stopMovement),
+    () => movePad.removeEventListener('pointercancel', stopMovement),
+    () => jumpButton.removeEventListener('pointerdown', pressJump),
+    () => window.removeEventListener('pointerup', stopMovement),
+    () => window.removeEventListener('pointercancel', stopMovement),
   );
   window.addEventListener('blur', reset);
   cleanups.push(() => window.removeEventListener('blur', reset));
@@ -237,8 +268,8 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   private checkpointBanners: Phaser.GameObjects.Container[] = [];
   private goalBanner!: Phaser.GameObjects.Container;
   private goalFlag!: Phaser.GameObjects.Container;
-  private powerBlock!: Phaser.GameObjects.Container;
-  private powerSnack!: Phaser.GameObjects.Container;
+  private powerBlocks: Phaser.GameObjects.Container[] = [];
+  private powerSnacks: Phaser.GameObjects.Container[] = [];
   private breakableBlocks: Phaser.GameObjects.Container[] = [];
   private bossSprite: Phaser.GameObjects.Container | null = null;
   private bossHealthLabel: Phaser.GameObjects.Text | null = null;
@@ -381,7 +412,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   debugCompleteLevel(): void {
     if (this.simulation.finished) return;
     this.simulation.collected.fill(true);
-    this.simulation.badgesCollected = this.collectibles.length;
+    this.simulation.badgesCollected = tangramBadgeTotal(this.level);
     this.simulation.checkpointActivated = true;
     const checkpoint = this.level.checkpoints[this.level.checkpoints.length - 1];
     this.simulation.respawnPoint = getTangramCheckpointRespawn(this.level, checkpoint) ?? this.simulation.respawnPoint;
@@ -685,25 +716,29 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   }
 
   private createPowerSnack(): void {
-    this.powerBlock = this.add.container(this.level.powerup.x + this.level.powerup.width / 2, this.level.powerup.y + 26);
-    this.powerBlock.setDepth(4);
     const outlineWidth = 5;
-    this.powerBlock.add([
-      this.add.rectangle(0, 0, 46, 46, 0xffd166).setStrokeStyle(outlineWidth, 0x103047, 1),
-      this.add.rectangle(0, -16, 46, 8, 0xfff0a8),
-      this.add.rectangle(0, 4, 24, 24, 0xf7fbff).setStrokeStyle(3, 0x103047, 1),
-      this.add.triangle(-6, 0, -12, -6, 0, -6, -6, 6, 0xff8f66),
-      this.add.triangle(6, 0, 0, -6, 12, -6, 6, 6, 0x59d0ff),
-      this.add.triangle(0, 9, -6, 4, 6, 4, 0, 14, 0x71d2b6),
-    ]);
-    this.powerSnack = this.add.container(this.level.powerup.x + this.level.powerup.width / 2, this.level.powerup.y - 18);
-    this.powerSnack.setDepth(4);
-    this.powerSnack.add([
-      this.add.ellipse(0, 0, 40, 28, 0x71d2b6).setStrokeStyle(4, 0x103047, 1),
-      this.add.rectangle(0, 0, 25, 14, 0xffd166),
-      this.add.circle(-13, 0, 5, 0xffd166),
-      this.add.circle(13, 0, 5, 0xffd166),
-    ]);
+    this.powerBlocks = this.level.powerups.map((powerup) => {
+      const block = this.add.container(powerup.x + powerup.width / 2, powerup.y + 26).setDepth(4);
+      block.add([
+        this.add.rectangle(0, 0, 46, 46, 0xffd166).setStrokeStyle(outlineWidth, 0x103047, 1),
+        this.add.rectangle(0, -16, 46, 8, 0xfff0a8),
+        this.add.rectangle(0, 4, 24, 24, 0xf7fbff).setStrokeStyle(3, 0x103047, 1),
+        this.add.triangle(-6, 0, -12, -6, 0, -6, -6, 6, 0xff8f66),
+        this.add.triangle(6, 0, 0, -6, 12, -6, 6, 6, 0x59d0ff),
+        this.add.triangle(0, 9, -6, 4, 6, 4, 0, 14, 0x71d2b6),
+      ]);
+      return block;
+    });
+    this.powerSnacks = this.level.powerups.map((powerup) => {
+      const snack = this.add.container(powerup.x + powerup.width / 2, powerup.y - 18).setDepth(4);
+      snack.add([
+        this.add.ellipse(0, 0, 40, 28, 0x71d2b6).setStrokeStyle(4, 0x103047, 1),
+        this.add.rectangle(0, 0, 25, 14, 0xffd166),
+        this.add.circle(-13, 0, 5, 0xffd166),
+        this.add.circle(13, 0, 5, 0xffd166),
+      ]);
+      return snack;
+    });
   }
 
   private createPlayer(): Phaser.GameObjects.Container {
@@ -808,6 +843,24 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       this.add.text(0, 0, '★', { fontFamily: 'Arial, sans-serif', fontSize: '18px', color: '#8d5b34', fontStyle: 'bold' }).setOrigin(0.5),
     ]);
     return badge;
+  }
+
+  private emitBadges(x: number, y: number, count: number): void {
+    for (let index = 0; index < count; index += 1) {
+      const badge = this.createBadge(x, y, 0xffd166).setDepth(8).setScale(0.55);
+      this.tweens.add({
+        targets: badge,
+        x: x + (index - (count - 1) / 2) * 28,
+        y: y - 56 - index * 16,
+        alpha: 0,
+        scaleX: 0.9,
+        scaleY: 0.9,
+        duration: 520,
+        delay: index * 75,
+        ease: 'Cubic.easeOut',
+        onComplete: () => badge.destroy(),
+      });
+    }
   }
 
   private createPuddle(hazard: Rect): Phaser.GameObjects.Container {
@@ -955,16 +1008,20 @@ class PenguinsOfTangramScene extends Phaser.Scene {
         sprite.rotation = this.reducedMotion ? 0 : Math.sin(this.time.now * 0.002 + index) * 0.08;
       }
     }
-    this.powerBlock.setVisible(!this.simulation.powerBlockHit);
-    this.powerSnack.setVisible(this.simulation.powerBlockHit && this.simulation.powerSnackAvailable);
+    for (let index = 0; index < this.powerBlocks.length; index += 1) {
+      const powerup = this.level.powerups[index];
+      const snack = this.powerSnacks[index];
+      this.powerBlocks[index].setVisible(!this.simulation.powerBlockHit[index]);
+      snack.setVisible(this.simulation.powerBlockHit[index] && this.simulation.powerSnackAvailable[index]);
+      snack.y = powerup.y - 18 + (this.reducedMotion ? 0 : Math.sin(this.time.now * 0.004 + index) * 5);
+      snack.rotation = this.reducedMotion ? 0 : Math.sin(this.time.now * 0.002 + index) * 0.12;
+      snack.setScale(
+        (this.reducedMotion ? 1 : 1 + Math.sin(this.time.now * 0.006 + index) * 0.06) * ACTOR_DISPLAY_SCALE,
+      );
+    }
     for (let index = 0; index < this.breakableBlocks.length; index += 1) {
       this.breakableBlocks[index].setVisible(!this.simulation.breakableBlocksBroken[index]);
     }
-    this.powerSnack.y = this.level.powerup.y - 18 + (this.reducedMotion ? 0 : Math.sin(this.time.now * 0.004) * 5);
-    this.powerSnack.rotation = this.reducedMotion ? 0 : Math.sin(this.time.now * 0.002) * 0.12;
-    this.powerSnack.setScale(
-      (this.reducedMotion ? 1 : 1 + Math.sin(this.time.now * 0.006) * 0.06) * ACTOR_DISPLAY_SCALE,
-    );
     for (let index = 0; index < this.checkpointBanners.length; index += 1) {
       const checkpoint = this.level.checkpoints[index];
       const banner = this.checkpointBanners[index];
@@ -1020,6 +1077,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     for (const event of this.simulationEvents) {
       if (event.type === 'hud') shouldUpdateHud = true;
       if (event.type === 'shake' && !this.reducedMotion) this.cameras.main.shake(180, 0.004);
+      if (event.type === 'badge') this.emitBadges(event.x, event.y, event.count);
       if (event.type === 'complete') {
         this.effects?.fanfare();
         this.completeLevel();
@@ -1035,7 +1093,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       characterName: this.character.name,
       levelTitle: this.level.title,
       badgesCollected: this.simulation.badgesCollected,
-      totalBadges: this.collectibles.length,
+      totalBadges: tangramBadgeTotal(this.level),
       durationSeconds: Math.max(1, Math.round(this.simulation.elapsedSeconds)),
       checkpointLabel: this.simulation.respawnPoint.label,
       checkpointReached: this.simulation.checkpointActivated,
@@ -1053,7 +1111,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   private currentSceneHookState(): SceneHookState {
     return {
       badgesCollected: this.simulation.badgesCollected,
-      totalBadges: this.collectibles.length,
+      totalBadges: tangramBadgeTotal(this.level),
       checkpointLabel: this.simulation.respawnPoint.label,
       poweredUp: isTangramPoweredUp(this.simulation),
       bossActive: this.simulation.boss?.active ?? false,
@@ -1469,7 +1527,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
   let activeScene: PenguinsOfTangramScene | null = null;
   let lastHookState: SceneHookState = {
     badgesCollected: 0,
-    totalBadges: getTangramLevel(selectedLevelId).collectibles.length,
+    totalBadges: tangramBadgeTotal(getTangramLevel(selectedLevelId)),
     checkpointLabel: getTangramLevel(selectedLevelId).start.label,
     poweredUp: false,
     jumpAudit: buildJumpAudit(getTangramLevel(selectedLevelId), getTangramCharacter(selectedCharacterId)),
@@ -1625,7 +1683,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
     currentState = 'select';
     lastHookState = {
       badgesCollected: 0,
-      totalBadges: getTangramLevel(selectedLevelId).collectibles.length,
+      totalBadges: tangramBadgeTotal(getTangramLevel(selectedLevelId)),
       checkpointLabel: getTangramLevel(selectedLevelId).start.label,
       poweredUp: false,
       jumpAudit: buildJumpAudit(getTangramLevel(selectedLevelId), getTangramCharacter(selectedCharacterId)),
@@ -1697,7 +1755,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
     currentState = 'running';
     lastHookState = {
       badgesCollected: 0,
-      totalBadges: level.collectibles.length,
+      totalBadges: tangramBadgeTotal(level),
       checkpointLabel: level.start.label,
       poweredUp: false,
       jumpAudit: buildJumpAudit(level, character),
