@@ -765,46 +765,50 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     container.setDepth(6);
     const bodyColor = Phaser.Display.Color.HexStringToColor(this.character.body).color;
     const accentColor = Phaser.Display.Color.HexStringToColor(this.character.accent).color;
-    const accessoryColor = Phaser.Display.Color.HexStringToColor(this.character.accessory).color;
     const shadow = this.add.ellipse(0, 22, 38, 14, 0x000000, 0.18);
     const isPenguin = this.character.id === 'penguin';
     const isCrocodile = this.character.id === 'crocodile';
     const isTurtle = this.character.id === 'turtle';
+    const isKangaroo = this.character.id === 'kangaroo';
+    const isLion = this.character.id === 'lion';
     const body = this.add.ellipse(
       0,
       -8,
-      isCrocodile ? 58 : isTurtle ? 42 : isPenguin ? 46 : 44,
-      isCrocodile ? 34 : isTurtle ? 44 : isPenguin ? 70 : 56,
+      isCrocodile ? 48 : isTurtle ? 56 : isKangaroo ? 42 : isLion ? 46 : isPenguin ? 46 : 44,
+      isCrocodile ? 58 : isTurtle ? 52 : isKangaroo ? 64 : isLion ? 62 : isPenguin ? 70 : 60,
       bodyColor,
     );
     const belly = this.add.ellipse(
       isPenguin ? 1 : 0,
       isPenguin ? -1 : -2,
-      isCrocodile ? 34 : isTurtle ? 22 : isPenguin ? 32 : 24,
-      isCrocodile ? 14 : isTurtle ? 24 : isPenguin ? 48 : 30,
-      isTurtle ? 0x9fd8b4 : isPenguin ? 0xf7fbff : accessoryColor,
+      isCrocodile ? 30 : isTurtle ? 30 : isKangaroo || isLion ? 28 : isPenguin ? 32 : 27,
+      isCrocodile ? 34 : isTurtle ? 28 : isKangaroo || isLion ? 34 : isPenguin ? 48 : 36,
+      isCrocodile ? 0xd9f0c4
+        : isTurtle ? 0x9fd8b4
+          : isKangaroo ? 0xf2c6a5
+            : isLion ? 0xffe0a3
+              : isPenguin ? 0xf7fbff
+                : 0xe6b78a,
     );
-    const limbWidth = isCrocodile ? 12 : isPenguin ? 12 : 10;
-    const limbHeight = isCrocodile ? 10 : isPenguin ? 30 : 24;
-    const limbY = isCrocodile ? 8 : isPenguin ? -4 : -8;
-    const flipperColor = isPenguin ? 0x274a67 : accessoryColor;
-    const leftFlipper = isPenguin
-      ? this.add.ellipse(-24, limbY, limbWidth, limbHeight, flipperColor)
-      : this.add.rectangle(-20, limbY, limbWidth, limbHeight, flipperColor);
-    const rightFlipper = isPenguin
-      ? this.add.ellipse(24, limbY, limbWidth, limbHeight, flipperColor)
-      : this.add.rectangle(20, limbY, limbWidth, limbHeight, flipperColor);
+    const limbWidth = isPenguin ? 12 : isTurtle ? 11 : 10;
+    const limbHeight = isPenguin ? 30 : isCrocodile ? 18 : isTurtle ? 14 : isKangaroo ? 18 : 22;
+    const limbY = isCrocodile ? 0 : isTurtle ? 4 : isKangaroo ? -1 : isLion ? 9 : isPenguin ? -4 : -6;
+    const limbOffset = isPenguin ? 24 : isTurtle ? 25 : isCrocodile ? 23 : isKangaroo ? 17 : isLion ? 18 : 21;
+    const flipperColor = isPenguin ? 0x274a67 : bodyColor;
+    const leftFlipper = this.add.ellipse(-limbOffset, limbY, limbWidth, limbHeight, flipperColor);
+    const rightFlipper = this.add.ellipse(limbOffset, limbY, limbWidth, limbHeight, flipperColor);
     const innerFlippers = isPenguin
       ? [
         this.add.ellipse(-24, limbY, 5, 18, 0xf7fbff),
         this.add.ellipse(24, limbY, 5, 18, 0xf7fbff),
       ]
       : [];
-    const footColor = isCrocodile || isTurtle ? bodyColor : isPenguin ? 0xffb15f : accessoryColor;
-    const leftFoot = this.add.ellipse(-11, 22, isPenguin ? 18 : 14, 8, footColor);
-    const rightFoot = this.add.ellipse(11, 22, isPenguin ? 18 : 14, 8, footColor);
-    const eyeCenterX = isCrocodile || isTurtle ? 24 : isPenguin ? 8 : 8;
-    const eyeY = isCrocodile || isTurtle ? -19 : -18;
+    const footColor = isPenguin ? 0xffb15f : isLion ? 0xd99a43 : bodyColor;
+    const footWidth = isPenguin ? 18 : isTurtle ? 16 : 15;
+    const leftFoot = this.add.ellipse(-11, 22, footWidth, 8, footColor);
+    const rightFoot = this.add.ellipse(11, 22, footWidth, 8, footColor);
+    const eyeCenterX = isCrocodile ? 15 : isTurtle ? 27 : isKangaroo ? 6 : isLion ? 17 : isPenguin ? 8 : 0;
+    const eyeY = isCrocodile ? -25 : isTurtle ? -17 : isKangaroo ? -27 : isLion ? -23 : -20;
     const eyes = isPenguin
       ? [
         this.add.ellipse(2, -20, 11, 14, 0xf7fbff).setStrokeStyle(2, 0x103047, 1),
@@ -819,38 +823,102 @@ class PenguinsOfTangramScene extends Phaser.Scene {
         this.add.circle(eyeCenterX + 5, eyeY, 2, 0x103047),
       ];
     const speciesArt: Phaser.GameObjects.GameObject[] = [];
+    const speciesDetails: Phaser.GameObjects.GameObject[] = [];
     switch (this.character.id) {
-      case 'crocodile':
+      case 'crocodile': {
+        const torso = this.add.graphics();
+        torso.fillStyle(bodyColor, 1);
+        torso.fillRoundedRect(-21, -30, 39, 53, 15);
+        torso.lineStyle(4, 0x103047, 1);
+        torso.strokeRoundedRect(-21, -30, 39, 53, 15);
         speciesArt.push(
-          this.add.rectangle(38, -8, 28, 14, bodyColor).setStrokeStyle(2, 0x103047, 1),
+          torso,
+          this.add.ellipse(-29, 6, 30, 12, bodyColor).setStrokeStyle(2, 0x103047, 1),
+        );
+        speciesDetails.push(
+          this.add.ellipse(-2, 4, 26, 29, 0xd9f0c4).setStrokeStyle(2, 0x103047, 1),
+          this.add.ellipse(24, -13, 32, 18, 0x80d36d).setStrokeStyle(3, 0x103047, 1),
+          this.add.circle(30, -13, 2, 0x103047),
+          this.add.circle(38, -13, 2, 0x103047),
+          this.add.circle(-10, -33, 4, 0x80d36d),
+          this.add.circle(0, -36, 4, 0x80d36d),
         );
         break;
-      case 'monkey':
+      }
+      case 'monkey': {
+        const torso = this.add.graphics();
+        torso.fillStyle(bodyColor, 1);
+        torso.fillRoundedRect(-17, -22, 34, 45, 14);
+        torso.lineStyle(4, 0x103047, 1);
+        torso.strokeRoundedRect(-17, -22, 34, 45, 14);
         speciesArt.push(
-          this.add.circle(-23, -15, 11, bodyColor),
-          this.add.circle(23, -15, 11, bodyColor),
+          torso,
+          this.add.ellipse(-28, 8, 12, 38, bodyColor).setRotation(0.5).setStrokeStyle(2, 0x103047, 1),
+          this.add.circle(-31, 24, 8, bodyColor).setStrokeStyle(2, 0x103047, 1),
+          this.add.circle(-20, -25, 10, bodyColor).setStrokeStyle(2, 0x103047, 1),
+          this.add.circle(20, -25, 10, bodyColor).setStrokeStyle(2, 0x103047, 1),
+        );
+        speciesDetails.push(
+          this.add.circle(0, -24, 20, bodyColor).setStrokeStyle(3, 0x103047, 1),
+          this.add.ellipse(0, 4, 24, 28, 0xe6b78a).setStrokeStyle(2, 0x103047, 1),
+          this.add.ellipse(0, -9, 28, 22, 0xe6b78a).setStrokeStyle(2, 0x103047, 1),
+          this.add.circle(-5, -10, 1.5, 0x103047),
+          this.add.circle(5, -10, 1.5, 0x103047),
         );
         break;
+      }
       case 'turtle':
         speciesArt.push(
-          this.add.ellipse(-3, -8, 60, 42, accentColor).setStrokeStyle(3, 0x355342, 1),
-          this.add.circle(28, -8, 12, bodyColor),
+          this.add.ellipse(-31, 5, 22, 9, bodyColor).setStrokeStyle(2, 0x103047, 1),
+          this.add.ellipse(-3, -8, 64, 52, accentColor).setStrokeStyle(3, 0x355342, 1),
+        );
+        speciesDetails.push(
+          this.add.ellipse(-3, 5, 42, 26, bodyColor).setStrokeStyle(2, 0x103047, 1),
+          this.add.ellipse(-4, 5, 30, 17, 0x9fd8b4).setStrokeStyle(2, 0x355342, 1),
+          this.add.ellipse(28, -10, 24, 21, bodyColor).setStrokeStyle(2, 0x103047, 1),
+          this.add.circle(-14, -18, 6, 0x9fd8b4).setStrokeStyle(2, 0x355342, 1),
+          this.add.circle(0, -26, 6, 0x9fd8b4).setStrokeStyle(2, 0x355342, 1),
+          this.add.circle(13, -13, 6, 0x9fd8b4).setStrokeStyle(2, 0x355342, 1),
+          this.add.circle(-1, 6, 6, 0x9fd8b4).setStrokeStyle(2, 0x355342, 1),
         );
         break;
       case 'kangaroo':
         speciesArt.push(
-          this.add.ellipse(-10, -40, 10, 28, bodyColor),
-          this.add.ellipse(10, -40, 10, 28, bodyColor),
-          this.add.ellipse(0, 10, 28, 24, accentColor).setStrokeStyle(2, 0x103047, 1),
+          this.add.ellipse(-30, 14, 52, 13, bodyColor).setRotation(-0.16).setStrokeStyle(2, 0x103047, 1),
+          this.add.ellipse(-6, 7, 34, 35, bodyColor).setStrokeStyle(3, 0x103047, 1),
+          this.add.ellipse(3, -10, 28, 34, bodyColor).setStrokeStyle(3, 0x103047, 1),
+          this.add.ellipse(-2, -46, 8, 25, bodyColor).setStrokeStyle(2, 0x103047, 1),
+          this.add.ellipse(13, -46, 8, 25, bodyColor).setStrokeStyle(2, 0x103047, 1),
+        );
+        speciesDetails.push(
+          this.add.ellipse(-5, 10, 24, 22, 0xf2c6a5).setStrokeStyle(2, 0x103047, 1),
+          this.add.ellipse(6, -30, 27, 23, bodyColor).setStrokeStyle(3, 0x103047, 1),
+          this.add.ellipse(17, -29, 14, 9, 0xf2c6a5).setStrokeStyle(2, 0x103047, 1),
+          this.add.circle(21, -29, 2, 0x103047),
         );
         break;
-      case 'lion':
+      case 'lion': {
+        const torso = this.add.graphics();
+        torso.fillStyle(bodyColor, 1);
+        torso.fillRoundedRect(-28, -7, 45, 27, 12);
+        torso.lineStyle(4, 0x103047, 1);
+        torso.strokeRoundedRect(-28, -7, 45, 27, 12);
         speciesArt.push(
-          this.add.circle(0, -10, 30, accentColor).setStrokeStyle(3, 0x8d5b34, 1),
-          this.add.circle(-18, -32, 8, accentColor),
-          this.add.circle(18, -32, 8, accentColor),
+          torso,
+          this.add.ellipse(-39, -1, 38, 8, bodyColor).setRotation(0.14).setStrokeStyle(2, 0x103047, 1),
+          this.add.circle(-54, -4, 5, accentColor).setStrokeStyle(2, 0x8d5b34, 1),
+          this.add.ellipse(19, -25, 50, 51, accentColor).setStrokeStyle(3, 0x8d5b34, 1),
+          this.add.circle(7, -40, 7, accentColor).setStrokeStyle(2, 0x8d5b34, 1),
+          this.add.circle(30, -40, 7, accentColor).setStrokeStyle(2, 0x8d5b34, 1),
+        );
+        speciesDetails.push(
+          this.add.ellipse(-5, 5, 23, 15, 0xffe0a3).setStrokeStyle(2, 0x8d5b34, 1),
+          this.add.circle(19, -25, 18, 0xffc45b).setStrokeStyle(3, 0x8d5b34, 1),
+          this.add.ellipse(23, -16, 22, 13, 0xffe0a3).setStrokeStyle(2, 0x8d5b34, 1),
+          this.add.circle(24, -19, 3, 0x805a2a),
         );
         break;
+      }
     }
     const penguinFace: Phaser.GameObjects.GameObject[] = isPenguin
       ? [this.add.ellipse(5, -18, 32, 27, 0xf7fbff)]
@@ -868,6 +936,10 @@ class PenguinsOfTangramScene extends Phaser.Scene {
         this.add.ellipse(8, 14, 8, 3, 0xd9e3ea),
       ]
       : [];
+    if (!isPenguin) {
+      body.setVisible(false);
+      belly.setVisible(false);
+    }
     body.setStrokeStyle(5, 0x103047, 1);
     belly.setStrokeStyle(3, 0x103047, 1);
     leftFlipper.setStrokeStyle(3, 0x103047, 1);
@@ -883,6 +955,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       leftFlipper,
       rightFlipper,
       ...innerFlippers,
+      ...speciesDetails,
       ...eyes,
       ...penguinDetails,
       leftFoot,
@@ -1111,9 +1184,9 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       const phase = this.reducedMotion ? 0 : this.time.now * (walking ? 0.012 : 0.008);
       const isPenguin = this.character.id === 'penguin';
       const step = walking ? Math.sin(this.time.now * 0.012) : 0;
-      const stride = step * (isPenguin ? 11 : 5);
-      const leftFootLift = isPenguin ? Math.max(0, step) * 12 : 0;
-      const rightFootLift = isPenguin ? Math.max(0, -step) * 12 : 0;
+      const stride = step * (isPenguin ? 11 : 8);
+      const leftFootLift = Math.max(0, step) * (isPenguin ? 12 : 8);
+      const rightFootLift = Math.max(0, -step) * (isPenguin ? 12 : 8);
       const bob = playerState.grounded
         ? walking
           ? Math.abs(Math.sin(phase)) * 1.4
@@ -1122,7 +1195,15 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       const airborne = !playerState.grounded;
       const tuck = airborne ? Math.min(1, Math.abs(playerState.velocityY) / 900) : 0;
       const powered = isTangramPoweredUp(this.simulation);
-      const limbRestY = this.character.id === 'crocodile' ? 8 : -8;
+      const limbRestY = this.character.id === 'crocodile'
+        ? 0
+        : this.character.id === 'turtle'
+          ? 4
+          : this.character.id === 'kangaroo'
+            ? -1
+            : this.character.id === 'lion'
+              ? 9
+              : -8;
 
       this.playerShadow.setScale(walking ? 1.08 : 1, walking ? 0.9 : 1);
       this.playerShadow.setAlpha(airborne ? 0.1 : 0.18);
@@ -1137,7 +1218,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
         flipper.y = limbRestY + bob - tuck * 3;
         flipper.rotation = this.playerFlippers[index].rotation;
       });
-      const footSpacing = isPenguin ? 11 : 10;
+      const footSpacing = isPenguin ? 11 : this.character.id === 'lion' ? 17 : 10;
       this.playerFeet[0].x = -footSpacing + stride;
       this.playerFeet[1].x = footSpacing - stride;
       this.playerFeet[0].y = 22 + bob - tuck * 5 - leftFootLift;
@@ -1388,27 +1469,22 @@ function createPauseOverlay(
 }
 
 function characterPreviewSvg(character: TangramCharacterDefinition): string {
-  const { accessory, accent, body, id } = character;
-  const species = {
-    crocodile: `<rect x="24" y="-15" width="28" height="14" rx="2" fill="${body}" stroke="#103047" stroke-width="2"/>`,
-    monkey: `<circle cx="-23" cy="-15" r="11" fill="${body}" stroke="#103047" stroke-width="2"/><circle cx="23" cy="-15" r="11" fill="${body}" stroke="#103047" stroke-width="2"/>`,
-    turtle: `<ellipse cx="-3" cy="-8" rx="30" ry="21" fill="${accent}" stroke="#355342" stroke-width="3"/><circle cx="28" cy="-8" r="12" fill="${body}" stroke="#103047" stroke-width="2"/>`,
-    kangaroo: `<ellipse cx="-10" cy="-40" rx="5" ry="14" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="10" cy="-40" rx="5" ry="14" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="0" cy="10" rx="14" ry="12" fill="${accent}" stroke="#103047" stroke-width="2"/>`,
-    lion: `<circle cx="0" cy="-10" r="30" fill="${accent}" stroke="#8d5b34" stroke-width="3"/><circle cx="-18" cy="-32" r="8" fill="${accent}"/><circle cx="18" cy="-32" r="8" fill="${accent}"/>`,
-    penguin: '<ellipse cx="24" cy="-10" rx="8" ry="5" fill="#ffb15f" stroke="#103047" stroke-width="2"/>',
-  }[id];
-  const isCrocodile = id === 'crocodile';
-  const isTurtle = id === 'turtle';
-  const bodyWidth = isCrocodile ? 58 : isTurtle ? 42 : 44;
-  const bodyHeight = isCrocodile ? 34 : isTurtle ? 44 : 56;
-  const bellyWidth = isCrocodile ? 34 : isTurtle ? 22 : 24;
-  const bellyHeight = isCrocodile ? 14 : isTurtle ? 24 : 30;
-  const limbY = isCrocodile ? 8 : -8;
-  const eyeX = isCrocodile || isTurtle ? 24 : id === 'penguin' ? 7 : 8;
-  const eyeY = isCrocodile || isTurtle ? -19 : -18;
-  const footColor = isCrocodile || isTurtle ? body : id === 'penguin' ? '#ffb15f' : accessory;
-
-  return `<svg viewBox="-60 -60 120 120" focusable="false"><ellipse cx="0" cy="22" rx="19" ry="7" fill="#000" opacity=".18"/>${species}<ellipse cx="0" cy="-8" rx="${bodyWidth / 2}" ry="${bodyHeight / 2}" fill="${body}" stroke="#103047" stroke-width="5"/><ellipse cx="0" cy="-2" rx="${bellyWidth / 2}" ry="${bellyHeight / 2}" fill="${isTurtle ? '#9fd8b4' : id === 'penguin' ? '#f7fbff' : accessory}" stroke="#103047" stroke-width="3"/><rect x="-25" y="${limbY - (isCrocodile ? 5 : 12)}" width="${isCrocodile ? 12 : 10}" height="${isCrocodile ? 10 : 24}" rx="4" fill="${accessory}" stroke="#103047" stroke-width="3"/><rect x="15" y="${limbY - (isCrocodile ? 5 : 12)}" width="${isCrocodile ? 12 : 10}" height="${isCrocodile ? 10 : 24}" rx="4" fill="${accessory}" stroke="#103047" stroke-width="3"/><circle cx="${eyeX - 5}" cy="${eyeY}" r="4" fill="#fff"/><circle cx="${eyeX + 5}" cy="${eyeY}" r="4" fill="#fff"/><circle cx="${eyeX - 5}" cy="${eyeY}" r="2" fill="#103047"/><circle cx="${eyeX + 5}" cy="${eyeY}" r="2" fill="#103047"/><ellipse cx="-10" cy="22" rx="7" ry="4" fill="${footColor}" stroke="#103047" stroke-width="2"/><ellipse cx="10" cy="22" rx="7" ry="4" fill="${footColor}" stroke="#103047" stroke-width="2"/></svg>`;
+  const { accent, body, id } = character;
+  if (id === 'kangaroo') {
+    return `<svg viewBox="-60 -60 120 120" focusable="false"><ellipse cx="0" cy="22" rx="19" ry="7" fill="#000" opacity=".18"/><ellipse cx="-30" cy="14" rx="26" ry="6.5" fill="${body}" stroke="#103047" stroke-width="2" transform="rotate(-9 -30 14)"/><ellipse cx="-6" cy="7" rx="17" ry="17.5" fill="${body}" stroke="#103047" stroke-width="3"/><ellipse cx="3" cy="-10" rx="14" ry="17" fill="${body}" stroke="#103047" stroke-width="3"/><ellipse cx="-2" cy="-46" rx="4" ry="12.5" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="13" cy="-46" rx="4" ry="12.5" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="6" cy="-30" rx="13.5" ry="11.5" fill="${body}" stroke="#103047" stroke-width="3"/><ellipse cx="17" cy="-29" rx="7" ry="4.5" fill="#f2c6a5" stroke="#103047" stroke-width="2"/><circle cx="1" cy="-30" r="4" fill="#fff"/><circle cx="11" cy="-30" r="4" fill="#fff"/><circle cx="1" cy="-30" r="2" fill="#103047"/><circle cx="11" cy="-30" r="2" fill="#103047"/><ellipse cx="-17" cy="-1" rx="5" ry="9" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="17" cy="-1" rx="5" ry="9" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="-5" cy="10" rx="12" ry="11" fill="#f2c6a5" stroke="#103047" stroke-width="2"/><ellipse cx="-11" cy="22" rx="8" ry="4" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="11" cy="22" rx="8" ry="4" fill="${body}" stroke="#103047" stroke-width="2"/></svg>`;
+  }
+  if (id === 'lion') {
+    return `<svg viewBox="-60 -60 120 120" focusable="false"><ellipse cx="0" cy="22" rx="19" ry="7" fill="#000" opacity=".18"/><ellipse cx="-39" cy="-1" rx="19" ry="4" fill="${body}" stroke="#103047" stroke-width="2" transform="rotate(8 -39 -1)"/><circle cx="-54" cy="-4" r="5" fill="${accent}" stroke="#8d5b34" stroke-width="2"/><rect x="-28" y="-7" width="45" height="27" rx="12" fill="${body}" stroke="#103047" stroke-width="3"/><ellipse cx="19" cy="-25" rx="25" ry="25.5" fill="${accent}" stroke="#8d5b34" stroke-width="3"/><circle cx="7" cy="-40" r="7" fill="${accent}" stroke="#8d5b34" stroke-width="2"/><circle cx="30" cy="-40" r="7" fill="${accent}" stroke="#8d5b34" stroke-width="2"/><circle cx="19" cy="-25" r="18" fill="#ffc45b" stroke="#8d5b34" stroke-width="3"/><ellipse cx="23" cy="-16" rx="11" ry="6.5" fill="#ffe0a3" stroke="#8d5b34" stroke-width="2"/><circle cx="24" cy="-19" r="3" fill="${body}"/><circle cx="12" cy="-23" r="4" fill="#fff"/><circle cx="22" cy="-23" r="4" fill="#fff"/><circle cx="12" cy="-23" r="2" fill="#103047"/><circle cx="22" cy="-23" r="2" fill="#103047"/><ellipse cx="-18" cy="9" rx="5" ry="11" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="18" cy="9" rx="5" ry="11" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="-17" cy="22" rx="7.5" ry="4" fill="#d99a43" stroke="#103047" stroke-width="2"/><ellipse cx="17" cy="22" rx="7.5" ry="4" fill="#d99a43" stroke="#103047" stroke-width="2"/></svg>`;
+  }
+  const previews: Record<TangramCharacterId, string> = {
+    crocodile: `<ellipse cx="0" cy="22" rx="19" ry="7" fill="#000" opacity=".18"/><ellipse cx="-29" cy="6" rx="15" ry="6" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="0" cy="-8" rx="24" ry="29" fill="${body}" stroke="#103047" stroke-width="4"/><ellipse cx="0" cy="-2" rx="15" ry="17" fill="#d9f0c4" stroke="#103047" stroke-width="2"/><ellipse cx="24" cy="-13" rx="16" ry="9" fill="#80d36d" stroke="#103047" stroke-width="2"/><circle cx="10" cy="-25" r="4" fill="#fff"/><circle cx="20" cy="-25" r="4" fill="#fff"/><circle cx="10" cy="-25" r="2" fill="#103047"/><circle cx="20" cy="-25" r="2" fill="#103047"/><circle cx="30" cy="-13" r="2" fill="#103047"/><circle cx="38" cy="-13" r="2" fill="#103047"/><ellipse cx="-23" cy="0" rx="5" ry="9" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="23" cy="0" rx="5" ry="9" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="-11" cy="22" rx="8" ry="4" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="11" cy="22" rx="8" ry="4" fill="${body}" stroke="#103047" stroke-width="2"/><circle cx="-10" cy="-33" r="4" fill="#80d36d"/><circle cx="0" cy="-36" r="4" fill="#80d36d"/>`,
+    monkey: `<ellipse cx="0" cy="22" rx="19" ry="7" fill="#000" opacity=".18"/><ellipse cx="-28" cy="8" rx="6" ry="19" fill="${body}" stroke="#103047" stroke-width="2" transform="rotate(28 -28 8)"/><circle cx="-31" cy="24" r="8" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="0" cy="-8" rx="22" ry="30" fill="${body}" stroke="#103047" stroke-width="4"/><ellipse cx="0" cy="-2" rx="14" ry="18" fill="#e6b78a" stroke="#103047" stroke-width="2"/><circle cx="-20" cy="-25" r="10" fill="${body}" stroke="#103047" stroke-width="2"/><circle cx="20" cy="-25" r="10" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="0" cy="-9" rx="14" ry="11" fill="#e6b78a" stroke="#103047" stroke-width="2"/><circle cx="-5" cy="-20" r="4" fill="#fff"/><circle cx="5" cy="-20" r="4" fill="#fff"/><circle cx="-5" cy="-20" r="2" fill="#103047"/><circle cx="5" cy="-20" r="2" fill="#103047"/><ellipse cx="-21" cy="-6" rx="5" ry="11" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="21" cy="-6" rx="5" ry="11" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="-11" cy="22" rx="8" ry="4" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="11" cy="22" rx="8" ry="4" fill="${body}" stroke="#103047" stroke-width="2"/>`,
+    turtle: `<ellipse cx="0" cy="22" rx="19" ry="7" fill="#000" opacity=".18"/><ellipse cx="-31" cy="5" rx="11" ry="4.5" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="-3" cy="-8" rx="32" ry="26" fill="${accent}" stroke="#355342" stroke-width="3"/><ellipse cx="0" cy="-8" rx="28" ry="26" fill="${body}" stroke="#103047" stroke-width="3"/><ellipse cx="0" cy="-2" rx="15" ry="14" fill="#9fd8b4" stroke="#103047" stroke-width="2"/><ellipse cx="28" cy="-10" rx="12" ry="10.5" fill="${body}" stroke="#103047" stroke-width="2"/><circle cx="-14" cy="-18" r="6" fill="#9fd8b4" stroke="#355342" stroke-width="2"/><circle cx="0" cy="-26" r="6" fill="#9fd8b4" stroke="#355342" stroke-width="2"/><circle cx="13" cy="-13" r="6" fill="#9fd8b4" stroke="#355342" stroke-width="2"/><circle cx="-1" cy="6" r="6" fill="#9fd8b4" stroke="#355342" stroke-width="2"/><circle cx="22" cy="-17" r="4" fill="#fff"/><circle cx="32" cy="-17" r="4" fill="#fff"/><circle cx="22" cy="-17" r="2" fill="#103047"/><circle cx="32" cy="-17" r="2" fill="#103047"/><ellipse cx="-25" cy="4" rx="5.5" ry="7" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="25" cy="4" rx="5.5" ry="7" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="-11" cy="22" rx="8" ry="4" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="11" cy="22" rx="8" ry="4" fill="${body}" stroke="#103047" stroke-width="2"/>`,
+    kangaroo: `<ellipse cx="0" cy="22" rx="19" ry="7" fill="#000" opacity=".18"/><ellipse cx="-30" cy="11" rx="25" ry="7.5" fill="${body}" stroke="#103047" stroke-width="2" transform="rotate(-10 -30 11)"/><ellipse cx="0" cy="-8" rx="21" ry="32" fill="${body}" stroke="#103047" stroke-width="4"/><ellipse cx="0" cy="-2" rx="14" ry="17" fill="#f2c6a5" stroke="#103047" stroke-width="2"/><ellipse cx="-10" cy="-42" rx="5" ry="14" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="10" cy="-42" rx="5" ry="14" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="0" cy="-24" rx="12" ry="7" fill="#f2c6a5" stroke="#103047" stroke-width="2"/><circle cx="-5" cy="-27" r="4" fill="#fff"/><circle cx="5" cy="-27" r="4" fill="#fff"/><circle cx="-5" cy="-27" r="2" fill="#103047"/><circle cx="5" cy="-27" r="2" fill="#103047"/><ellipse cx="-21" cy="-6" rx="5" ry="11" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="21" cy="-6" rx="5" ry="11" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="0" cy="8" rx="15" ry="12.5" fill="#f2c6a5" stroke="#103047" stroke-width="2"/><ellipse cx="-11" cy="22" rx="8" ry="4" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="11" cy="22" rx="8" ry="4" fill="${body}" stroke="#103047" stroke-width="2"/>`,
+    lion: `<ellipse cx="0" cy="22" rx="19" ry="7" fill="#000" opacity=".18"/><ellipse cx="-29" cy="10" rx="21" ry="5" fill="${body}" stroke="#103047" stroke-width="2" transform="rotate(12 -29 10)"/><ellipse cx="0" cy="-17" rx="32" ry="33" fill="${accent}" stroke="#8d5b34" stroke-width="3"/><ellipse cx="0" cy="-8" rx="23" ry="31" fill="${body}" stroke="#103047" stroke-width="4"/><ellipse cx="0" cy="-2" rx="14" ry="17" fill="#ffe0a3" stroke="#8d5b34" stroke-width="2"/><circle cx="-18" cy="-39" r="8" fill="${accent}" stroke="#8d5b34" stroke-width="2"/><circle cx="18" cy="-39" r="8" fill="${accent}" stroke="#8d5b34" stroke-width="2"/><ellipse cx="0" cy="-7" rx="14" ry="9.5" fill="#ffe0a3" stroke="#8d5b34" stroke-width="2"/><circle cx="0" cy="-11" r="3" fill="${body}"/><circle cx="-7" cy="-23" r="4" fill="#fff"/><circle cx="7" cy="-23" r="4" fill="#fff"/><circle cx="-7" cy="-23" r="2" fill="#103047"/><circle cx="7" cy="-23" r="2" fill="#103047"/><ellipse cx="-21" cy="-6" rx="5" ry="11" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="21" cy="-6" rx="5" ry="11" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="-11" cy="22" rx="8" ry="4" fill="#d99a43" stroke="#103047" stroke-width="2"/><ellipse cx="11" cy="22" rx="8" ry="4" fill="#d99a43" stroke="#103047" stroke-width="2"/>`,
+    penguin: `<ellipse cx="0" cy="22" rx="19" ry="7" fill="#000" opacity=".18"/><ellipse cx="0" cy="-8" rx="23" ry="35" fill="${body}" stroke="#103047" stroke-width="4"/><ellipse cx="1" cy="-1" rx="16" ry="24" fill="#f7fbff" stroke="#103047" stroke-width="2"/><ellipse cx="5" cy="-18" rx="16" ry="13.5" fill="#f7fbff"/><ellipse cx="-24" cy="-4" rx="6" ry="15" fill="#274a67" stroke="#103047" stroke-width="2"/><ellipse cx="24" cy="-4" rx="6" ry="15" fill="#274a67" stroke="#103047" stroke-width="2"/><ellipse cx="-24" cy="-4" rx="2.5" ry="9" fill="#f7fbff"/><ellipse cx="24" cy="-4" rx="2.5" ry="9" fill="#f7fbff"/><ellipse cx="2" cy="-20" rx="5.5" ry="7" fill="#f7fbff" stroke="#103047" stroke-width="2"/><ellipse cx="14" cy="-20" rx="5.5" ry="7" fill="#f7fbff" stroke="#103047" stroke-width="2"/><circle cx="2" cy="-19" r="3" fill="#103047"/><circle cx="14" cy="-19" r="3" fill="#103047"/><ellipse cx="23" cy="-10" rx="8" ry="5" fill="#ffb15f" stroke="#103047" stroke-width="2"/><ellipse cx="24" cy="-6" rx="5" ry="2" fill="#e37b3f"/><ellipse cx="-11" cy="22" rx="9" ry="4" fill="#ffb15f" stroke="#103047" stroke-width="2"/><ellipse cx="11" cy="22" rx="9" ry="4" fill="#ffb15f" stroke="#103047" stroke-width="2"/>`,
+  };
+  return `<svg viewBox="-60 -60 120 120" focusable="false">${previews[id]}</svg>`;
 }
 
 function createCharacterSelect(
@@ -1609,6 +1685,24 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
   let isPaused = false;
   let audioMuted = progress.audioMuted;
   let reducedMotion = progress.reducedMotion || (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false);
+  let lastSingleTouchEnd = -Infinity;
+  let multiTouchGesture = false;
+  const trackTouchStart = (event: TouchEvent): void => {
+    multiTouchGesture ||= event.touches.length > 1;
+  };
+  const preventDoubleTapZoom = (event: TouchEvent): void => {
+    if (event.touches.length > 0) return;
+    if (multiTouchGesture) {
+      multiTouchGesture = false;
+      lastSingleTouchEnd = -Infinity;
+      return;
+    }
+    const now = event.timeStamp;
+    if (now - lastSingleTouchEnd < 300) event.preventDefault();
+    lastSingleTouchEnd = now;
+  };
+  parent.addEventListener('touchstart', trackTouchStart, { passive: true });
+  parent.addEventListener('touchend', preventDoubleTapZoom, { passive: false });
 
   const pauseButton = createPauseButton(parent, language, () => togglePause());
   const pauseOverlay = createPauseOverlay(
@@ -1856,6 +1950,8 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
       destroyGame();
       touchControls.destroy();
       window.removeEventListener('keydown', keyboardHandler);
+      parent.removeEventListener('touchstart', trackTouchStart);
+      parent.removeEventListener('touchend', preventDoubleTapZoom);
       delete (window as unknown as { __penguinsOfTangram?: TestHook }).__penguinsOfTangram;
       parent.innerHTML = '';
       parent.classList.remove('tangram-platformer-stage');

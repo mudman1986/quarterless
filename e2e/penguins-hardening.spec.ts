@@ -51,6 +51,15 @@ test('Penguins defaults to Dutch and can switch to English with persistence', as
   await expect(page.locator('.tangram-platformer-character-art svg')).toHaveCount(6);
   await expect(page.locator('.tangram-platformer-character-art path')).toHaveCount(0);
   await expect(page.locator('.tangram-platformer-character small')).toHaveCount(0);
+  const previewLayers = await page.locator('.tangram-platformer-character').evaluateAll((cards) => (
+    Object.fromEntries(cards.map((card) => [
+      card.getAttribute('data-character-id'),
+      card.querySelector('svg')?.children.length ?? 0,
+    ]))
+  ));
+  for (const id of ['crocodile', 'monkey', 'turtle', 'kangaroo', 'lion']) {
+    expect(previewLayers[id]).toBeGreaterThanOrEqual(16);
+  }
   await page.waitForFunction(() => (
     (window as unknown as { __penguinsOfTangram?: { language?: string } }).__penguinsOfTangram?.language === 'nl'
   ));
@@ -227,6 +236,21 @@ test('Penguin steps while walking with reduced motion', async ({ page }) => {
   })).toBeGreaterThan(8);
   await page.keyboard.up('ArrowRight');
 });
+
+for (const character of ['Crocodile', 'Monkey', 'Turtle', 'Kangaroo', 'Lion'] as const) {
+  test(`${character} lifts alternating feet while walking`, async ({ page }) => {
+    await launchPenguinsOfTangram(page, character);
+    await page.keyboard.down('ArrowRight');
+    await expect.poll(async () => page.evaluate(() => {
+      const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
+      const scene = game.scene.getScene('PenguinsOfTangram') as {
+        playerFeet: Array<{ y: number }>;
+      };
+      return Math.abs(scene.playerFeet[0].y - scene.playerFeet[1].y);
+    })).toBeGreaterThan(5);
+    await page.keyboard.up('ArrowRight');
+  });
+}
 
 test('Penguins can finish the opening route without collecting field badges', async ({ page }) => {
   await launchPenguinsOfTangram(page);
@@ -491,6 +515,23 @@ test.describe('coarse pointer controls', () => {
         simulation: { player: { x: number } };
       }).simulation.player.x;
     })).toBeGreaterThan(before);
+    const touchDefaults = await page.locator('#game').evaluate((stage) => {
+      const dispatch = (type: string, touchCount: number): boolean => {
+        const event = new Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperty(event, 'touches', { value: { length: touchCount } });
+        stage.dispatchEvent(event);
+        return event.defaultPrevented;
+      };
+      dispatch('touchstart', 1);
+      const firstTap = dispatch('touchend', 0);
+      dispatch('touchstart', 1);
+      const secondTap = dispatch('touchend', 0);
+      dispatch('touchstart', 2);
+      dispatch('touchend', 1);
+      const pinchEnd = dispatch('touchend', 0);
+      return { firstTap, secondTap, pinchEnd };
+    });
+    expect(touchDefaults).toEqual({ firstTap: false, secondTap: true, pinchEnd: false });
     await moveZone.dispatchEvent('lostpointercapture', { pointerId: 1, buttons: 1 });
     await expect.poll(async () => page.evaluate(() => {
       const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
