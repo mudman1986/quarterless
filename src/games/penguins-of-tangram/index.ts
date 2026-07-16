@@ -1249,7 +1249,8 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     this.player.setVisible(false);
     this.playerAura.setVisible(false);
     camera.stopFollow();
-    camera.pan(this.player.x, camera.centerY, 420, 'Sine.easeInOut', true, () => {
+    camera.pan(this.player.x, camera.centerY, 420, 'Sine.easeInOut', true, (_camera, progress) => {
+      if (progress < 1) return;
       this.respawnTransition = false;
       this.player.setVisible(true);
       camera.startFollow(this.player, true, 0.12, 0, 0, 30);

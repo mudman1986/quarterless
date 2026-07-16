@@ -575,8 +575,11 @@ test.describe('coarse pointer controls', () => {
       const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
       const scene = game.scene.getScene('PenguinsOfTangram') as {
         level: { worldHeight: number };
-        simulation: { player: { y: number } };
+        simulation: { player: { x: number; y: number } };
+        cameras: { main: { centerOn(x: number, y: number): void; centerY: number } };
       };
+      scene.simulation.player.x = 760;
+      scene.cameras.main.centerOn(800, scene.cameras.main.centerY);
       scene.simulation.player.y = scene.level.worldHeight + 200;
     });
     await expect.poll(async () => page.evaluate(() => {
@@ -587,10 +590,17 @@ test.describe('coarse pointer controls', () => {
     })).toBe(1);
     expect(await page.evaluate(() => {
       const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
-      return (game.scene.getScene('PenguinsOfTangram') as {
+      const scene = game.scene.getScene('PenguinsOfTangram') as {
         player: { visible: boolean };
-      }).player.visible;
-    })).toBe(false);
+        respawnTransition: boolean;
+        reducedMotion: boolean;
+      };
+      return {
+        visible: scene.player.visible,
+        transitioning: scene.respawnTransition,
+        reducedMotion: scene.reducedMotion,
+      };
+    })).toEqual({ visible: false, transitioning: true, reducedMotion: false });
     await expect.poll(async () => page.evaluate(() => {
       const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
       return (game.scene.getScene('PenguinsOfTangram') as {
