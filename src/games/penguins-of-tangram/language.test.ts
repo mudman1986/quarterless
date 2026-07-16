@@ -8,8 +8,7 @@ describe('Tangram language', () => {
 
   it('translates authored and dynamic messages at the display boundary', () => {
     expect(tangramText('nl', 'Penguins of Tangram')).toBe('Pinguins van Tangram');
-    expect(tangramText('nl', 'Pick a classmate and jump through the school.')).toBe('Kies een klasgenoot en spring door de school.');
-    expect(tangramText('nl', 'Start adventure')).toBe('Start avontuur');
+    expect(tangramText('nl', 'Penguins Class')).toBe('Pinguinklas');
     expect(tangramText('nl', 'Tap ahead or behind the player to move. Tap the big circle to jump.')).toContain('Tik');
     expect(tangramText('nl', 'School Gate Morning Run')).toBe('Ochtendrun bij de schoolpoort');
     expect(tangramText('nl', 'Checkpoint reached: Library Steps')).toBe('Checkpoint bereikt: Bibliotheektrap');

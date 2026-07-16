@@ -958,33 +958,6 @@ button {
   outline-offset: 3px;
 }
 
-.tangram-platformer-audio-button {
-  position: absolute;
-  top: calc(max(14px, env(safe-area-inset-top)) + 52px);
-  right: max(14px, env(safe-area-inset-right));
-  z-index: 16;
-  min-height: 38px;
-  border: 1px solid rgba(16, 48, 71, 0.24);
-  border-radius: 10px;
-  padding: 0 12px;
-  background: rgba(255, 255, 255, 0.82);
-  color: #103047;
-  cursor: pointer;
-  font-size: 0.78rem;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.tangram-platformer-audio-button:focus-visible {
-  outline: 3px solid #103047;
-  outline-offset: 3px;
-}
-
-.tangram-platformer-overlay--help {
-  z-index: 22;
-}
-
 .tangram-platformer-help-list + .tangram-platformer-action-row button:focus-visible {
   outline: 3px solid #103047;
   outline-offset: 3px;
@@ -1002,6 +975,19 @@ button {
   padding: 10px 12px;
   background: rgba(255, 255, 255, 0.7);
   line-height: 1.4;
+}
+
+.tangram-platformer-reset-confirmation {
+  margin-top: 12px;
+  border: 3px solid #ff8f66;
+  border-radius: 14px;
+  padding: 12px;
+  background: #fff2dc;
+}
+
+.tangram-platformer-reset-confirmation p {
+  margin: 0 0 10px;
+  font-weight: 800;
 }
 
 .tangram-platformer-action-row--settings {
@@ -1031,8 +1017,7 @@ button {
 }
 
 .tangram-platformer-hint,
-.tangram-platformer-copy,
-.tangram-platformer-selection-note {
+.tangram-platformer-copy {
   margin: 0;
   line-height: 1.45;
 }
@@ -1097,48 +1082,34 @@ button {
 
 .tangram-platformer-character {
   display: grid;
-  gap: 6px;
+  justify-items: center;
+  gap: 10px;
   border: 2px solid color-mix(in srgb, var(--accent, #59d0ff), #103047 16%);
   border-radius: 16px;
   padding: 14px;
   background: rgba(255, 255, 255, 0.76);
   color: #103047;
-  text-align: left;
+  text-align: center;
   cursor: pointer;
   box-shadow: 0 8px 18px rgba(16, 48, 71, 0.08);
 }
 
 .tangram-platformer-character-art {
   display: grid;
-  width: 76px;
-  height: 76px;
+  width: 104px;
+  height: 104px;
   place-items: center;
-  border-radius: 24px;
+  border-radius: 32px;
   background: color-mix(in srgb, var(--accent, #59d0ff), white 70%);
-  font-size: 3.4rem;
-  line-height: 1;
 }
 
-.tangram-platformer-character--penguin .tangram-platformer-character-art::before { content: '🐧'; }
-.tangram-platformer-character--crocodile .tangram-platformer-character-art::before { content: '🐊'; }
-.tangram-platformer-character--monkey .tangram-platformer-character-art::before { content: '🐒'; }
-.tangram-platformer-character--turtle .tangram-platformer-character-art::before { content: '🐢'; }
-.tangram-platformer-character--kangaroo .tangram-platformer-character-art::before { content: '🦘'; }
-.tangram-platformer-character--lion .tangram-platformer-character-art::before { content: '🦁'; }
+.tangram-platformer-character-art svg {
+  width: 92px;
+  height: 92px;
+}
 
 .tangram-platformer-character strong {
   font-size: 1.05rem;
-}
-
-.tangram-platformer-character span {
-  color: color-mix(in srgb, var(--accent, #59d0ff), #103047 28%);
-  font-weight: 700;
-}
-
-.tangram-platformer-character small {
-  color: #4b6277;
-  font-size: 0.86rem;
-  line-height: 1.4;
 }
 
 .tangram-platformer-character.is-selected {
@@ -1149,10 +1120,15 @@ button {
     0 16px 30px rgba(16, 48, 71, 0.16);
 }
 
-.tangram-platformer-selection-note {
-  min-height: 3.2em;
-  margin-bottom: 18px;
-  color: #4b6277;
+.tangram-platformer-selection-header {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.tangram-platformer-selection-header h2 {
+  margin: 0;
 }
 
 .tangram-platformer-action-row {

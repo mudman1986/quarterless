@@ -43,7 +43,6 @@ export interface TangramLevelDefinition {
   hint: string;
   mapAccent: string;
   skyColor: string;
-  hillColors: readonly [number, number];
   landmark: 'school' | 'playground' | 'classroom' | 'library' | 'stadium';
   signs: ReadonlyArray<{ x: number; label: string; color: string }>;
   platforms: readonly Platform[];
@@ -82,7 +81,6 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
     requiredBadges: 0,
     mapAccent: '#59d0ff',
     skyColor: '#8fd8ff',
-    hillColors: [0x88d06d, 0x72c25f],
     landmark: 'school',
     signs: [
       { x: 410, label: 'Penguins', color: '#59d0ff' },
@@ -130,7 +128,7 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
     breakableBlocks: [
       { x: 1280, y: 300, width: 48, height: 48, color: 0xffd166, trim: 0xe3a938, label: 'Tangram block' },
     ],
-    powerup: { x: 1160, y: 176, width: 44, height: 56, label: 'Super Snack' },
+    powerup: { x: 1360, y: 300, width: 44, height: 56, label: 'Super Snack' },
   },
   {
     id: 'playground-adventure',
@@ -143,7 +141,6 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
     hint: 'Use the bounce pads to reach the monkey-bar route.',
     mapAccent: '#ffb15f',
     skyColor: '#8fd8ff',
-    hillColors: [0x9ade6b, 0x7dd26a],
     landmark: 'playground',
     signs: [
       { x: 360, label: 'Slides', color: '#ff8f66' },
@@ -156,7 +153,7 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
       { x: 470, y: 390, width: 110, height: 20, color: 0xffd166, trim: 0xe3a938, label: 'Slide ramp' },
       { x: 660, y: 312, width: 150, height: 20, color: 0x8dc0ff, trim: 0x5f8ee0, label: 'Monkey bar start' },
       { x: 900, y: 252, width: 170, height: 20, color: 0xffb3c7, trim: 0xff8ea8, label: 'Monkey bar high route' },
-      ground(850, 1270),
+      ground(828, 1292),
       { x: 1460, y: 356, width: 130, height: 20, color: 0xffd166, trim: 0xe3a938, label: 'Swing seat' },
       { x: 1660, y: 286, width: 140, height: 20, color: 0x8dc0ff, trim: 0x5f8ee0, label: 'Swing beam' },
       { x: 1880, y: 226, width: 160, height: 20, color: 0xffb3c7, trim: 0xff8ea8, label: 'Secret bridge', secret: true },
@@ -201,7 +198,7 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
     breakableBlocks: [
       { x: 2080, y: 286, width: 48, height: 48, color: 0xffd166, trim: 0xe3a938, label: 'Tangram block' },
     ],
-    powerup: { x: 1890, y: 168, width: 44, height: 56, label: 'Rocket Juice' },
+    powerup: { x: 1280, y: 300, width: 44, height: 56, label: 'Rocket Juice' },
   },
   {
     id: 'classroom-maze',
@@ -214,7 +211,6 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
     hint: 'Hop from desk to desk and use the chalk-tray shelves to cut corners.',
     mapAccent: '#71d2b6',
     skyColor: '#b7e5ff',
-    hillColors: [0xb7df86, 0x97cb73],
     landmark: 'classroom',
     signs: [
       { x: 280, label: 'Desks', color: '#ffd166' },
@@ -227,11 +223,11 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
       { x: 410, y: 392, width: 120, height: 20, color: 0xffd166, trim: 0xe3a938, label: 'Desk 1' },
       { x: 600, y: 332, width: 120, height: 20, color: 0x8dc0ff, trim: 0x5f8ee0, label: 'Desk 2' },
       { x: 790, y: 272, width: 130, height: 20, color: 0xffb3c7, trim: 0xff8ea8, label: 'Chalk tray' },
-      ground(860, 1080),
+      ground(820, 1120),
       { x: 1280, y: 360, width: 110, height: 20, color: 0xffd166, trim: 0xe3a938, label: 'Cubby top' },
       { x: 1480, y: 300, width: 130, height: 20, color: 0x8dc0ff, trim: 0x5f8ee0, label: 'Window sill' },
       { x: 1700, y: 240, width: 150, height: 20, color: 0xffb3c7, trim: 0xff8ea8, label: 'Banner rail' },
-      ground(2070, 690),
+      ground(2000, 760),
       { x: 2280, y: 340, width: 120, height: 20, color: 0xffd166, trim: 0xe3a938, label: 'Shelf 1' },
       { x: 2460, y: 280, width: 130, height: 20, color: 0x8dc0ff, trim: 0x5f8ee0, label: 'Shelf 2' },
       { x: 2670, y: 220, width: 150, height: 20, color: 0xffb3c7, trim: 0xff8ea8, label: 'Secret rope route', secret: true },
@@ -269,7 +265,7 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
     breakableBlocks: [
       { x: 1980, y: 300, width: 48, height: 48, color: 0xffd166, trim: 0xe3a938, label: 'Tangram block' },
     ],
-    powerup: { x: 1710, y: 182, width: 44, height: 56, label: 'Focus Snack' },
+    powerup: { x: 2140, y: 300, width: 44, height: 56, label: 'Focus Snack' },
   },
   {
     id: 'library-art-room-secrets',
@@ -282,7 +278,6 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
     hint: 'The secret route hides above the bright art-room banners.',
     mapAccent: '#ff93c2',
     skyColor: '#c6ebff',
-    hillColors: [0xb4dc86, 0x8dc86a],
     landmark: 'library',
     signs: [
       { x: 320, label: 'Stacks', color: '#59d0ff' },
@@ -295,16 +290,16 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
       { x: 420, y: 390, width: 110, height: 20, color: 0xffd166, trim: 0xe3a938, label: 'Book stack 1' },
       { x: 620, y: 320, width: 120, height: 20, color: 0x8dc0ff, trim: 0x5f8ee0, label: 'Book stack 2' },
       { x: 810, y: 250, width: 140, height: 20, color: 0xffb3c7, trim: 0xff8ea8, label: 'Top shelf' },
-      ground(820, 1160),
+      ground(780, 1200),
       { x: 1370, y: 356, width: 120, height: 20, color: 0xffd166, trim: 0xe3a938, label: 'Reading rail' },
       { x: 1560, y: 286, width: 140, height: 20, color: 0x8dc0ff, trim: 0x5f8ee0, label: 'Lantern beam' },
       { x: 1760, y: 216, width: 160, height: 20, color: 0xffb3c7, trim: 0xff8ea8, label: 'Banner loft', secret: true },
-      ground(2120, 840),
+      ground(2040, 920),
       { x: 2320, y: 350, width: 120, height: 20, color: 0xffd166, trim: 0xe3a938, label: 'Paint shelf' },
       { x: 2520, y: 290, width: 140, height: 20, color: 0x8dc0ff, trim: 0x5f8ee0, label: 'Canvas bridge' },
       { x: 2740, y: 220, width: 160, height: 20, color: 0xffb3c7, trim: 0xff8ea8, label: 'Rafter secret', secret: true },
       ground(2960, 180),
-      ground(3300, 820),
+      ground(3200, 920),
       { x: 3160, y: 330, width: 140, height: 20, color: 0x8dc0ff, trim: 0x5f8ee0, label: 'Rooftop gate' },
     ],
     collectibles: [
@@ -339,7 +334,7 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
     breakableBlocks: [
       { x: 2020, y: 300, width: 48, height: 48, color: 0xffd166, trim: 0xe3a938, label: 'Tangram block' },
     ],
-    powerup: { x: 2748, y: 164, width: 44, height: 56, label: 'Painter Snack' },
+    powerup: { x: 2220, y: 300, width: 44, height: 56, label: 'Painter Snack' },
   },
   {
     id: 'sports-day-finale',
@@ -352,7 +347,6 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
     hint: 'This final route rewards clean speed and confident jumps.',
     mapAccent: '#ffd166',
     skyColor: '#aee6ff',
-    hillColors: [0x94d974, 0x6fc95d],
     landmark: 'stadium',
     signs: [
       { x: 300, label: 'Track', color: '#ff8f66' },
@@ -365,7 +359,7 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
       { x: 500, y: 396, width: 90, height: 20, color: 0xffd166, trim: 0xe3a938, label: 'Hurdle 1' },
       { x: 700, y: 336, width: 110, height: 20, color: 0x8dc0ff, trim: 0x5f8ee0, label: 'Hurdle 2' },
       { x: 900, y: 276, width: 130, height: 20, color: 0xffb3c7, trim: 0xff8ea8, label: 'Stand rail' },
-      ground(820, 1160),
+      ground(800, 1180),
       { x: 1480, y: 364, width: 100, height: 20, color: 0xffd166, trim: 0xe3a938, label: 'Long-jump board' },
       { x: 1670, y: 296, width: 130, height: 20, color: 0x8dc0ff, trim: 0x5f8ee0, label: 'Judge table' },
       { x: 1880, y: 228, width: 150, height: 20, color: 0xffb3c7, trim: 0xff8ea8, label: 'Score banner', secret: true },
@@ -374,7 +368,7 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
       { x: 2640, y: 300, width: 130, height: 20, color: 0x8dc0ff, trim: 0x5f8ee0, label: 'Podium 2' },
       { x: 2850, y: 238, width: 150, height: 20, color: 0xffb3c7, trim: 0xff8ea8, label: 'Victory banner' },
       ground(2960, 180),
-      ground(3360, 900),
+      ground(3260, 1000),
       { x: 3320, y: 326, width: 140, height: 20, color: 0x8dc0ff, trim: 0x5f8ee0, label: 'Final podium' },
     ],
     movingPlatforms: [
@@ -414,7 +408,7 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
     breakableBlocks: [
       { x: 2180, y: 300, width: 48, height: 48, color: 0xffd166, trim: 0xe3a938, label: 'Tangram block' },
     ],
-    powerup: { x: 2858, y: 182, width: 44, height: 56, label: 'Victory Snack' },
+    powerup: { x: 2280, y: 300, width: 44, height: 56, label: 'Victory Snack' },
     boss: {
       x: 3090,
       y: 376,

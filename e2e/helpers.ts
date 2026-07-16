@@ -9,7 +9,6 @@ type TangramTestHook = {
   language?: 'nl' | 'en';
   audioMuted?: boolean;
   reducedMotion?: boolean;
-  playtestEnabled?: boolean;
   bossActive?: boolean;
   bossHitsRemaining?: number;
   bossWarning?: boolean;
@@ -127,7 +126,6 @@ export async function launchPenguinsOfTangram(
     timeout: 10_000,
   });
   await page.getByRole('button', { name: new RegExp(`^${character}`) }).click();
-  await page.getByRole('button', { name: 'Start adventure' }).click();
   await expect(page.locator('#game canvas')).toBeVisible({ timeout: 15_000 });
   await page.waitForFunction(
     () => (window as unknown as { __penguinsOfTangram?: TangramTestHook }).__penguinsOfTangram?.state === 'running',

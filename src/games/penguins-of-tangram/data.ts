@@ -24,7 +24,6 @@ export interface TangramCharacterDefinition {
   accent: string;
   body: string;
   accessory: string;
-  description: string;
   movement: TangramCharacterMovement;
 }
 
@@ -36,7 +35,6 @@ export const PLAYABLE_CHARACTERS: readonly TangramCharacterDefinition[] = [
     accent: '#59d0ff',
     body: '#1f3348',
     accessory: '#ff7f50',
-    description: 'The cheerful Tangram lead with a balanced, confident platforming style.',
     movement: {
       maxSpeed: 340,
       poweredMaxSpeed: 410,
@@ -55,7 +53,6 @@ export const PLAYABLE_CHARACTERS: readonly TangramCharacterDefinition[] = [
     accent: '#80d36d',
     body: '#3d6d47',
     accessory: '#f7d86c',
-    description: 'A sturdy classmate with a bold grin and a backpack built for adventure.',
     movement: {
       maxSpeed: 326,
       poweredMaxSpeed: 398,
@@ -74,7 +71,6 @@ export const PLAYABLE_CHARACTERS: readonly TangramCharacterDefinition[] = [
     accent: '#ffb15f',
     body: '#6f4d35',
     accessory: '#7fe1c9',
-    description: 'A playful, energetic friend who treats every bench and bar like a jungle gym.',
     movement: {
       maxSpeed: 364,
       poweredMaxSpeed: 432,
@@ -93,7 +89,6 @@ export const PLAYABLE_CHARACTERS: readonly TangramCharacterDefinition[] = [
     accent: '#71d2b6',
     body: '#486856',
     accessory: '#7ac5ff',
-    description: 'A calm explorer who turns every school trip into a cozy expedition.',
     movement: {
       maxSpeed: 312,
       poweredMaxSpeed: 386,
@@ -112,7 +107,6 @@ export const PLAYABLE_CHARACTERS: readonly TangramCharacterDefinition[] = [
     accent: '#ff93c2',
     body: '#8d5a4c',
     accessory: '#f5da62',
-    description: 'A springy sports-day star who is always ready to bound ahead.',
     movement: {
       maxSpeed: 352,
       poweredMaxSpeed: 422,
@@ -131,7 +125,6 @@ export const PLAYABLE_CHARACTERS: readonly TangramCharacterDefinition[] = [
     accent: '#ffd166',
     body: '#805a2a',
     accessory: '#ff8f66',
-    description: 'A brave hall hero with festival-leader energy and a sunny roar.',
     movement: {
       maxSpeed: 392,
       poweredMaxSpeed: 458,

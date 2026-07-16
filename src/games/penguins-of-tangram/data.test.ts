@@ -6,7 +6,14 @@ import {
   isTangramCharacterId,
 } from './data';
 import { CAMPAIGN_LEVELS } from './levels';
-import { buildTangramJumpAudit, getTangramCheckpointSupport } from '../../core/tangramPlatformer';
+import {
+  TANGRAM_FIXED_STEP,
+  buildTangramJumpAudit,
+  createTangramPlatformerState,
+  getTangramCheckpointSupport,
+  tickTangramPlatformer,
+  type TangramPlatformerEvent,
+} from '../../core/tangramPlatformer';
 
 describe('penguins of tangram character roster', () => {
   it('keeps penguin as the default class hero', () => {
@@ -74,6 +81,30 @@ describe('penguins of tangram character roster', () => {
         level.checkpoint.x + level.checkpoint.width / 2,
       );
       expect(support?.y).toBeGreaterThanOrEqual(level.checkpoint.y);
+    }
+  });
+
+  it('keeps every power snack block reachable from below', () => {
+    for (const level of CAMPAIGN_LEVELS) {
+      const state = createTangramPlatformerState(level);
+      const events: TangramPlatformerEvent[] = [];
+      const snack = level.powerup;
+      state.player.x = snack.x;
+      state.player.y = snack.y + snack.height + 20;
+      state.player.velocityY = -740;
+
+      for (let tick = 0; tick < 30 && !state.powerBlockHit; tick += 1) {
+        tickTangramPlatformer(
+          state,
+          level,
+          getTangramCharacter('penguin').movement,
+          { direction: 0, jumpPressed: false },
+          TANGRAM_FIXED_STEP,
+          events,
+        );
+      }
+
+      expect(state.powerBlockHit, `${level.id} power snack cannot be hit`).toBe(true);
     }
   });
 

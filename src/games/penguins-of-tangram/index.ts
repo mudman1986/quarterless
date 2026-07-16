@@ -33,7 +33,6 @@ import {
 import {
   getUnlockedTangramLevelIds,
   loadTangramProgress,
-  recordTangramPlaytest,
   recordTangramLevelCompletion,
   resetTangramProgress,
   saveTangramProgress,
@@ -49,6 +48,7 @@ import {
 
 const VIEWPORT_WIDTH = 960;
 const VIEWPORT_HEIGHT = 540;
+const COMPLETION_AUTO_RESUME_MS = 10_000;
 
 type Collectible = {
   sprite: Phaser.GameObjects.Container;
@@ -95,7 +95,6 @@ type TestHook = {
   audioMuted: boolean;
   reducedMotion: boolean;
   language: TangramLanguage;
-  playtestEnabled: boolean;
   bossActive: boolean;
   bossHitsRemaining: number;
   bossWarning: boolean;
@@ -382,7 +381,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       this.simulation.boss.active = false;
       this.simulation.boss.hitsRemaining = 0;
     }
-    for (let tick = 0; tick < 90 && !this.simulation.finished; tick += 1) {
+    for (let tick = 0; tick < 240 && !this.simulation.finished; tick += 1) {
       tickTangramPlatformer(
         this.simulation,
         this.level,
@@ -402,23 +401,28 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     this.lastCameraHeight = this.scale.height;
     const widthZoom = this.scale.width / VIEWPORT_WIDTH;
     const heightZoom = this.scale.height / VIEWPORT_HEIGHT;
-    this.cameras.main.setZoom(Math.max(1, Math.min(widthZoom, heightZoom)));
+    this.cameras.main.setZoom(Math.max(1, widthZoom, heightZoom));
   }
 
   private createBackdrop(): void {
-    this.add.rectangle(this.level.worldWidth / 2, this.level.worldHeight / 2, this.level.worldWidth, this.level.worldHeight, Phaser.Display.Color.HexStringToColor(this.level.skyColor).color).setScrollFactor(0, 0);
-    this.add.rectangle(this.level.worldWidth / 2, 390, this.level.worldWidth, 180, 0xb9ec7b).setScrollFactor(0.12, 0.2);
+    this.add.rectangle(this.level.worldWidth / 2, this.level.worldHeight / 2, this.level.worldWidth, this.level.worldHeight, Phaser.Display.Color.HexStringToColor(this.level.skyColor).color)
+      .setScrollFactor(0, 0)
+      .setAlpha(0.82);
+    this.add.rectangle(this.level.worldWidth / 2, 486, this.level.worldWidth, 108, 0xb9ec7b)
+      .setScrollFactor(0.12, 0.2)
+      .setAlpha(0.76);
+    this.add.rectangle(this.level.worldWidth / 2, 444, this.level.worldWidth, 24, 0x9bdc73)
+      .setScrollFactor(0.12, 0.2)
+      .setAlpha(0.82);
+    this.add.rectangle(this.level.worldWidth / 2, 528, this.level.worldWidth, 24, 0x86c965)
+      .setScrollFactor(0.12, 0.2)
+      .setAlpha(0.78);
     for (let index = 0; index < Math.ceil(this.level.worldWidth / 440); index += 1) {
       const cloudX = 160 + index * 440;
       const cloudY = 90 + (index % 3) * 38;
-      this.add.ellipse(cloudX, cloudY, 120, 44, 0xffffff, 0.95).setScrollFactor(0.12, 0.08);
-      this.add.ellipse(cloudX + 40, cloudY + 6, 88, 36, 0xffffff, 0.95).setScrollFactor(0.12, 0.08);
-      this.add.ellipse(cloudX - 46, cloudY + 8, 76, 32, 0xffffff, 0.95).setScrollFactor(0.12, 0.08);
-    }
-    for (let index = 0; index < Math.ceil(this.level.worldWidth / 520); index += 1) {
-      const hillX = 260 + index * 520;
-      const color = index % 2 === 0 ? this.level.hillColors[0] : this.level.hillColors[1];
-      this.add.ellipse(hillX, 430, 360, 180, color, 1).setScrollFactor(0.28, 0.3);
+      this.add.ellipse(cloudX, cloudY, 120, 44, 0xffffff, 0.65).setScrollFactor(0.12, 0.08);
+      this.add.ellipse(cloudX + 40, cloudY + 6, 88, 36, 0xffffff, 0.65).setScrollFactor(0.12, 0.08);
+      this.add.ellipse(cloudX - 46, cloudY + 8, 76, 32, 0xffffff, 0.65).setScrollFactor(0.12, 0.08);
     }
     this.createLandmark();
   }
@@ -428,6 +432,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       case 'school': {
         const school = this.add.container(340, 294);
         school.setScrollFactor(0.3, 0.34);
+        school.setAlpha(0.76);
         school.add([
           this.add.rectangle(0, 34, 340, 140, 0xfff4d6),
           this.add.rectangle(0, -10, 220, 70, 0xffd166),
@@ -497,13 +502,15 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   }
 
   private createPlatforms(): void {
+    const outlineWidth = 6;
+    const outlineColor = 0x103047;
     for (const platform of this.level.platforms) {
       this.add.rectangle(platform.x + platform.width / 2, platform.y + platform.height / 2, platform.width, platform.height, platform.color)
         .setDepth(2)
-        .setStrokeStyle(4, 0x103047, 0.92);
+        .setStrokeStyle(outlineWidth, outlineColor, 1);
       this.add.rectangle(platform.x + platform.width / 2, platform.y + 6, platform.width, 12, platform.trim)
         .setDepth(3)
-        .setStrokeStyle(2, 0x103047, 0.8);
+        .setStrokeStyle(3, outlineColor, 1);
     }
     this.breakableBlocks = (this.level.breakableBlocks ?? []).map((block) => {
       const container = this.add.container(
@@ -512,11 +519,12 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       );
       container.setDepth(3);
       container.add([
-        this.add.rectangle(0, 0, block.width, block.height, block.color).setStrokeStyle(4, 0x103047, 1),
+        this.add.rectangle(0, 0, block.width, block.height, block.color).setStrokeStyle(outlineWidth, outlineColor, 1),
         this.add.rectangle(0, -block.height / 2 + 5, block.width, 8, block.trim),
-        this.add.triangle(-8, -6, -14, -14, 0, -14, -8, 2, 0xffffff),
-        this.add.triangle(8, -6, 0, -14, 16, -14, 8, 2, 0xff8f66),
-        this.add.triangle(0, 8, -8, 2, 8, 2, 0, 16, 0x59d0ff),
+        this.add.circle(0, 4, 15, 0xf7fbff).setStrokeStyle(2, 0x103047, 1),
+        this.add.triangle(-6, 0, -13, -8, 1, -8, -6, 5, 0xff8f66),
+        this.add.triangle(6, 0, 1, -8, 13, -8, 6, 5, 0x59d0ff),
+        this.add.triangle(0, 9, -6, 4, 6, 4, 0, 15, 0x71d2b6),
       ]);
       return container;
     });
@@ -530,7 +538,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       ]);
       sprite.list.forEach((child) => {
         if ('setStrokeStyle' in child && typeof child.setStrokeStyle === 'function') {
-          child.setStrokeStyle(3, 0x103047, 0.95);
+          child.setStrokeStyle(5, outlineColor, 1);
         }
       });
       return { sprite };
@@ -610,10 +618,12 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     this.goalFlag.add([
       this.add.triangle(36, 0, 0, -2, 76, 14, 0, 30, 0xff8f66)
         .setStrokeStyle(3, 0x103047, 0.95),
-      this.add.triangle(25, 7, 10, 0, 25, 0, 25, 15, 0xfff7d1),
-      this.add.triangle(39, 7, 25, 0, 53, 0, 39, 18, 0x59d0ff),
-      this.add.triangle(25, 21, 10, 15, 25, 7, 25, 28, 0x71d2b6),
-      this.add.triangle(39, 21, 25, 7, 53, 15, 39, 28, 0xffd166),
+      this.add.rectangle(34, 14, 30, 24, 0xf7fbff).setStrokeStyle(2, 0x103047, 1),
+      this.add.triangle(27, 8, 18, 2, 34, 2, 27, 16, 0xff8f66),
+      this.add.triangle(41, 8, 34, 2, 50, 2, 41, 16, 0x59d0ff),
+      this.add.rectangle(34, 14, 8, 8, 0xffd166).setStrokeStyle(1, 0x103047, 1),
+      this.add.triangle(27, 20, 19, 15, 27, 15, 27, 25, 0x71d2b6),
+      this.add.triangle(41, 20, 41, 15, 49, 15, 41, 25, 0x8d5b34),
     ]);
     this.goalBanner.add(this.goalFlag);
   }
@@ -633,15 +643,19 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   private createPowerSnack(): void {
     this.powerBlock = this.add.container(this.level.powerup.x + this.level.powerup.width / 2, this.level.powerup.y + 26);
     this.powerBlock.setDepth(4);
+    const outlineWidth = 5;
     this.powerBlock.add([
-      this.add.rectangle(0, 0, 46, 46, 0xffd166),
+      this.add.rectangle(0, 0, 46, 46, 0xffd166).setStrokeStyle(outlineWidth, 0x103047, 1),
       this.add.rectangle(0, -16, 46, 8, 0xfff0a8),
-      this.add.triangle(0, 4, -12, 8, 12, 8, 0, -10, 0x8d5b34),
+      this.add.rectangle(0, 4, 24, 24, 0xf7fbff).setStrokeStyle(3, 0x103047, 1),
+      this.add.triangle(-6, 0, -12, -6, 0, -6, -6, 6, 0xff8f66),
+      this.add.triangle(6, 0, 0, -6, 12, -6, 6, 6, 0x59d0ff),
+      this.add.triangle(0, 9, -6, 4, 6, 4, 0, 14, 0x71d2b6),
     ]);
     this.powerSnack = this.add.container(this.level.powerup.x + this.level.powerup.width / 2, this.level.powerup.y - 18);
     this.powerSnack.setDepth(4);
     this.powerSnack.add([
-      this.add.ellipse(0, 0, 40, 28, 0x71d2b6),
+      this.add.ellipse(0, 0, 40, 28, 0x71d2b6).setStrokeStyle(4, 0x103047, 1),
       this.add.rectangle(0, 0, 25, 14, 0xffd166),
       this.add.circle(-13, 0, 5, 0xffd166),
       this.add.circle(13, 0, 5, 0xffd166),
@@ -671,7 +685,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     const footColor = isCrocodile || isTurtle ? bodyColor : this.character.id === 'penguin' ? 0xffb15f : accessoryColor;
     const leftFoot = this.add.ellipse(-10, 22, 14, 8, footColor);
     const rightFoot = this.add.ellipse(10, 22, 14, 8, footColor);
-    const eyeCenterX = isCrocodile || isTurtle ? 24 : 0;
+    const eyeCenterX = isCrocodile || isTurtle ? 24 : this.character.id === 'penguin' ? 7 : 8;
     const eyeY = isCrocodile || isTurtle ? -19 : -18;
     const eyes = [
       this.add.circle(eyeCenterX - 5, eyeY, 4, 0xffffff),
@@ -683,24 +697,18 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     switch (this.character.id) {
       case 'crocodile':
         speciesArt.push(
-          this.add.triangle(-34, -5, -30, -12, -30, 10, -50, 2, bodyColor),
           this.add.rectangle(38, -8, 28, 14, bodyColor).setStrokeStyle(2, 0x103047, 1),
-          this.add.triangle(39, 1, 31, -4, 31, 5, 42, 2, 0xf7d86c),
-          this.add.circle(33, -12, 3, 0x103047),
         );
         break;
       case 'monkey':
         speciesArt.push(
           this.add.circle(-23, -15, 11, bodyColor),
           this.add.circle(23, -15, 11, bodyColor),
-          this.add.arc(-25, 10, 44, 65, 275, false, bodyColor, 7),
-          this.add.ellipse(0, 28, 28, 10, bodyColor),
         );
         break;
       case 'turtle':
         speciesArt.push(
           this.add.ellipse(-3, -8, 60, 42, accentColor).setStrokeStyle(3, 0x355342, 1),
-          this.add.arc(-3, -8, 44, 0, 180, false, 0x355342, 2),
           this.add.circle(28, -8, 12, bodyColor),
         );
         break;
@@ -709,7 +717,6 @@ class PenguinsOfTangramScene extends Phaser.Scene {
           this.add.ellipse(-10, -40, 10, 28, bodyColor),
           this.add.ellipse(10, -40, 10, 28, bodyColor),
           this.add.ellipse(0, 10, 28, 24, accentColor).setStrokeStyle(2, 0x103047, 1),
-          this.add.arc(-22, 12, 46, 120, 260, false, bodyColor, 6),
         );
         break;
       case 'lion':
@@ -717,13 +724,18 @@ class PenguinsOfTangramScene extends Phaser.Scene {
           this.add.circle(0, -10, 30, accentColor).setStrokeStyle(3, 0x8d5b34, 1),
           this.add.circle(-18, -32, 8, accentColor),
           this.add.circle(18, -32, 8, accentColor),
-          this.add.arc(24, 10, 34, -80, 100, false, bodyColor, 5),
         );
         break;
       default:
-        speciesArt.push(this.add.triangle(0, -8, -8, -4, 8, -4, 0, 8, 0xffb15f));
+        speciesArt.push(this.add.ellipse(24, -10, 16, 10, 0xffb15f).setStrokeStyle(2, 0x103047, 1));
         break;
     }
+    body.setStrokeStyle(5, 0x103047, 1);
+    belly.setStrokeStyle(3, 0x103047, 1);
+    leftFlipper.setStrokeStyle(3, 0x103047, 1);
+    rightFlipper.setStrokeStyle(3, 0x103047, 1);
+    leftFoot.setStrokeStyle(2, 0x103047, 1);
+    rightFoot.setStrokeStyle(2, 0x103047, 1);
     container.add([
       shadow,
       ...speciesArt,
@@ -747,8 +759,8 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     const badge = this.add.container(x, y);
     badge.setDepth(4);
     badge.add([
-      this.add.circle(0, 0, 13, baseColor),
-      this.add.circle(0, 0, 9, 0xfff1b8),
+      this.add.circle(0, 0, 13, baseColor).setStrokeStyle(3, 0x103047, 1),
+      this.add.circle(0, 0, 9, 0xfff1b8).setStrokeStyle(2, 0x103047, 1),
       this.add.text(0, 0, '★', { fontFamily: 'Arial, sans-serif', fontSize: '18px', color: '#8d5b34', fontStyle: 'bold' }).setOrigin(0.5),
     ]);
     return badge;
@@ -758,7 +770,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     const puddle = this.add.container(hazard.x + hazard.width / 2, hazard.y + hazard.height / 2);
     puddle.setDepth(3.5);
     puddle.add([
-      this.add.ellipse(0, 0, hazard.width, hazard.height - 8, 0x5cc8ff),
+      this.add.ellipse(0, 0, hazard.width, hazard.height - 8, 0x5cc8ff).setStrokeStyle(4, 0x103047, 1),
       this.add.ellipse(-20, -4, hazard.width * 0.36, hazard.height * 0.36, 0x9fe4ff, 0.85),
       this.add.ellipse(16, 5, hazard.width * 0.28, hazard.height * 0.24, 0x9fe4ff, 0.75),
     ]);
@@ -1048,8 +1060,25 @@ function createPauseButton(parent: HTMLElement, language: TangramLanguage, onPau
 function createPauseOverlay(
   parent: HTMLElement,
   language: TangramLanguage,
-  actions: { onResume: () => void; onMap: () => void; onRestart: () => void; onHelp: () => void },
-): { overlay: HTMLDivElement; show: () => void; hide: () => void; setLanguage: (language: TangramLanguage) => void } {
+  settings: { muted: boolean; reducedMotion: boolean },
+  actions: {
+    onResume: () => void;
+    onMap: () => void;
+    onRestart: () => void;
+    onExit: () => void;
+    onMuted: (muted: boolean) => void;
+    onReducedMotion: (reduced: boolean) => void;
+    onLanguage: (language: TangramLanguage) => void;
+    onReset: () => void;
+  },
+): {
+  overlay: HTMLDivElement;
+  show: () => void;
+  hide: () => void;
+  setLanguage: (language: TangramLanguage) => void;
+  setMuted: (muted: boolean) => void;
+  setReducedMotion: (reduced: boolean) => void;
+} {
   const overlay = document.createElement('div');
   overlay.className = 'tangram-platformer-overlay tangram-platformer-overlay--pause';
   overlay.hidden = true;
@@ -1058,184 +1087,145 @@ function createPauseOverlay(
       <p class="tangram-platformer-kicker" data-label="kicker">Tangram pause</p>
       <h2 data-label="title">Parade paused</h2>
       <p class="tangram-platformer-copy" data-label="copy">The simulation is frozen. Take a breath, then jump back into the route.</p>
+      <h3 data-label="how-to-play">How to play</h3>
+      <div class="tangram-platformer-help-list">
+        <p><strong data-label="keyboard">Keyboard</strong><br><span data-label="keyboard-copy">Arrow keys or A/D move. Space, W, or Up jumps.</span></p>
+        <p><strong data-label="touch">Touch</strong><br><span data-label="touch-copy">Tap ahead or behind the player to move. Tap the big circle to jump.</span></p>
+      </div>
       <div class="tangram-platformer-action-row">
         <button class="tangram-platformer-button" type="button" data-action="resume">Resume run</button>
         <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-action="restart">Restart level</button>
-        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-action="help">How to play</button>
         <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-action="map">Choose class</button>
+      </div>
+      <div class="tangram-platformer-action-row tangram-platformer-action-row--settings">
+        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-setting-action="sound"></button>
+        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-setting-action="language"></button>
+        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-setting-action="motion"></button>
+        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-setting-action="reset"></button>
+        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-action="arcade">Back to arcade hall</button>
+      </div>
+      <div class="tangram-platformer-reset-confirmation" data-reset-confirmation hidden>
+        <p data-label="reset-copy">Reset the adventure and start again?</p>
+        <div class="tangram-platformer-action-row">
+          <button class="tangram-platformer-button" type="button" data-setting-action="confirm-reset">Yes, reset campaign</button>
+          <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-setting-action="cancel-reset">Keep playing</button>
+        </div>
       </div>
     </section>`;
   parent.append(overlay);
   overlay.querySelector<HTMLButtonElement>('[data-action="resume"]')?.addEventListener('click', actions.onResume);
   overlay.querySelector<HTMLButtonElement>('[data-action="restart"]')?.addEventListener('click', actions.onRestart);
-  overlay.querySelector<HTMLButtonElement>('[data-action="help"]')?.addEventListener('click', actions.onHelp);
   overlay.querySelector<HTMLButtonElement>('[data-action="map"]')?.addEventListener('click', actions.onMap);
-  const setLanguage = (nextLanguage: TangramLanguage): void => {
-    const labels: Record<string, string> = {
-      kicker: 'Tangram pause',
-      title: 'Parade paused',
-      copy: 'The simulation is frozen. Take a breath, then jump back into the route.',
-    };
-    for (const [key, value] of Object.entries(labels)) {
-      overlay.querySelector<HTMLElement>(`[data-label="${key}"]`)!.textContent = tangramText(nextLanguage, value);
-    }
-    for (const action of ['resume', 'restart', 'help', 'map'] as const) {
-      const text = action === 'resume' ? 'Resume run' : action === 'restart' ? 'Restart level' : action === 'help' ? 'How to play' : 'Choose class';
-      overlay.querySelector<HTMLButtonElement>(`[data-action="${action}"]`)!.textContent = tangramText(nextLanguage, text);
-    }
-  };
-  setLanguage(language);
-  return {
-    overlay,
-    show: () => { overlay.hidden = false; },
-    hide: () => { overlay.hidden = true; },
-    setLanguage,
-  };
-}
-
-function createAudioToggle(
-  parent: HTMLElement,
-  language: TangramLanguage,
-  muted: boolean,
-  onToggle: (muted: boolean) => void,
-): { setMuted: (muted: boolean) => void; setLanguage: (language: TangramLanguage) => void } {
-  const button = document.createElement('button');
-  button.className = 'tangram-platformer-audio-button';
-  button.type = 'button';
-  parent.append(button);
+  overlay.querySelector<HTMLButtonElement>('[data-action="arcade"]')?.addEventListener('click', actions.onExit);
+  const soundButton = overlay.querySelector<HTMLButtonElement>('[data-setting-action="sound"]');
+  const motionButton = overlay.querySelector<HTMLButtonElement>('[data-setting-action="motion"]');
+  const languageButton = overlay.querySelector<HTMLButtonElement>('[data-setting-action="language"]');
+  const resetConfirmation = overlay.querySelector<HTMLElement>('[data-reset-confirmation]');
   let currentLanguage = language;
-  const setMuted = (nextMuted: boolean): void => {
-    button.textContent = tangramText(currentLanguage, nextMuted ? 'Sound: Off' : 'Sound: On');
-    button.setAttribute('aria-pressed', String(nextMuted));
-    button.setAttribute('aria-label', tangramText(currentLanguage, nextMuted ? 'Turn sound on' : 'Mute sound'));
+  const setMuted = (muted: boolean): void => {
+    if (!soundButton) return;
+    soundButton.textContent = tangramText(currentLanguage, muted ? 'Sound: Off' : 'Sound: On');
+    soundButton.setAttribute('aria-pressed', String(muted));
+    soundButton.setAttribute('aria-label', tangramText(currentLanguage, muted ? 'Turn sound on' : 'Mute sound'));
   };
-  button.addEventListener('click', () => {
-    const nextMuted = button.getAttribute('aria-pressed') !== 'true';
-    setMuted(nextMuted);
-    onToggle(nextMuted);
-  });
-  setMuted(muted);
-  return {
-    setMuted,
-    setLanguage(nextLanguage) {
-      currentLanguage = nextLanguage;
-      setMuted(button.getAttribute('aria-pressed') === 'true');
-    },
-  };
-}
-
-function createChildHelpPanel(
-  parent: HTMLElement,
-  options: {
-    language: TangramLanguage;
-    reducedMotion: boolean;
-    playtestEnabled: boolean;
-    onReducedMotion: (reduced: boolean) => void;
-    onPlaytest: (enabled: boolean) => void;
-    onLanguage: (language: TangramLanguage) => void;
-    onReset: () => void;
-    onClose: () => void;
-  },
-): {
-  show: () => void;
-  hide: () => void;
-  setReducedMotion: (reduced: boolean) => void;
-  setPlaytestEnabled: (enabled: boolean) => void;
-  setLanguage: (language: TangramLanguage) => void;
-} {
-  const overlay = document.createElement('div');
-  overlay.className = 'tangram-platformer-overlay tangram-platformer-overlay--help';
-  overlay.hidden = true;
-  overlay.innerHTML = `
-    <section class="tangram-platformer-panel">
-      <p class="tangram-platformer-kicker" data-label="kicker">Tangram helper</p>
-      <h2 data-label="title">How to play</h2>
-      <p class="tangram-platformer-copy" data-label="copy">Move, jump, collect badges, and ring the bell. Falling is okay: checkpoints remember your place.</p>
-      <div class="tangram-platformer-help-list">
-        <p><strong data-label="keyboard">Keyboard</strong><br><span data-label="keyboard-copy">Arrow keys or A/D move. Space, W, or Up jumps.</span></p>
-        <p><strong data-label="touch">Touch</strong><br><span data-label="touch-copy">Tap ahead or behind the player to move. Tap the big circle to jump.</span></p>
-        <p><strong data-label="pause">Pause</strong><br><span data-label="pause-copy">Press P or Escape, or choose Pause.</span></p>
-      </div>
-      <div class="tangram-platformer-action-row tangram-platformer-action-row--settings">
-        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-help-action="language"></button>
-        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-help-action="motion"></button>
-        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-help-action="playtest"></button>
-        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-help-action="reset"></button>
-        <button class="tangram-platformer-button" type="button" data-help-action="close"></button>
-      </div>
-    </section>`;
-  parent.append(overlay);
-
-  const motionButton = overlay.querySelector<HTMLButtonElement>('[data-help-action="motion"]');
-  const playtestButton = overlay.querySelector<HTMLButtonElement>('[data-help-action="playtest"]');
-  const languageButton = overlay.querySelector<HTMLButtonElement>('[data-help-action="language"]');
-  let currentLanguage = options.language;
   const setReducedMotion = (reduced: boolean): void => {
     if (!motionButton) return;
     motionButton.textContent = tangramText(currentLanguage, reduced ? 'Motion: Reduced' : 'Motion: Normal');
     motionButton.setAttribute('aria-pressed', String(reduced));
   };
-  const setPlaytestEnabled = (enabled: boolean): void => {
-    if (!playtestButton) return;
-    playtestButton.textContent = tangramText(currentLanguage, enabled ? 'Route notes: On' : 'Route notes: Off');
-    playtestButton.setAttribute('aria-pressed', String(enabled));
-  };
-  const show = (): void => {
-    overlay.hidden = false;
-    overlay.querySelector<HTMLButtonElement>('[data-help-action="close"]')?.focus();
-  };
-  const hide = (): void => {
-    overlay.hidden = true;
-    options.onClose();
-  };
-  overlay.querySelector<HTMLButtonElement>('[data-help-action="close"]')?.addEventListener('click', () => {
-    hide();
+  soundButton?.addEventListener('click', () => {
+    const muted = soundButton.getAttribute('aria-pressed') !== 'true';
+    setMuted(muted);
+    actions.onMuted(muted);
   });
   motionButton?.addEventListener('click', () => {
     const reduced = motionButton.getAttribute('aria-pressed') !== 'true';
     setReducedMotion(reduced);
-    options.onReducedMotion(reduced);
-  });
-  playtestButton?.addEventListener('click', () => {
-    const enabled = playtestButton.getAttribute('aria-pressed') !== 'true';
-    setPlaytestEnabled(enabled);
-    options.onPlaytest(enabled);
+    actions.onReducedMotion(reduced);
   });
   languageButton?.addEventListener('click', () => {
-    options.onLanguage(currentLanguage === 'nl' ? 'en' : 'nl');
+    actions.onLanguage(currentLanguage === 'nl' ? 'en' : 'nl');
   });
-  overlay.querySelector<HTMLButtonElement>('[data-help-action="reset"]')?.addEventListener('click', () => {
-    if (window.confirm(tangramText(currentLanguage, 'Reset the adventure and start again?'))) {
-      overlay.hidden = true;
-      options.onReset();
-    }
+  overlay.querySelector<HTMLButtonElement>('[data-setting-action="reset"]')?.addEventListener('click', () => {
+    if (!resetConfirmation) return;
+    resetConfirmation.hidden = false;
+    overlay.querySelector<HTMLButtonElement>('[data-setting-action="confirm-reset"]')?.focus();
   });
-  setReducedMotion(options.reducedMotion);
-  setPlaytestEnabled(options.playtestEnabled);
+  overlay.querySelector<HTMLButtonElement>('[data-setting-action="cancel-reset"]')?.addEventListener('click', () => {
+    if (resetConfirmation) resetConfirmation.hidden = true;
+  });
+  overlay.querySelector<HTMLButtonElement>('[data-setting-action="confirm-reset"]')?.addEventListener('click', () => {
+    if (resetConfirmation) resetConfirmation.hidden = true;
+    actions.onReset();
+  });
   const setLanguage = (nextLanguage: TangramLanguage): void => {
     currentLanguage = nextLanguage;
     const labels: Record<string, string> = {
-      kicker: 'Tangram helper',
-      title: 'How to play',
-      copy: 'Move, jump, collect badges, and ring the bell. Falling is okay: checkpoints remember your place.',
+      kicker: 'Tangram pause',
+      title: 'Parade paused',
+      copy: 'The simulation is frozen. Take a breath, then jump back into the route.',
+      'how-to-play': 'How to play',
       keyboard: 'Keyboard',
       'keyboard-copy': 'Arrow keys or A/D move. Space, W, or Up jumps.',
       touch: 'Touch',
       'touch-copy': 'Tap ahead or behind the player to move. Tap the big circle to jump.',
-      pause: 'Pause',
-      'pause-copy': 'Press P or Escape, or choose Pause.',
+      'reset-copy': 'Reset the adventure and start again?',
     };
     for (const [key, value] of Object.entries(labels)) {
       overlay.querySelector<HTMLElement>(`[data-label="${key}"]`)!.textContent = tangramText(nextLanguage, value);
     }
+    for (const action of ['resume', 'restart', 'map', 'arcade'] as const) {
+      const text = action === 'resume' ? 'Resume run' : action === 'restart' ? 'Restart level' : action === 'map' ? 'Choose class' : 'Back to arcade hall';
+      overlay.querySelector<HTMLButtonElement>(`[data-action="${action}"]`)!.textContent = tangramText(nextLanguage, text);
+    }
     if (languageButton) languageButton.textContent = `${tangramLanguageLabel(nextLanguage)} / ${nextLanguage === 'nl' ? 'English' : 'Nederlands'}`;
-    overlay.querySelector<HTMLButtonElement>('[data-help-action="reset"]')!.textContent = tangramText(nextLanguage, 'Reset campaign');
-    overlay.querySelector<HTMLButtonElement>('[data-help-action="close"]')!.textContent = tangramText(nextLanguage, 'Close');
-    setReducedMotion(Boolean(motionButton?.getAttribute('aria-pressed') === 'true'));
-    setPlaytestEnabled(Boolean(playtestButton?.getAttribute('aria-pressed') === 'true'));
+    overlay.querySelector<HTMLButtonElement>('[data-setting-action="reset"]')!.textContent = tangramText(nextLanguage, 'Reset campaign');
+    overlay.querySelector<HTMLButtonElement>('[data-setting-action="confirm-reset"]')!.textContent = tangramText(nextLanguage, 'Yes, reset campaign');
+    overlay.querySelector<HTMLButtonElement>('[data-setting-action="cancel-reset"]')!.textContent = tangramText(nextLanguage, 'Keep playing');
+    setMuted(soundButton?.getAttribute('aria-pressed') === 'true');
+    setReducedMotion(motionButton?.getAttribute('aria-pressed') === 'true');
   };
-  setLanguage(options.language);
-  return { show, hide, setReducedMotion, setPlaytestEnabled, setLanguage };
+  setMuted(settings.muted);
+  setReducedMotion(settings.reducedMotion);
+  setLanguage(language);
+  return {
+    overlay,
+    show: () => {
+      if (resetConfirmation) resetConfirmation.hidden = true;
+      overlay.hidden = false;
+    },
+    hide: () => {
+      if (resetConfirmation) resetConfirmation.hidden = true;
+      overlay.hidden = true;
+    },
+    setLanguage,
+    setMuted,
+    setReducedMotion,
+  };
+}
+
+function characterPreviewSvg(character: TangramCharacterDefinition): string {
+  const { accessory, accent, body, id } = character;
+  const species = {
+    crocodile: `<rect x="24" y="-15" width="28" height="14" rx="2" fill="${body}" stroke="#103047" stroke-width="2"/>`,
+    monkey: `<circle cx="-23" cy="-15" r="11" fill="${body}" stroke="#103047" stroke-width="2"/><circle cx="23" cy="-15" r="11" fill="${body}" stroke="#103047" stroke-width="2"/>`,
+    turtle: `<ellipse cx="-3" cy="-8" rx="30" ry="21" fill="${accent}" stroke="#355342" stroke-width="3"/><circle cx="28" cy="-8" r="12" fill="${body}" stroke="#103047" stroke-width="2"/>`,
+    kangaroo: `<ellipse cx="-10" cy="-40" rx="5" ry="14" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="10" cy="-40" rx="5" ry="14" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="0" cy="10" rx="14" ry="12" fill="${accent}" stroke="#103047" stroke-width="2"/>`,
+    lion: `<circle cx="0" cy="-10" r="30" fill="${accent}" stroke="#8d5b34" stroke-width="3"/><circle cx="-18" cy="-32" r="8" fill="${accent}"/><circle cx="18" cy="-32" r="8" fill="${accent}"/>`,
+    penguin: '<ellipse cx="24" cy="-10" rx="8" ry="5" fill="#ffb15f" stroke="#103047" stroke-width="2"/>',
+  }[id];
+  const isCrocodile = id === 'crocodile';
+  const isTurtle = id === 'turtle';
+  const bodyWidth = isCrocodile ? 58 : isTurtle ? 42 : 44;
+  const bodyHeight = isCrocodile ? 34 : isTurtle ? 44 : 56;
+  const bellyWidth = isCrocodile ? 34 : isTurtle ? 22 : 24;
+  const bellyHeight = isCrocodile ? 14 : isTurtle ? 24 : 30;
+  const limbY = isCrocodile ? 8 : -8;
+  const eyeX = isCrocodile || isTurtle ? 24 : id === 'penguin' ? 7 : 8;
+  const eyeY = isCrocodile || isTurtle ? -19 : -18;
+  const footColor = isCrocodile || isTurtle ? body : id === 'penguin' ? '#ffb15f' : accessory;
+
+  return `<svg viewBox="-60 -60 120 120" focusable="false"><ellipse cx="0" cy="22" rx="19" ry="7" fill="#000" opacity=".18"/>${species}<ellipse cx="0" cy="-8" rx="${bodyWidth / 2}" ry="${bodyHeight / 2}" fill="${body}" stroke="#103047" stroke-width="5"/><ellipse cx="0" cy="-2" rx="${bellyWidth / 2}" ry="${bellyHeight / 2}" fill="${isTurtle ? '#9fd8b4' : id === 'penguin' ? '#f7fbff' : accessory}" stroke="#103047" stroke-width="3"/><rect x="-25" y="${limbY - (isCrocodile ? 5 : 12)}" width="${isCrocodile ? 12 : 10}" height="${isCrocodile ? 10 : 24}" rx="4" fill="${accessory}" stroke="#103047" stroke-width="3"/><rect x="15" y="${limbY - (isCrocodile ? 5 : 12)}" width="${isCrocodile ? 12 : 10}" height="${isCrocodile ? 10 : 24}" rx="4" fill="${accessory}" stroke="#103047" stroke-width="3"/><circle cx="${eyeX - 5}" cy="${eyeY}" r="4" fill="#fff"/><circle cx="${eyeX + 5}" cy="${eyeY}" r="4" fill="#fff"/><circle cx="${eyeX - 5}" cy="${eyeY}" r="2" fill="#103047"/><circle cx="${eyeX + 5}" cy="${eyeY}" r="2" fill="#103047"/><ellipse cx="-10" cy="22" rx="7" ry="4" fill="${footColor}" stroke="#103047" stroke-width="2"/><ellipse cx="10" cy="22" rx="7" ry="4" fill="${footColor}" stroke="#103047" stroke-width="2"/></svg>`;
 }
 
 function createCharacterSelect(
@@ -1243,62 +1233,54 @@ function createCharacterSelect(
   language: TangramLanguage,
   selectedCharacterId: TangramCharacterId,
   onSelect: (id: TangramCharacterId) => void,
-  onStart: () => void,
+  onLanguage: (language: TangramLanguage) => void,
 ): { overlay: HTMLDivElement; updateSelection: (id: TangramCharacterId) => void; setLanguage: (language: TangramLanguage) => void } {
   const overlay = document.createElement('div');
   overlay.className = 'tangram-platformer-overlay';
   const title = document.createElement('section');
   title.className = 'tangram-platformer-panel';
-  const description = document.createElement('p');
+  const header = document.createElement('div');
+  header.className = 'tangram-platformer-selection-header';
+  const heading = document.createElement('h2');
+  const languageButton = document.createElement('button');
+  languageButton.className = 'tangram-platformer-button tangram-platformer-button--ghost';
+  languageButton.type = 'button';
+  header.append(heading, languageButton);
   const roster = document.createElement('div');
   roster.className = 'tangram-platformer-character-grid';
-  const startButton = document.createElement('button');
-  startButton.className = 'tangram-platformer-button';
-  startButton.type = 'button';
   let currentLanguage = language;
   let currentCharacterId = selectedCharacterId;
-  startButton.textContent = tangramText(language, 'Start adventure');
-  startButton.addEventListener('click', onStart);
-  const header = document.createElement('div');
-  title.append(header);
   const buttons = PLAYABLE_CHARACTERS.map((character) => {
     const button = document.createElement('button');
     button.className = 'tangram-platformer-character';
     button.type = 'button';
     button.dataset.characterId = character.id;
-    button.innerHTML = '<span class="tangram-platformer-character-art" aria-hidden="true"></span><strong></strong><span data-role="class"></span><small></small>';
+    button.innerHTML = `<span class="tangram-platformer-character-art" aria-hidden="true">${characterPreviewSvg(character)}</span><strong></strong>`;
     button.classList.add(`tangram-platformer-character--${character.id}`);
     button.style.setProperty('--accent', character.accent);
     button.addEventListener('click', () => onSelect(character.id));
     roster.append(button);
     return button;
   });
-  description.className = 'tangram-platformer-selection-note';
-  title.append(roster, description, startButton);
+  languageButton.addEventListener('click', () => onLanguage(currentLanguage === 'nl' ? 'en' : 'nl'));
+  title.append(header, roster);
   overlay.append(title);
   parent.append(overlay);
   const updateSelection = (id: TangramCharacterId): void => {
     currentCharacterId = id;
-    const character = getTangramCharacter(id);
     for (const button of buttons) {
       const selected = button.dataset.characterId === id;
       button.classList.toggle('is-selected', selected);
       button.setAttribute('aria-pressed', String(selected));
     }
-    description.textContent = tangramText(currentLanguage, character.description);
   };
   const setLanguage = (nextLanguage: TangramLanguage): void => {
     currentLanguage = nextLanguage;
-    header.innerHTML = `
-      <p class="tangram-platformer-kicker">${tangramText(nextLanguage, 'Tangram school adventure')}</p>
-      <h2>${tangramText(nextLanguage, 'Penguins of Tangram')}</h2>
-      <p class="tangram-platformer-copy">${tangramText(nextLanguage, 'Pick a classmate and jump through the school.')}</p>`;
-    startButton.textContent = tangramText(nextLanguage, 'Start adventure');
+    heading.textContent = tangramText(nextLanguage, 'Penguins of Tangram');
+    languageButton.textContent = `${tangramLanguageLabel(nextLanguage)} / ${nextLanguage === 'nl' ? 'English' : 'Nederlands'}`;
     for (const button of buttons) {
       const character = getTangramCharacter(button.dataset.characterId as TangramCharacterId);
-      button.querySelector('strong')!.textContent = tangramText(nextLanguage, character.name);
-      button.querySelector('[data-role="class"]')!.textContent = tangramText(nextLanguage, character.className);
-      button.querySelector('small')!.textContent = tangramText(nextLanguage, character.description);
+      button.querySelector('strong')!.textContent = tangramText(nextLanguage, character.className);
     }
     updateSelection(currentCharacterId);
   };
@@ -1313,7 +1295,7 @@ function createCompletionOverlay(
     onReplay: () => void;
     onMap: () => void;
     onChooseAnother: () => void;
-    onNext: () => void;
+    onResume: () => void;
   },
 ): {
   overlay: HTMLDivElement;
@@ -1336,14 +1318,14 @@ function createCompletionOverlay(
       </div>
       <p class="tangram-platformer-copy tangram-platformer-copy--soft" data-field="best"></p>
       <div class="tangram-platformer-action-row">
-        <button class="tangram-platformer-button" type="button" data-action="next">Next zone</button>
+        <button class="tangram-platformer-button" type="button" data-action="resume">Resume</button>
         <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-action="map">Choose class</button>
         <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-action="replay">Replay zone</button>
         <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-action="choose">Choose another class</button>
       </div>
     </section>`;
   parent.append(overlay);
-  overlay.querySelector<HTMLButtonElement>('[data-action="next"]')?.addEventListener('click', actions.onNext);
+  overlay.querySelector<HTMLButtonElement>('[data-action="resume"]')?.addEventListener('click', actions.onResume);
   overlay.querySelector<HTMLButtonElement>('[data-action="map"]')?.addEventListener('click', actions.onMap);
   overlay.querySelector<HTMLButtonElement>('[data-action="replay"]')?.addEventListener('click', actions.onReplay);
   overlay.querySelector<HTMLButtonElement>('[data-action="choose"]')?.addEventListener('click', actions.onChooseAnother);
@@ -1355,15 +1337,15 @@ function createCompletionOverlay(
   const checkpoint = overlay.querySelector('[data-field="checkpoint"]') as HTMLSpanElement;
   const falls = overlay.querySelector('[data-field="falls"]') as HTMLSpanElement;
   const best = overlay.querySelector('[data-field="best"]') as HTMLParagraphElement;
-  const nextButton = overlay.querySelector('[data-action="next"]') as HTMLButtonElement;
+  const resumeButton = overlay.querySelector('[data-action="resume"]') as HTMLButtonElement;
   let currentLanguage = language;
   const setLanguage = (nextLanguage: TangramLanguage): void => {
     currentLanguage = nextLanguage;
     for (const [key, value] of Object.entries({ badges: 'Badges', time: 'Time', checkpoint: 'Checkpoint', falls: 'Falls' })) {
       overlay.querySelector<HTMLElement>(`[data-label="${key}"]`)!.textContent = tangramText(nextLanguage, value);
     }
-    for (const action of ['next', 'map', 'replay', 'choose'] as const) {
-      const text = action === 'next' ? 'Next zone' : action === 'map' ? 'Choose class' : action === 'replay' ? 'Replay zone' : 'Choose another class';
+    for (const action of ['resume', 'map', 'replay', 'choose'] as const) {
+      const text = action === 'resume' ? 'Resume' : action === 'map' ? 'Choose class' : action === 'replay' ? 'Replay zone' : 'Choose another class';
       overlay.querySelector<HTMLButtonElement>(`[data-action="${action}"]`)!.textContent = tangramText(nextLanguage, text);
     }
   };
@@ -1384,10 +1366,7 @@ function createCompletionOverlay(
       checkpoint.textContent = tangramText(currentLanguage, summary.checkpointLabel);
       falls.textContent = String(summary.falls);
       best.textContent = formatBest(currentLanguage, personalBest);
-      nextButton.hidden = summary.nextLevelId === null;
-      nextButton.textContent = summary.campaignComplete
-        ? tangramText(currentLanguage, 'Choose class')
-        : `${currentLanguage === 'nl' ? 'Volgende' : 'Next'}: ${tangramText(currentLanguage, nextLevel?.kicker ?? 'Next zone')}`;
+      resumeButton.hidden = summary.nextLevelId === null;
       overlay.hidden = false;
     },
     setLanguage,
@@ -1447,26 +1426,53 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
   let isPaused = false;
   let audioMuted = progress.audioMuted;
   let reducedMotion = progress.reducedMotion || (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false);
-  let playtestEnabled = progress.playtestEnabled;
-  let openHelp = (): void => {};
 
   const pauseButton = createPauseButton(parent, language, () => togglePause());
-  const pauseOverlay = createPauseOverlay(parent, language, {
-    onResume: () => togglePause(false),
-    onRestart: () => startLevel(selectedLevelId),
-    onHelp: () => {
-      pauseOverlay.hide();
-      openHelp();
+  const pauseOverlay = createPauseOverlay(
+    parent,
+    language,
+    { muted: audioMuted, reducedMotion },
+    {
+      onResume: () => togglePause(false),
+      onRestart: () => startLevel(selectedLevelId),
+      onMap: () => showCharacterSelect(),
+      onExit,
+      onMuted(muted) {
+        audioMuted = muted;
+        progress = { ...progress, audioMuted };
+        saveTangramProgress(progress);
+        activeScene?.setMuted(muted);
+        emitHook();
+      },
+      onReducedMotion(reduced) {
+        reducedMotion = reduced;
+        progress = { ...progress, reducedMotion };
+        saveTangramProgress(progress);
+        emitHook();
+      },
+      onLanguage: applyLanguage,
+      onReset() {
+        progress = resetTangramProgress();
+        language = progress.language;
+        selectedCharacterId = progress.selectedCharacterId;
+        selectedLevelId = FIRST_LEVEL_ID;
+        completedLevelIds.splice(0, completedLevelIds.length);
+        unlockedLevelIds.splice(0, unlockedLevelIds.length, ...getUnlockedTangramLevelIds([]));
+        audioMuted = progress.audioMuted;
+        reducedMotion = progress.reducedMotion;
+        touchControls.setLanguage(language);
+        score.setLanguage(language);
+        pauseButton.setLanguage(language);
+        pauseOverlay.setLanguage(language);
+        pauseOverlay.setMuted(audioMuted);
+        pauseOverlay.setReducedMotion(reducedMotion);
+        select.setLanguage(language);
+        completion.setLanguage(language);
+        select.updateSelection(selectedCharacterId);
+        showCharacterSelect();
+      },
     },
-    onMap: () => showCharacterSelect(),
-  });
-  const audioToggle = createAudioToggle(parent, language, audioMuted, (muted) => {
-    audioMuted = muted;
-    progress = { ...progress, audioMuted };
-    saveTangramProgress(progress);
-    activeScene?.setMuted(muted);
-    emitHook();
-  });
+  );
 
   function togglePause(nextValue?: boolean): void {
     if (currentState !== 'running' || !activeScene) return;
@@ -1491,7 +1497,6 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
       audioMuted,
       reducedMotion,
       language,
-      playtestEnabled,
       bossActive: lastHookState.bossActive ?? false,
       bossHitsRemaining: lastHookState.bossHitsRemaining ?? 0,
       bossWarning: lastHookState.bossWarning ?? false,
@@ -1512,7 +1517,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
     onReplay: () => startLevel(selectedLevelId),
     onMap: () => showCharacterSelect(),
     onChooseAnother: () => showCharacterSelect(),
-    onNext: () => {
+    onResume: () => {
       if (pendingSummary?.nextLevelId) startLevel(pendingSummary.nextLevelId);
       else showCharacterSelect();
     },
@@ -1531,76 +1536,30 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
         ...lastHookState,
         jumpAudit: buildJumpAudit(getTangramLevel(selectedLevelId), getTangramCharacter(selectedCharacterId)),
       };
-      emitHook();
+      startLevel(selectedLevelId);
     },
-    () => startLevel(selectedLevelId),
+    applyLanguage,
   );
 
-  const helpPanel = createChildHelpPanel(parent, {
-    language,
-    reducedMotion,
-    playtestEnabled,
-    onReducedMotion(reduced) {
-      reducedMotion = reduced;
-      progress = { ...progress, reducedMotion };
-      saveTangramProgress(progress);
-      emitHook();
-    },
-    onPlaytest(enabled) {
-      playtestEnabled = enabled;
-      progress = { ...progress, playtestEnabled };
-      saveTangramProgress(progress);
-      emitHook();
-    },
-    onLanguage(nextLanguage) {
-      const wasPaused = isPaused;
-      language = nextLanguage;
-      progress = { ...progress, language };
-      saveTangramProgress(progress);
-      touchControls.setLanguage(language);
-      score.setLanguage(language);
-      pauseButton.setLanguage(language);
-      pauseOverlay.setLanguage(language);
-      audioToggle.setLanguage(language);
-      helpPanel.setLanguage(language);
-      select.setLanguage(language);
-      completion.setLanguage(language);
-      if (currentState === 'running') {
-        startLevel(selectedLevelId);
-        if (wasPaused) togglePause(true);
-      }
-      else if (currentState === 'select') showCharacterSelect();
-      emitHook();
-    },
-    onClose: () => {
-      if (currentState === 'running' && isPaused) pauseOverlay.show();
-    },
-    onReset() {
-      progress = resetTangramProgress();
-      language = progress.language;
-      selectedCharacterId = progress.selectedCharacterId;
-      selectedLevelId = FIRST_LEVEL_ID;
-      completedLevelIds.splice(0, completedLevelIds.length);
-      unlockedLevelIds.splice(0, unlockedLevelIds.length, ...getUnlockedTangramLevelIds([]));
-      audioMuted = progress.audioMuted;
-      reducedMotion = progress.reducedMotion;
-      playtestEnabled = progress.playtestEnabled;
-      audioToggle.setMuted(audioMuted);
-      audioToggle.setLanguage(language);
-      touchControls.setLanguage(language);
-      score.setLanguage(language);
-      pauseButton.setLanguage(language);
-      pauseOverlay.setLanguage(language);
-      helpPanel.setLanguage(language);
-      select.setLanguage(language);
-      completion.setLanguage(language);
-      helpPanel.setReducedMotion(reducedMotion);
-      helpPanel.setPlaytestEnabled(playtestEnabled);
-      select.updateSelection(selectedCharacterId);
+  function applyLanguage(nextLanguage: TangramLanguage): void {
+    const wasPaused = isPaused;
+    language = nextLanguage;
+    progress = { ...progress, language };
+    saveTangramProgress(progress);
+    touchControls.setLanguage(language);
+    score.setLanguage(language);
+    pauseButton.setLanguage(language);
+    pauseOverlay.setLanguage(language);
+    select.setLanguage(language);
+    completion.setLanguage(language);
+    if (currentState === 'running') {
+      startLevel(selectedLevelId);
+      if (wasPaused) togglePause(true);
+    } else if (currentState === 'select') {
       showCharacterSelect();
-    },
-  });
-  openHelp = helpPanel.show;
+    }
+    emitHook();
+  }
 
   function showCharacterSelect(): void {
     destroyGame();
@@ -1631,13 +1590,6 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
         durationSeconds: pendingSummary.durationSeconds,
         falls: pendingSummary.falls,
       });
-      progress = recordTangramPlaytest(
-        progress,
-        levelId,
-        pendingSummary.durationSeconds,
-        pendingSummary.falls,
-        pendingSummary.checkpointReached,
-      );
       saveTangramProgress(progress);
     }
   }
@@ -1681,7 +1633,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
         if (summary.nextLevelId) {
           window.setTimeout(() => {
             if (currentState === 'complete' && pendingSummary === summary) startLevel(summary.nextLevelId!);
-          }, reducedMotion ? 0 : 900);
+          }, COMPLETION_AUTO_RESUME_MS);
         }
         emitHook();
       },

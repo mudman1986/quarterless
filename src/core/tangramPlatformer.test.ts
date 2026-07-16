@@ -122,7 +122,7 @@ describe('Tangram platformer simulation', () => {
     const state = createTangramPlatformerState(simulationLevel);
     const events: TangramPlatformerEvent[] = [];
     state.player.x = 100;
-    state.player.y = 80;
+    state.player.y = 220;
 
     tickTangramPlatformer(
       state,
@@ -133,6 +133,7 @@ describe('Tangram platformer simulation', () => {
       events,
     );
     expect(state.goalPhase).toBe('grab');
+    expect(state.goalFlagY).toBe(simulationLevel.goal.y);
     expect(state.finished).toBe(false);
 
     tickTangramPlatformer(
@@ -143,11 +144,11 @@ describe('Tangram platformer simulation', () => {
       TANGRAM_FIXED_STEP,
       events,
     );
-    expect(state.goalPhase).toBe('slide');
-    expect(state.goalFlagY).toBeGreaterThan(simulationLevel.goal.y);
-    expect(state.player.y).toBe(state.goalFlagY + 12);
+    expect(state.goalPhase).toBe('grab');
+    expect(state.goalFlagY).toBeCloseTo(simulationLevel.goal.y + 1, 5);
+    expect(state.player.y).toBeCloseTo(220.611111, 5);
 
-    for (let tick = 0; tick < 60 && !state.finished; tick += 1) {
+    for (let tick = 0; tick < 300 && !state.finished; tick += 1) {
       tickTangramPlatformer(
         state,
         simulationLevel,
@@ -326,7 +327,7 @@ describe('Tangram platformer simulation', () => {
       events,
     );
 
-    expect(state.enemies[0].x).toBe(280);
+    expect(state.enemies[0].x).toBe(296);
     expect(state.enemies[0].direction).toBe(-1);
   });
 

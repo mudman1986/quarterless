@@ -676,9 +676,10 @@ async function launchGame(game: ArcadeGame, mode: LaunchMode = 'sandbox'): Promi
     setBodyMode('playing');
     const returnToMenu = game.id === 'sindicate' ? () => renderStoryMenu(game) : renderLanding;
     const root = appRoot();
+    const showArcadeBackButton = game.id !== 'penguins-of-tangram';
     root.innerHTML = `
       <main class="game-shell" style="--accent: ${game.accent}">
-        <button class="arcade-back" type="button" aria-label="${game.id === 'sindicate' ? 'Back to Sindicate menu' : 'Back to arcade'}">${game.id === 'sindicate' ? 'Sindicate Menu' : 'Arcade'}</button>
+        ${showArcadeBackButton ? `<button class="arcade-back" type="button" aria-label="${game.id === 'sindicate' ? 'Back to Sindicate menu' : 'Back to arcade'}">${game.id === 'sindicate' ? 'Sindicate Menu' : 'Arcade'}</button>` : ''}
         <div id="game" class="game-stage"></div>
       </main>`;
     root.querySelector<HTMLButtonElement>('.arcade-back')?.addEventListener('click', returnToMenu);

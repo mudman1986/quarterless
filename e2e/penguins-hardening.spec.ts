@@ -7,25 +7,19 @@ test('Penguins defaults to Dutch and can switch to English with persistence', as
   await page.goto('/quarterless/');
   await page.getByRole('button', { name: 'Play Penguins of Tangram' }).click();
   await expect(page.getByRole('heading', { name: 'Pinguins van Tangram' })).toBeVisible();
+  await expect(page.locator('.tangram-platformer-character-art svg')).toHaveCount(6);
+  await expect(page.locator('.tangram-platformer-character-art path')).toHaveCount(0);
+  await expect(page.locator('.tangram-platformer-character small')).toHaveCount(0);
   await page.waitForFunction(() => (
     (window as unknown as { __penguinsOfTangram?: { language?: string } }).__penguinsOfTangram?.language === 'nl'
   ));
-  await page.getByRole('button', { name: /^Pinguin/ }).click();
-  await page.getByRole('button', { name: 'Start avontuur' }).click();
-  await page.getByRole('button', { name: 'Pauze' }).click();
-  await page.getByRole('button', { name: 'Zo speel je' }).click();
-  await expect(page.getByRole('heading', { name: 'Zo speel je' })).toBeVisible();
   await page.getByRole('button', { name: 'Nederlands / English' }).click();
-  await page.waitForFunction(() => (
-    (window as unknown as { __penguinsOfTangram?: { language?: string } }).__penguinsOfTangram?.language === 'en'
-  ));
-  await expect(page.getByRole('heading', { name: 'How to play' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Penguins of Tangram' })).toBeVisible();
+  await page.getByRole('button', { name: /^Penguin/ }).click();
   await page.reload();
   await page.getByRole('button', { name: 'Play Penguins of Tangram' }).click();
   await page.getByRole('button', { name: /^Penguin/ }).click();
-  await page.getByRole('button', { name: 'Start adventure' }).click();
   await page.getByRole('button', { name: 'Pause' }).click();
-  await page.getByRole('button', { name: 'How to play' }).click();
   await expect(page.getByRole('heading', { name: 'How to play' })).toBeVisible();
 });
 
@@ -56,6 +50,17 @@ test('Penguins pause freezes the simulation and resume restores it', async ({ pa
   await page.getByRole('button', { name: 'Resume run' }).click();
   await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Parade paused' })).toBeHidden();
+});
+
+test('Penguins keeps the arcade return inside the pause menu', async ({ page }) => {
+  await launchPenguinsOfTangram(page);
+
+  await expect(page.getByRole('button', { name: 'Back to arcade' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Pause' }).click();
+  const arcadeReturn = page.getByRole('button', { name: 'Back to arcade hall' });
+  await expect(page.locator('.tangram-platformer-action-row--settings').getByRole('button', { name: 'Back to arcade hall' })).toBeVisible();
+  await arcadeReturn.click();
+  await expect(page.getByRole('heading', { name: 'Retro Arcade' })).toBeVisible();
 });
 
 test('Penguins can restart the current level from its starting point', async ({ page }) => {
@@ -96,22 +101,32 @@ test('Penguins can finish the opening route without collecting every bonus badge
     const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
     const scene = game.scene.getScene('PenguinsOfTangram') as {
       level: { goal: { x: number; y: number } };
-      simulation: { player: { x: number; y: number; collected: boolean[] } };
+      simulation: { finished: boolean; player: { x: number; y: number; collected: boolean[] } };
       update(time: number, deltaMs: number): void;
     };
     scene.simulation.player.x = scene.level.goal.x;
     scene.simulation.player.y = scene.level.goal.y;
-    scene.update(100, 17);
+    for (let tick = 0; tick < 240 && !scene.simulation.finished; tick += 1) {
+      scene.update(100 + tick * 17, 17);
+    }
   });
   await expect(page.getByText('School Gate Morning Run cleared!')).toBeVisible();
   await expect(page.locator('.tangram-platformer-overlay--complete [data-field="badges"]')).toHaveText('0/12');
+  await page.waitForTimeout(1_100);
+  await expect(page.getByText('School Gate Morning Run cleared!')).toBeVisible();
+  await page.getByRole('button', { name: 'Resume' }).click();
+  await page.waitForFunction(() => (
+    (window as unknown as { __penguinsOfTangram?: { state?: string } }).__penguinsOfTangram?.state === 'running'
+  ));
 });
 
 test('Penguins persists mute and campaign progress across reloads', async ({ page }) => {
   await launchPenguinsOfTangram(page, 'Lion');
 
+  await page.getByRole('button', { name: 'Pause' }).click();
   await page.getByRole('button', { name: 'Mute sound' }).click();
   await expect(page.getByRole('button', { name: 'Turn sound on' })).toBeVisible();
+  await page.getByRole('button', { name: 'Resume run' }).click();
   await page.evaluate(() => {
     const hook = (window as unknown as { __penguinsOfTangram?: { completeCurrentLevel?: () => void } })
       .__penguinsOfTangram;
@@ -123,7 +138,7 @@ test('Penguins persists mute and campaign progress across reloads', async ({ pag
   await page.reload();
   await page.getByRole('button', { name: 'Play Penguins of Tangram' }).click();
   await expect(page.getByRole('heading', { name: 'Penguins of Tangram' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Turn sound on' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Turn sound on' })).toHaveCount(0);
   await page.waitForFunction(() => {
     const hook = (window as unknown as {
       __penguinsOfTangram?: { state?: string; completedLevelIds?: string[] };
@@ -131,16 +146,15 @@ test('Penguins persists mute and campaign progress across reloads', async ({ pag
       .__penguinsOfTangram;
     return hook?.completedLevelIds?.includes('school-gate-morning-run') === true;
   });
-  await page.getByRole('button', { name: 'Start adventure' }).click();
+  await page.getByRole('button', { name: /^Penguin/ }).click();
   await page.getByRole('button', { name: 'Pause' }).click();
-  await page.getByRole('button', { name: 'How to play' }).click();
   await expect(page.getByRole('heading', { name: 'How to play' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Turn sound on' })).toBeVisible();
   await page.getByRole('button', { name: 'Motion: Normal' }).click();
-  await page.getByRole('button', { name: 'Route notes: Off' }).click();
   await expect(page.getByRole('button', { name: 'Motion: Reduced' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Route notes: On' })).toBeVisible();
-  page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: 'Reset campaign' }).click();
+  await expect(page.getByText('Reset the adventure and start again?')).toBeVisible();
+  await page.getByRole('button', { name: 'Yes, reset campaign' }).click();
   await page.waitForFunction(() => {
     const hook = (window as unknown as {
       __penguinsOfTangram?: { state?: string; completedLevelIds?: string[] };
@@ -172,7 +186,6 @@ test('Sports Day exposes a boss and always accepts the final flag', async ({ pag
   }, PROGRESS_KEY);
   await page.getByRole('button', { name: 'Play Penguins of Tangram' }).click();
   await page.getByRole('button', { name: /^Penguin/ }).click();
-  await page.getByRole('button', { name: 'Start adventure' }).click();
 
   await page.waitForFunction(() => {
     const hook = (window as unknown as {
@@ -223,7 +236,6 @@ test('Sports Day keeps the largest zone render loop responsive', async ({ page }
   }, PROGRESS_KEY);
   await page.getByRole('button', { name: 'Play Penguins of Tangram' }).click();
   await page.getByRole('button', { name: /^Penguin/ }).click();
-  await page.getByRole('button', { name: 'Start adventure' }).click();
   await page.waitForFunction(() => (
     (window as unknown as { __penguinsOfTangram?: { state?: string } }).__penguinsOfTangram?.state === 'running'
   ));

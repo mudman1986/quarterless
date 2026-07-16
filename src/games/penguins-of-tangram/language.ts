@@ -11,25 +11,25 @@ const DUTCH: Record<string, string> = {
   'The simulation is frozen. Take a breath, then jump back into the route.':
     'Het spel staat stil. Adem even rustig en ga daarna verder.',
   'Resume run': 'Ga verder',
+  Resume: 'Ga verder',
   'Restart level': 'Level opnieuw',
   'Back to school map': 'Terug naar de schoolkaart',
+  'Back to arcade hall': 'Terug naar de arcadehal',
   'Sound: Off': 'Geluid: Uit',
   'Sound: On': 'Geluid: Aan',
   'Turn sound on': 'Zet geluid aan',
   'Mute sound': 'Zet geluid uit',
   'How to play': 'Zo speel je',
   'Open how to play and settings': 'Open uitleg en instellingen',
-  'Start adventure': 'Start avontuur',
-  'Pick a classmate and jump through the school.': 'Kies een klasgenoot en spring door de school.',
   'Penguins of Tangram': 'Pinguins van Tangram',
   'Choose class': 'Kies klas',
   'Reset the adventure and start again?': 'Avontuur wissen en opnieuw beginnen?',
   'Badges collected': 'Verzamelde badges',
   'Motion: Reduced': 'Beweging: Minder',
   'Motion: Normal': 'Beweging: Normaal',
-  'Route notes: On': 'Route-notities: Aan',
-  'Route notes: Off': 'Route-notities: Uit',
   'Reset campaign': 'Campagne opnieuw',
+  'Yes, reset campaign': 'Ja, campagne opnieuw',
+  'Keep playing': 'Blijf spelen',
   'Close': 'Sluiten',
   'Tangram helper': 'Tangram hulp',
   'Move, jump, collect badges, and ring the bell. Falling is okay: checkpoints remember your place.':
@@ -107,18 +107,6 @@ const DUTCH: Record<string, string> = {
   'Turtles Class': 'Schildpaddenklas',
   'Kangaroos Class': 'Kangoeroeklas',
   'Lions Class': 'Leeuwenklas',
-  'The cheerful Tangram lead with a balanced, confident platforming style.':
-    'De vrolijke Tangram-leider met een fijne, stevige springstijl.',
-  'A sturdy classmate with a bold grin and a backpack built for adventure.':
-    'Een sterke klasgenoot met een grote glimlach en een avontuurlijke rugzak.',
-  'A playful, energetic friend who treats every bench and bar like a jungle gym.':
-    'Een speelse, energieke vriend die van elke bank een klimrek maakt.',
-  'A calm explorer who turns every school trip into a cozy expedition.':
-    'Een rustige ontdekker die van elke schooltocht een fijne reis maakt.',
-  'A springy sports-day star who is always ready to bound ahead.':
-    'Een springende sportdagster die altijd vooruit wil huppen.',
-  'A brave hall hero with festival-leader energy and a sunny roar.':
-    'Een dappere held met de energie van een feestleider en een zonnige brul.',
   'Balanced all-rounder with reliable jumps.': 'Handig in alles met betrouwbare sprongen.',
   'Heavier landings, steadier recovery after danger.': 'Stevige landingen en rustig herstel na gevaar.',
   'Quick acceleration for playful platform links.': 'Snel optrekken voor vrolijke sprongen tussen platforms.',

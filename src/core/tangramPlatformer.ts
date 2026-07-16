@@ -7,6 +7,8 @@ export const TANGRAM_POWER_DURATION = 12;
 
 const PLAYER_GRAVITY = 2200;
 const PLAYER_MAX_FALL_SPEED = 960;
+const FLAG_SLIDE_SPEED = 90;
+const FLAG_TO_PLAYER_SPEED = 60;
 
 export interface TangramRect {
   x: number;
@@ -315,13 +317,25 @@ function updateEnemies(
     const definition = level.enemies[index];
     if (!enemy.active) continue;
     const nextX = enemy.x + definition.speed * enemy.direction * dt;
-    const supported = platformRects(state, level).some(
+    const platforms = platformRects(state, level);
+    const supported = platforms.some(
       (platform) =>
         Math.abs(platform.y - (definition.y + definition.height)) <= 4 &&
         nextX < platform.x + platform.width &&
         nextX + definition.width > platform.x,
     );
     if (!supported) {
+      const currentPlatform = platforms.find(
+        (platform) =>
+          Math.abs(platform.y - (definition.y + definition.height)) <= 4 &&
+          enemy.x < platform.x + platform.width &&
+          enemy.x + definition.width > platform.x,
+      );
+      if (currentPlatform) {
+        enemy.x = enemy.direction === 1
+          ? currentPlatform.x + currentPlatform.width - definition.width
+          : currentPlatform.x;
+      }
       enemy.direction = enemy.direction === 1 ? -1 : 1;
       continue;
     }
@@ -724,6 +738,7 @@ function handlePowerSnack(
     !state.powerBlockHit &&
     state.player.velocityY < 0 &&
     previousY >= block.y + block.height &&
+    player.y + player.height > block.y &&
     player.y < block.y + block.height &&
     player.x < block.x + block.width &&
     player.x + player.width > block.x;
@@ -758,7 +773,6 @@ function handleGoal(
   state.goalPhase = 'grab';
   state.goalFlagY = level.goal.y;
   state.player.x = level.goal.x + level.goal.width / 2 - TANGRAM_PLAYER_WIDTH / 2;
-  state.player.y = level.goal.y + 30;
   state.player.velocityX = 0;
   state.player.velocityY = 0;
   state.player.grounded = false;
@@ -772,12 +786,21 @@ function updateGoalSequence(
   events: TangramPlatformerEvent[],
 ): void {
   if (state.goalPhase === 'grab') {
+    const grabY = clamp(
+      state.player.y - 12,
+      level.goal.y,
+      level.goal.y + level.goal.height - 30,
+    );
+    state.goalFlagY = Math.min(grabY, state.goalFlagY + FLAG_TO_PLAYER_SPEED * dt);
+    state.player.x = level.goal.x + level.goal.width / 2 - TANGRAM_PLAYER_WIDTH / 2;
+    state.player.y = grabY + 12;
+    if (state.goalFlagY < grabY) return;
     state.goalPhase = 'slide';
     events.push({ type: 'hud' });
   }
   if (state.goalPhase !== 'slide') return;
   const bottom = level.goal.y + level.goal.height - 30;
-  state.goalFlagY = Math.min(bottom, state.goalFlagY + 520 * dt);
+  state.goalFlagY = Math.min(bottom, state.goalFlagY + FLAG_SLIDE_SPEED * dt);
   state.player.x = level.goal.x + level.goal.width / 2 - TANGRAM_PLAYER_WIDTH / 2;
   state.player.y = state.goalFlagY + 12;
   state.player.velocityX = 0;
