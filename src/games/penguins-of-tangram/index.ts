@@ -408,15 +408,6 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     this.add.rectangle(this.level.worldWidth / 2, this.level.worldHeight / 2, this.level.worldWidth, this.level.worldHeight, Phaser.Display.Color.HexStringToColor(this.level.skyColor).color)
       .setScrollFactor(0, 0)
       .setAlpha(0.82);
-    this.add.rectangle(this.level.worldWidth / 2, 486, this.level.worldWidth, 108, 0xb9ec7b)
-      .setScrollFactor(0.12, 0.2)
-      .setAlpha(0.76);
-    this.add.rectangle(this.level.worldWidth / 2, 444, this.level.worldWidth, 24, 0x9bdc73)
-      .setScrollFactor(0.12, 0.2)
-      .setAlpha(0.82);
-    this.add.rectangle(this.level.worldWidth / 2, 528, this.level.worldWidth, 24, 0x86c965)
-      .setScrollFactor(0.12, 0.2)
-      .setAlpha(0.78);
     for (let index = 0; index < Math.ceil(this.level.worldWidth / 440); index += 1) {
       const cloudX = 160 + index * 440;
       const cloudY = 90 + (index % 3) * 38;
@@ -505,9 +496,16 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     const outlineWidth = 6;
     const outlineColor = 0x103047;
     for (const platform of this.level.platforms) {
-      this.add.rectangle(platform.x + platform.width / 2, platform.y + platform.height / 2, platform.width, platform.height, platform.color)
-        .setDepth(2)
-        .setStrokeStyle(outlineWidth, outlineColor, 1);
+      const isGround = platform.y + platform.height >= this.level.worldHeight;
+      const platformBody = this.add.rectangle(
+        platform.x + platform.width / 2,
+        platform.y + platform.height / 2,
+        platform.width,
+        platform.height,
+        platform.color,
+      ).setDepth(2);
+      platformBody.setStrokeStyle(outlineWidth, outlineColor, 1);
+      if (isGround) continue;
       this.add.rectangle(platform.x + platform.width / 2, platform.y + 6, platform.width, 12, platform.trim)
         .setDepth(3)
         .setStrokeStyle(3, outlineColor, 1);

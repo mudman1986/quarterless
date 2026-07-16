@@ -84,6 +84,19 @@ describe('penguins of tangram character roster', () => {
     }
   });
 
+  it('extends ground behind every flagpole to the end of its route', () => {
+    for (const level of CAMPAIGN_LEVELS) {
+      const flagGround = level.platforms.find(
+        (platform) =>
+          platform.y + platform.height === level.worldHeight &&
+          platform.x <= level.goal.x + level.goal.width / 2 &&
+          platform.x + platform.width >= level.goal.x + level.goal.width / 2,
+      );
+      expect(flagGround, `${level.id} flagpole has no ground`).toBeDefined();
+      expect((flagGround?.x ?? 0) + (flagGround?.width ?? 0)).toBe(level.worldWidth);
+    }
+  });
+
   it('keeps every power snack block reachable from below', () => {
     for (const level of CAMPAIGN_LEVELS) {
       const state = createTangramPlatformerState(level);

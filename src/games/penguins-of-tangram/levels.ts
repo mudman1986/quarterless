@@ -161,7 +161,7 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
       { x: 2420, y: 348, width: 120, height: 20, color: 0xffd166, trim: 0xe3a938, label: 'Climber rung' },
       { x: 2620, y: 288, width: 140, height: 20, color: 0x8dc0ff, trim: 0x5f8ee0, label: 'Climber crown' },
       ground(2820, 240),
-      ground(3120, 720),
+      ground(3120, 880),
     ],
     movingPlatforms: [
       { x: 1040, y: 350, width: 132, height: 20, color: 0xff8f66, trim: 0xe56d4f, label: 'Traveling slide', axis: 'x', distance: 220, speed: 92 },
@@ -232,7 +232,7 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
       { x: 2460, y: 280, width: 130, height: 20, color: 0x8dc0ff, trim: 0x5f8ee0, label: 'Shelf 2' },
       { x: 2670, y: 220, width: 150, height: 20, color: 0xffb3c7, trim: 0xff8ea8, label: 'Secret rope route', secret: true },
       ground(2760, 200),
-      ground(3020, 720),
+      ground(3020, 780),
     ],
     movingPlatforms: [
       { x: 1040, y: 350, width: 132, height: 20, color: 0x71d2b6, trim: 0x4aa98d, label: 'Rolling desk', axis: 'x', distance: 220, speed: 84 },
@@ -299,7 +299,7 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
       { x: 2520, y: 290, width: 140, height: 20, color: 0x8dc0ff, trim: 0x5f8ee0, label: 'Canvas bridge' },
       { x: 2740, y: 220, width: 160, height: 20, color: 0xffb3c7, trim: 0xff8ea8, label: 'Rafter secret', secret: true },
       ground(2960, 180),
-      ground(3200, 920),
+      ground(3200, 1000),
       { x: 3160, y: 330, width: 140, height: 20, color: 0x8dc0ff, trim: 0x5f8ee0, label: 'Rooftop gate' },
     ],
     collectibles: [
@@ -368,7 +368,7 @@ export const CAMPAIGN_LEVELS: readonly TangramLevelDefinition[] = [
       { x: 2640, y: 300, width: 130, height: 20, color: 0x8dc0ff, trim: 0x5f8ee0, label: 'Podium 2' },
       { x: 2850, y: 238, width: 150, height: 20, color: 0xffb3c7, trim: 0xff8ea8, label: 'Victory banner' },
       ground(2960, 180),
-      ground(3260, 1000),
+      ground(3260, 1240),
       { x: 3320, y: 326, width: 140, height: 20, color: 0x8dc0ff, trim: 0x5f8ee0, label: 'Final podium' },
     ],
     movingPlatforms: [
