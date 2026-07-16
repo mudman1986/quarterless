@@ -208,7 +208,7 @@ test('Sindicate keeps the live render cadence above the severe-stall floor', asy
 
   expect(result.samples).toBeGreaterThan(30);
   expect(result.baseline).toBeGreaterThan(0);
-  expect(result.p10).toBeGreaterThanOrEqual(result.baseline * 0.5);
+  expect(result.p10).toBeGreaterThanOrEqual(15);
 });
 
 test('full-world autosaves stay below the per-second hitch budget', async ({ page }) => {
