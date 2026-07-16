@@ -5,7 +5,7 @@ export const TANGRAM_PLAYER_WIDTH = 52;
 export const TANGRAM_PLAYER_HEIGHT = 72;
 export const TANGRAM_POWER_DURATION = 5;
 
-const PLAYER_GRAVITY = 2200;
+export const TANGRAM_GRAVITY = 2200;
 const PLAYER_MAX_FALL_SPEED = 960;
 const FLAG_SLIDE_SPEED = 90;
 const FLAG_TO_PLAYER_SPEED = 60;
@@ -461,6 +461,7 @@ function platformRects(
     ...(level.breakableBlocks ?? []).filter(
       (_, index) => !state.breakableBlocksBroken[index],
     ),
+    ...level.powerups.filter((_, index) => !state.powerBlockHit[index]),
     ...state.movingPlatforms,
   ];
 }
@@ -609,12 +610,13 @@ function updatePlayer(
   player.x += player.velocityX * dt;
   resolveHorizontal(state, level, previousX);
   player.velocityY = clamp(
-    player.velocityY + PLAYER_GRAVITY * dt,
+    player.velocityY + TANGRAM_GRAVITY * dt,
     -1800,
     PLAYER_MAX_FALL_SPEED,
   );
   player.y += player.velocityY * dt;
   player.grounded = false;
+  handlePowerSnack(state, level, previousY, events);
   handleBadgeBoxes(state, level, previousX, previousY, events);
   resolveVertical(state, level, previousY, events);
 
@@ -900,7 +902,6 @@ export function tickTangramPlatformer(
   updateMovingPlatforms(state, level, dt);
   updateBoss(state, level, dt, events);
   const previousY = updatePlayer(state, level, movement, input, dt, events);
-  handlePowerSnack(state, level, previousY, events);
   handleBouncePads(state, level, events);
   handleCollectibles(state, level, events);
   handleGoal(state, level, events);
@@ -912,7 +913,7 @@ export function tickTangramPlatformer(
 }
 
 function jumpRiseForVelocity(jumpVelocity: number): number {
-  return (jumpVelocity * jumpVelocity) / (2 * PLAYER_GRAVITY);
+  return (jumpVelocity * jumpVelocity) / (2 * TANGRAM_GRAVITY);
 }
 
 function horizontalGapBetween(

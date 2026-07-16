@@ -394,7 +394,8 @@ test.describe('coarse pointer controls', () => {
     await expect(moveZone).toBeVisible();
     const moveBox = await moveZone.boundingBox();
     const jumpBox = await jumpButton.boundingBox();
-    expect(moveBox?.width).toBeCloseTo((jumpBox?.width ?? 0) * 2, 0);
+    expect(moveBox?.width).toBeCloseTo(jumpBox?.width ?? 0, 0);
+    expect((moveBox?.x ?? 0) + (moveBox?.width ?? 0)).toBeLessThanOrEqual(jumpBox?.x ?? 0);
     const before = await page.evaluate(() => {
       const game = (window as unknown as { __game: { scene: { getScene(name: string): unknown } } }).__game;
       return (game.scene.getScene('PenguinsOfTangram') as {

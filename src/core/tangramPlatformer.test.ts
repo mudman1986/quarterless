@@ -377,6 +377,25 @@ describe('Tangram platformer simulation', () => {
     expect(state.powerRemaining).toBe(TANGRAM_POWER_DURATION);
   });
 
+  it('keeps an unopened power snack box solid from above', () => {
+    const simulationLevel = {
+      ...level(),
+      powerups: [{ x: 300, y: 300, width: 44, height: 56, label: 'Super Snack' }],
+    };
+    const state = createTangramPlatformerState(simulationLevel);
+    state.player.x = 300;
+    state.player.y = 220;
+    state.player.velocityY = 400;
+
+    tickTangramPlatformer(state, simulationLevel, movement, { direction: 0, jumpPressed: false }, TANGRAM_FIXED_STEP, []);
+    tickTangramPlatformer(state, simulationLevel, movement, { direction: 0, jumpPressed: false }, TANGRAM_FIXED_STEP, []);
+
+    expect(state.player.y).toBe(228);
+    expect(state.player.velocityY).toBe(0);
+    expect(state.player.grounded).toBe(true);
+    expect(state.powerBlockHit).toEqual([false]);
+  });
+
   it('turns enemies around before they leave a platform edge', () => {
     const simulationLevel = {
       ...level(),

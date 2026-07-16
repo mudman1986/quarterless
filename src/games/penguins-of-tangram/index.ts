@@ -722,8 +722,12 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       const container = this.add.container(pad.x + pad.width / 2, pad.y + pad.height / 2);
       container.setDepth(4);
       container.add([
-        this.add.rectangle(0, 0, pad.width, pad.height, pad.color),
-        this.add.triangle(0, 0, -8, 6, 8, 6, 0, -8, 0x103047),
+        this.add.rectangle(-pad.width * 0.3, 8, 5, 14, 0x103047),
+        this.add.rectangle(pad.width * 0.3, 8, 5, 14, 0x103047),
+        this.add.rectangle(0, 2, pad.width - 8, 6, 0x103047),
+        this.add.ellipse(0, -5, pad.width, 13, pad.color).setStrokeStyle(3, 0x103047, 1),
+        this.add.line(-pad.width * 0.28, 8, 0, 0, -8, 13, 0xfff1b8).setLineWidth(3),
+        this.add.line(pad.width * 0.28, 8, 0, 0, 8, 13, 0xfff1b8).setLineWidth(3),
       ]);
       return container;
     });

@@ -8,6 +8,8 @@ import {
 import { CAMPAIGN_LEVELS } from './levels';
 import {
   TANGRAM_FIXED_STEP,
+  TANGRAM_GRAVITY,
+  TANGRAM_PLAYER_HEIGHT,
   TANGRAM_PLAYER_WIDTH,
   buildTangramJumpAudit,
   createTangramPlatformerState,
@@ -101,6 +103,17 @@ describe('penguins of tangram character roster', () => {
     }
   });
 
+  it('places a high trampoline before every flagpole', () => {
+    for (const level of CAMPAIGN_LEVELS) {
+      const trampolines = (level.bouncePads ?? []).filter((pad) => pad.label === 'Flagpole trampoline');
+      expect(trampolines, `${level.id} has no flagpole trampoline`).toHaveLength(1);
+      const trampoline = trampolines[0];
+      expect(level.goal.x - (trampoline.x + trampoline.width)).toBeGreaterThanOrEqual(TANGRAM_PLAYER_WIDTH * 3);
+      const rise = trampoline.strength ** 2 / (2 * TANGRAM_GRAVITY);
+      expect(trampoline.y - TANGRAM_PLAYER_HEIGHT - rise).toBeLessThanOrEqual(level.goal.y);
+    }
+  });
+
   it('keeps every level at least three times as long as its original route', () => {
     expect(CAMPAIGN_LEVELS.map((level) => level.worldWidth)).toEqual([13200, 12000, 11400, 12600, 13500]);
     for (const level of CAMPAIGN_LEVELS) {
@@ -138,7 +151,10 @@ describe('penguins of tangram character roster', () => {
           ), `${level.id} badge box leaves too little ground access beside a stand-on platform`).toBe(false);
         }
       }
-      if (level.bouncePads) expect(extension(level.bouncePads)).toHaveLength(level.bouncePads.length * 2 / 3);
+      if (level.bouncePads) {
+        const routePads = level.bouncePads.filter((pad) => pad.label !== 'Flagpole trampoline');
+        expect(extension(routePads)).toHaveLength(routePads.length * 2 / 3);
+      }
       if (level.movingPlatforms) expect(extension(level.movingPlatforms)).toHaveLength(level.movingPlatforms.length * 2 / 3);
       const originalPlatforms = level.platforms.filter(
         (platform) => platform.x < originalWidth && platform.y + platform.height < level.worldHeight,

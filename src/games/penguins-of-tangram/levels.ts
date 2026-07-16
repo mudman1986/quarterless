@@ -446,6 +446,8 @@ const BADGE_BOX_CLUSTER_POSITIONS = [
   [0.15, 0.28, 0.57, 0.72, 0.87],
 ] as const;
 
+const FLAGPOLE_TRAMPOLINE_STRENGTH = 1145;
+
 function distributeBadgeBoxes(
   blocks: readonly BreakableBlock[],
   platforms: readonly Platform[],
@@ -500,6 +502,16 @@ function extendLevel(level: TangramLevelDefinition): TangramLevelDefinition {
     minX: enemy.minX + level.worldWidth * copy,
     maxX: enemy.maxX + level.worldWidth * copy,
   })));
+  const goal = { ...level.goal, x: worldWidth - 180 };
+  const flagpoleTrampoline: BouncePad = {
+    x: goal.x - 240,
+    y: level.worldHeight - 114,
+    width: 64,
+    height: 22,
+    label: 'Flagpole trampoline',
+    strength: FLAGPOLE_TRAMPOLINE_STRENGTH,
+    color: 0xff8f66,
+  };
   return {
     ...level,
     worldWidth,
@@ -511,10 +523,10 @@ function extendLevel(level: TangramLevelDefinition): TangramLevelDefinition {
       : undefined,
     enemies: [...level.enemies, ...enemies],
     hazards: [...level.hazards, ...repeatRoute(level.hazards, level.worldWidth)],
-    bouncePads: level.bouncePads ? [...level.bouncePads, ...repeatRoute(level.bouncePads, level.worldWidth)] : undefined,
+    bouncePads: [...(level.bouncePads ?? []), ...repeatRoute(level.bouncePads ?? [], level.worldWidth), flagpoleTrampoline],
     movingPlatforms: level.movingPlatforms ? [...level.movingPlatforms, ...repeatRoute(level.movingPlatforms, level.worldWidth)] : undefined,
     checkpoints: [...level.checkpoints, ...repeatRoute(level.checkpoints, level.worldWidth)],
-    goal: { ...level.goal, x: worldWidth - 180 },
+    goal,
   };
 }
 
