@@ -11,6 +11,7 @@ import {
   createTangramPlatformerState,
   getTangramCheckpointRespawn,
   isTangramPoweredUp,
+  tangramBadgeTotal,
   tickTangramPlatformer,
   type TangramPlatformerEvent,
   type TangramPlatformerState,
@@ -33,7 +34,6 @@ import {
 import {
   getUnlockedTangramLevelIds,
   loadTangramProgress,
-  recordTangramPlaytest,
   recordTangramLevelCompletion,
   resetTangramProgress,
   saveTangramProgress,
@@ -49,6 +49,10 @@ import {
 
 const VIEWPORT_WIDTH = 960;
 const VIEWPORT_HEIGHT = 540;
+const COMPLETION_AUTO_RESUME_MS = 10_000;
+const BACKDROP_DISPLAY_SCALE = 4 / 3;
+const ACTOR_DISPLAY_SCALE = 0.7;
+const CLOUD_POSITIONS = [[0.3, 0.18], [0.72, 0.29]] as const;
 
 type Collectible = {
   sprite: Phaser.GameObjects.Container;
@@ -94,8 +98,8 @@ type TestHook = {
   poweredUp: boolean;
   audioMuted: boolean;
   reducedMotion: boolean;
+  touchControlsEnabled: boolean;
   language: TangramLanguage;
-  playtestEnabled: boolean;
   bossActive: boolean;
   bossHitsRemaining: number;
   bossWarning: boolean;
@@ -150,21 +154,32 @@ function createTouchControls(parent: HTMLElement, language: TangramLanguage): Ta
   controls.className = 'tangram-platformer-touch-controls';
   controls.hidden = true;
   controls.innerHTML = `
-    <div class="tangram-platformer-touch-zone" data-control="move" aria-hidden="true"></div>
+    <div class="tangram-platformer-touch-zone" data-control="move" aria-hidden="true">
+      <div class="tangram-platformer-touch-stick"></div>
+    </div>
     <button type="button" data-control="jump" aria-label="${tangramText(language, 'Jump')}">↟</button>`;
   parent.append(controls);
+  const movePad = controls.querySelector<HTMLElement>('[data-control="move"]');
+  const moveStick = controls.querySelector<HTMLElement>('.tangram-platformer-touch-stick');
+  const jumpButton = controls.querySelector<HTMLButtonElement>('[data-control="jump"]');
+  if (!movePad || !moveStick || !jumpButton) {
+    throw new Error('Unable to create Tangram touch controls.');
+  }
   const setLanguage = (nextLanguage: TangramLanguage): void => {
-    const jump = controls.querySelector<HTMLButtonElement>('[data-control="jump"]');
-    if (jump) {
-      jump.textContent = '↟';
-      jump.setAttribute('aria-label', tangramText(nextLanguage, 'Jump'));
-    }
+    jumpButton.textContent = '↟';
+    jumpButton.setAttribute('aria-label', tangramText(nextLanguage, 'Jump'));
   };
 
   const cleanups: Array<() => void> = [];
-  const reset = (): void => {
+  let movementPointerId: number | undefined;
+  const resetMovement = (): void => {
+    movementPointerId = undefined;
     touchControls.left = false;
     touchControls.right = false;
+    moveStick.style.removeProperty('--stick-offset-x');
+  };
+  const reset = (): void => {
+    resetMovement();
     touchControls.jumpPressed = false;
   };
   const touchControls: TangramTouchControls = {
@@ -182,31 +197,60 @@ function createTouchControls(parent: HTMLElement, language: TangramLanguage): Ta
       controls.remove();
     },
   };
-  const pointerDown = (event: PointerEvent): void => {
-    const target = event.target as HTMLElement;
-    const button = target.closest<HTMLButtonElement>('[data-control="jump"]');
-    event.preventDefault();
-    if (button) {
-      touchControls.jumpPressed = true;
-    } else {
-      const bounds = controls.getBoundingClientRect();
-      const forward = event.clientX >= bounds.left + bounds.width / 2;
-      touchControls.left = !forward;
-      touchControls.right = forward;
-    }
-    if (event.pointerId) controls.setPointerCapture(event.pointerId);
+  const updateMovement = (event: PointerEvent): void => {
+    const bounds = movePad.getBoundingClientRect();
+    const horizontalOffset = event.clientX - (bounds.left + bounds.width / 2);
+    const deadZone = bounds.width * 0.1;
+    const stickLimit = bounds.width * 0.25;
+    const stickOffset = Math.max(-stickLimit, Math.min(stickLimit, horizontalOffset));
+    moveStick.style.setProperty('--stick-offset-x', `${stickOffset}px`);
+    touchControls.left = horizontalOffset < -deadZone;
+    touchControls.right = horizontalOffset > deadZone;
   };
-  controls.addEventListener('pointerdown', pointerDown);
-  controls.addEventListener('pointerup', reset);
-  controls.addEventListener('pointercancel', reset);
-  window.addEventListener('pointerup', reset);
-  window.addEventListener('pointercancel', reset);
+  const startMovement = (event: PointerEvent): void => {
+    if (movementPointerId !== undefined) return;
+    event.preventDefault();
+    movementPointerId = event.pointerId;
+    updateMovement(event);
+    movePad.setPointerCapture(event.pointerId);
+  };
+  const moveMovement = (event: PointerEvent): void => {
+    if (event.pointerId !== movementPointerId) return;
+    event.preventDefault();
+    updateMovement(event);
+  };
+  const stopMovement = (event: PointerEvent): void => {
+    if (event.pointerId === movementPointerId) resetMovement();
+  };
+  const stopLostMovement = (event: PointerEvent): void => {
+    if (event.pointerId === movementPointerId && event.buttons === 0) resetMovement();
+  };
+  const resetWhenHidden = (): void => {
+    if (document.visibilityState !== 'visible') reset();
+  };
+  const pressJump = (event: PointerEvent): void => {
+    event.preventDefault();
+    touchControls.jumpPressed = true;
+  };
+  movePad.addEventListener('pointerdown', startMovement);
+  movePad.addEventListener('pointermove', moveMovement);
+  movePad.addEventListener('pointerup', stopMovement);
+  movePad.addEventListener('pointercancel', stopMovement);
+  movePad.addEventListener('lostpointercapture', stopLostMovement);
+  jumpButton.addEventListener('pointerdown', pressJump);
+  window.addEventListener('pointerup', stopMovement);
+  window.addEventListener('pointercancel', stopMovement);
+  document.addEventListener('visibilitychange', resetWhenHidden);
   cleanups.push(
-    () => controls.removeEventListener('pointerdown', pointerDown),
-    () => controls.removeEventListener('pointerup', reset),
-    () => controls.removeEventListener('pointercancel', reset),
-    () => window.removeEventListener('pointerup', reset),
-    () => window.removeEventListener('pointercancel', reset),
+    () => movePad.removeEventListener('pointerdown', startMovement),
+    () => movePad.removeEventListener('pointermove', moveMovement),
+    () => movePad.removeEventListener('pointerup', stopMovement),
+    () => movePad.removeEventListener('pointercancel', stopMovement),
+    () => movePad.removeEventListener('lostpointercapture', stopLostMovement),
+    () => jumpButton.removeEventListener('pointerdown', pressJump),
+    () => window.removeEventListener('pointerup', stopMovement),
+    () => window.removeEventListener('pointercancel', stopMovement),
+    () => document.removeEventListener('visibilitychange', resetWhenHidden),
   );
   window.addEventListener('blur', reset);
   cleanups.push(() => window.removeEventListener('blur', reset));
@@ -230,13 +274,14 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   private playerBody!: Phaser.GameObjects.Ellipse;
   private playerBelly!: Phaser.GameObjects.Ellipse;
   private playerShadow!: Phaser.GameObjects.Ellipse;
-  private playerFlippers!: Phaser.GameObjects.Rectangle[];
+  private playerFlippers!: Array<Phaser.GameObjects.Ellipse | Phaser.GameObjects.Rectangle>;
+  private playerInnerFlippers: Phaser.GameObjects.Ellipse[] = [];
   private playerFeet!: Phaser.GameObjects.Ellipse[];
-  private checkpointBanner!: Phaser.GameObjects.Container;
+  private checkpointBanners: Phaser.GameObjects.Container[] = [];
   private goalBanner!: Phaser.GameObjects.Container;
   private goalFlag!: Phaser.GameObjects.Container;
-  private powerBlock!: Phaser.GameObjects.Container;
-  private powerSnack!: Phaser.GameObjects.Container;
+  private powerBlocks: Phaser.GameObjects.Container[] = [];
+  private powerSnacks: Phaser.GameObjects.Container[] = [];
   private breakableBlocks: Phaser.GameObjects.Container[] = [];
   private bossSprite: Phaser.GameObjects.Container | null = null;
   private bossHealthLabel: Phaser.GameObjects.Text | null = null;
@@ -245,6 +290,9 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   private enemies: Enemy[] = [];
   private movingPlatforms: MovingPlatformSprite[] = [];
   private bouncePads: Phaser.GameObjects.Container[] = [];
+  private cloudClusters: Phaser.GameObjects.Container[] = [];
+  private backdropLandmark: Phaser.GameObjects.Container | null = null;
+  private backdropLandmarkWidth = 0;
   private readonly simulation: TangramPlatformerState;
   private readonly simulationEvents: TangramPlatformerEvent[] = [];
   private effects: TangramSound | null = null;
@@ -252,14 +300,14 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   private previousGrounded = false;
   private previousPowered = false;
   private previousBossHits: number | null = null;
+  private respawnTransition = false;
   private readonly reducedMotion: boolean;
   private readonly muted: boolean;
   private readonly language: TangramLanguage;
+  private touchControlsEnabled: boolean;
   accumulator = 0;
   private lastJumpDown = false;
   private paused = false;
-  private lastCameraWidth = 0;
-  private lastCameraHeight = 0;
 
   constructor(
     character: TangramCharacterDefinition,
@@ -270,7 +318,12 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       onSceneState: (snapshot: SceneHookState) => void;
       onComplete: (summary: LevelSummary) => void;
     },
-    options: { muted: boolean; reducedMotion: boolean; language: TangramLanguage },
+    options: {
+      muted: boolean;
+      reducedMotion: boolean;
+      touchControlsEnabled: boolean;
+      language: TangramLanguage;
+    },
   ) {
     super('PenguinsOfTangram');
     this.character = character;
@@ -279,6 +332,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     this.callbacks = callbacks;
     this.muted = options.muted;
     this.reducedMotion = options.reducedMotion;
+    this.touchControlsEnabled = options.touchControlsEnabled;
     this.language = options.language;
     this.jumpAudit = buildJumpAudit(level, character);
     this.simulation = createTangramPlatformerState(level);
@@ -287,7 +341,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   create(): void {
     this.cameras.main.setBackgroundColor(this.level.skyColor);
     this.cameras.main.setBounds(0, 0, this.level.worldWidth, this.level.worldHeight);
-    this.updateCameraLayout();
+    this.applyCameraZoom();
     this.createBackdrop();
     this.createPlatforms();
     this.createDecor();
@@ -295,14 +349,19 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     this.createHazards();
     this.createEnemies();
     this.createBoss();
-    this.createCheckpoint();
+    this.createCheckpoints();
     this.createGoal();
     this.createBouncePads();
     this.createPowerSnack();
     this.player = this.createPlayer();
     this.playerAura = this.add.ellipse(0, 0, 88, 92, 0xffef8e, 0.24).setVisible(false);
     this.playerAura.setDepth(4);
-    this.cameras.main.startFollow(this.player, true, 0.12, 0.12, 120, 30);
+    this.cameras.main.startFollow(this.player, true, 0.12, 0, 0, 30);
+    this.syncBackdropLayout();
+    this.scale.on('resize', this.onResize, this);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.scale.off('resize', this.onResize, this);
+    });
     this.keys = this.input.keyboard?.addKeys({
       left: 'LEFT',
       right: 'RIGHT',
@@ -324,8 +383,8 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   }
 
   update(_: number, deltaMs: number): void {
-    if (this.simulation.finished || this.paused) return;
-    this.updateCameraLayout();
+    if (this.simulation.finished || this.paused || this.respawnTransition) return;
+    this.syncBackdropLayout();
     const leftDown = Boolean(this.keys?.left.isDown || this.keys?.a.isDown || this.touchControls.left);
     const rightDown = Boolean(this.keys?.right.isDown || this.keys?.d.isDown || this.touchControls.right);
     const jumpDown = Boolean(this.keys?.up.isDown || this.keys?.w.isDown || this.keys?.space.isDown);
@@ -358,7 +417,12 @@ class PenguinsOfTangramScene extends Phaser.Scene {
 
   setPaused(paused: boolean): void {
     this.paused = paused;
-    this.touchControls.setVisible(!paused);
+    this.touchControls.setVisible(!paused && this.touchControlsEnabled);
+  }
+
+  setTouchControlsEnabled(enabled: boolean): void {
+    this.touchControlsEnabled = enabled;
+    this.touchControls.setVisible(!this.paused && enabled);
   }
 
   setMuted(muted: boolean): void {
@@ -373,16 +437,17 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   debugCompleteLevel(): void {
     if (this.simulation.finished) return;
     this.simulation.collected.fill(true);
-    this.simulation.badgesCollected = this.collectibles.length;
+    this.simulation.badgesCollected = tangramBadgeTotal(this.level);
     this.simulation.checkpointActivated = true;
-    this.simulation.respawnPoint = getTangramCheckpointRespawn(this.level) ?? this.simulation.respawnPoint;
+    const checkpoint = this.level.checkpoints[this.level.checkpoints.length - 1];
+    this.simulation.respawnPoint = getTangramCheckpointRespawn(this.level, checkpoint) ?? this.simulation.respawnPoint;
     this.simulation.player.x = this.level.goal.x;
     this.simulation.player.y = this.level.goal.y;
     if (this.simulation.boss) {
       this.simulation.boss.active = false;
       this.simulation.boss.hitsRemaining = 0;
     }
-    for (let tick = 0; tick < 90 && !this.simulation.finished; tick += 1) {
+    for (let tick = 0; tick < 240 && !this.simulation.finished; tick += 1) {
       tickTangramPlatformer(
         this.simulation,
         this.level,
@@ -396,31 +461,50 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     this.applySimulationEvents();
   }
 
-  private updateCameraLayout(): void {
-    if (this.scale.width === this.lastCameraWidth && this.scale.height === this.lastCameraHeight) return;
-    this.lastCameraWidth = this.scale.width;
-    this.lastCameraHeight = this.scale.height;
+  private applyCameraZoom(): void {
     const widthZoom = this.scale.width / VIEWPORT_WIDTH;
     const heightZoom = this.scale.height / VIEWPORT_HEIGHT;
-    this.cameras.main.setZoom(Math.max(1, Math.min(widthZoom, heightZoom)));
+    this.cameras.main.setZoom(Math.max(1, widthZoom, heightZoom));
   }
 
   private createBackdrop(): void {
-    this.add.rectangle(this.level.worldWidth / 2, this.level.worldHeight / 2, this.level.worldWidth, this.level.worldHeight, Phaser.Display.Color.HexStringToColor(this.level.skyColor).color).setScrollFactor(0, 0);
-    this.add.rectangle(this.level.worldWidth / 2, 390, this.level.worldWidth, 180, 0xb9ec7b).setScrollFactor(0.12, 0.2);
-    for (let index = 0; index < Math.ceil(this.level.worldWidth / 440); index += 1) {
-      const cloudX = 160 + index * 440;
-      const cloudY = 90 + (index % 3) * 38;
-      this.add.ellipse(cloudX, cloudY, 120, 44, 0xffffff, 0.95).setScrollFactor(0.12, 0.08);
-      this.add.ellipse(cloudX + 40, cloudY + 6, 88, 36, 0xffffff, 0.95).setScrollFactor(0.12, 0.08);
-      this.add.ellipse(cloudX - 46, cloudY + 8, 76, 32, 0xffffff, 0.95).setScrollFactor(0.12, 0.08);
-    }
-    for (let index = 0; index < Math.ceil(this.level.worldWidth / 520); index += 1) {
-      const hillX = 260 + index * 520;
-      const color = index % 2 === 0 ? this.level.hillColors[0] : this.level.hillColors[1];
-      this.add.ellipse(hillX, 430, 360, 180, color, 1).setScrollFactor(0.28, 0.3);
+    this.add.rectangle(this.level.worldWidth / 2, this.level.worldHeight / 2, this.level.worldWidth, this.level.worldHeight, Phaser.Display.Color.HexStringToColor(this.level.skyColor).color)
+      .setScrollFactor(0, 0)
+      .setAlpha(0.82);
+    for (let index = 0; index < CLOUD_POSITIONS.length; index += 1) {
+      const cloud = this.add.container().setScrollFactor(0).setDepth(1);
+      cloud.add([
+        this.add.ellipse(0, 4, 96, 34, 0x5ca8c7, 0.45),
+        this.add.ellipse(0, 0, 90, 32, 0xffffff, 0.85),
+        this.add.ellipse(30, 5, 62, 24, 0xffffff, 0.85),
+        this.add.ellipse(-32, 6, 54, 22, 0xffffff, 0.85),
+      ]);
+      this.cloudClusters.push(cloud);
     }
     this.createLandmark();
+  }
+
+  private onResize(): void {
+    this.applyCameraZoom();
+    this.syncBackdropLayout();
+  }
+
+  private syncBackdropLayout(): void {
+    const camera = this.cameras.main;
+    const objectX = (screenX: number): number => screenX / camera.zoom - camera.scrollX;
+    const objectY = (screenY: number): number => screenY / camera.zoom - camera.scrollY;
+    const counterScale = BACKDROP_DISPLAY_SCALE / camera.zoom;
+    this.cloudClusters.forEach((cloud, index) => {
+      const [x, y] = CLOUD_POSITIONS[index];
+      cloud
+        .setPosition(objectX(this.scale.width * x), objectY(this.scale.height * y))
+        .setScale(counterScale);
+    });
+    if (!this.backdropLandmark) return;
+    const displayWidth = Math.min(this.scale.width * 0.86, this.backdropLandmarkWidth * BACKDROP_DISPLAY_SCALE);
+    this.backdropLandmark
+      .setPosition(objectX(this.scale.width * 0.5), objectY(this.scale.height * 0.39))
+      .setScale(displayWidth / this.backdropLandmarkWidth * counterScale);
   }
 
   private createLandmark(): void {
@@ -428,6 +512,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       case 'school': {
         const school = this.add.container(340, 294);
         school.setScrollFactor(0.3, 0.34);
+        school.setAlpha(0.76);
         school.add([
           this.add.rectangle(0, 34, 340, 140, 0xfff4d6),
           this.add.rectangle(0, -10, 220, 70, 0xffd166),
@@ -439,6 +524,8 @@ class PenguinsOfTangramScene extends Phaser.Scene {
           this.add.rectangle(0, 66, 68, 76, 0x8d5b34),
           this.add.triangle(0, -18, -24, 0, 24, 0, 0, 26, 0x59d0ff),
         ]);
+        this.backdropLandmark = school.setScrollFactor(0);
+        this.backdropLandmarkWidth = 380;
         break;
       }
       case 'playground': {
@@ -452,6 +539,8 @@ class PenguinsOfTangramScene extends Phaser.Scene {
           this.add.rectangle(130, 44, 22, 92, 0x5bb4ff),
           this.add.rectangle(0, 94, 320, 18, 0x7ad46e),
         ]);
+        this.backdropLandmark = playground.setScrollFactor(0);
+        this.backdropLandmarkWidth = 320;
         break;
       }
       case 'classroom': {
@@ -465,6 +554,8 @@ class PenguinsOfTangramScene extends Phaser.Scene {
           this.add.rectangle(108, 36, 80, 52, 0xd8b27e),
           this.add.circle(0, -44, 14, 0xffd166),
         ]);
+        this.backdropLandmark = classroom.setScrollFactor(0);
+        this.backdropLandmarkWidth = 360;
         break;
       }
       case 'library': {
@@ -478,6 +569,8 @@ class PenguinsOfTangramScene extends Phaser.Scene {
           this.add.rectangle(0, -46, 280, 50, 0xff93c2),
           this.add.triangle(0, -46, -22, 14, 22, 14, 0, -18, 0xffd166),
         ]);
+        this.backdropLandmark = library.setScrollFactor(0);
+        this.backdropLandmarkWidth = 360;
         break;
       }
       case 'stadium': {
@@ -491,19 +584,30 @@ class PenguinsOfTangramScene extends Phaser.Scene {
           this.add.rectangle(120, 24, 82, 22, 0xffd166),
           this.add.circle(0, -10, 14, 0xffd166),
         ]);
+        this.backdropLandmark = stadium.setScrollFactor(0);
+        this.backdropLandmarkWidth = 420;
         break;
       }
     }
   }
 
   private createPlatforms(): void {
+    const outlineWidth = 6;
+    const outlineColor = 0x103047;
     for (const platform of this.level.platforms) {
-      this.add.rectangle(platform.x + platform.width / 2, platform.y + platform.height / 2, platform.width, platform.height, platform.color)
-        .setDepth(2)
-        .setStrokeStyle(4, 0x103047, 0.92);
+      const isGround = platform.y + platform.height >= this.level.worldHeight;
+      const platformBody = this.add.rectangle(
+        platform.x + platform.width / 2,
+        platform.y + platform.height / 2,
+        platform.width,
+        platform.height,
+        platform.color,
+      ).setDepth(2);
+      platformBody.setStrokeStyle(outlineWidth, outlineColor, 1);
+      if (isGround) continue;
       this.add.rectangle(platform.x + platform.width / 2, platform.y + 6, platform.width, 12, platform.trim)
         .setDepth(3)
-        .setStrokeStyle(2, 0x103047, 0.8);
+        .setStrokeStyle(3, outlineColor, 1);
     }
     this.breakableBlocks = (this.level.breakableBlocks ?? []).map((block) => {
       const container = this.add.container(
@@ -512,11 +616,12 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       );
       container.setDepth(3);
       container.add([
-        this.add.rectangle(0, 0, block.width, block.height, block.color).setStrokeStyle(4, 0x103047, 1),
+        this.add.rectangle(0, 0, block.width, block.height, block.color).setStrokeStyle(outlineWidth, outlineColor, 1),
         this.add.rectangle(0, -block.height / 2 + 5, block.width, 8, block.trim),
-        this.add.triangle(-8, -6, -14, -14, 0, -14, -8, 2, 0xffffff),
-        this.add.triangle(8, -6, 0, -14, 16, -14, 8, 2, 0xff8f66),
-        this.add.triangle(0, 8, -8, 2, 8, 2, 0, 16, 0x59d0ff),
+        this.add.circle(0, 4, 15, 0xf7fbff).setStrokeStyle(2, 0x103047, 1),
+        this.add.triangle(-6, 0, -13, -8, 1, -8, -6, 5, 0xff8f66),
+        this.add.triangle(6, 0, 1, -8, 13, -8, 6, 5, 0x59d0ff),
+        this.add.triangle(0, 9, -6, 4, 6, 4, 0, 15, 0x71d2b6),
       ]);
       return container;
     });
@@ -530,7 +635,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       ]);
       sprite.list.forEach((child) => {
         if ('setStrokeStyle' in child && typeof child.setStrokeStyle === 'function') {
-          child.setStrokeStyle(3, 0x103047, 0.95);
+          child.setStrokeStyle(5, outlineColor, 1);
         }
       });
       return { sprite };
@@ -587,14 +692,17 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     ]);
   }
 
-  private createCheckpoint(): void {
-    this.checkpointBanner = this.add.container(this.level.checkpoint.x + 20, this.level.checkpoint.y + 60);
-    this.checkpointBanner.setDepth(4);
-    this.checkpointBanner.add([
-      this.add.rectangle(0, 24, 10, 120, 0x8d5b34),
-      this.add.rectangle(34, -16, 66, 34, 0xffd166),
-      this.add.circle(34, -16, 8, 0x59d0ff),
-    ]);
+  private createCheckpoints(): void {
+    this.checkpointBanners = this.level.checkpoints.map((checkpoint) => {
+      const banner = this.add.container(checkpoint.x + 20, checkpoint.y + 60);
+      banner.setDepth(4);
+      banner.add([
+        this.add.rectangle(0, 24, 10, 120, 0x8d5b34),
+        this.add.rectangle(34, -16, 66, 34, 0xffd166),
+        this.add.circle(34, -16, 8, 0x59d0ff),
+      ]);
+      return banner;
+    });
   }
 
   private createGoal(): void {
@@ -610,10 +718,12 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     this.goalFlag.add([
       this.add.triangle(36, 0, 0, -2, 76, 14, 0, 30, 0xff8f66)
         .setStrokeStyle(3, 0x103047, 0.95),
-      this.add.triangle(25, 7, 10, 0, 25, 0, 25, 15, 0xfff7d1),
-      this.add.triangle(39, 7, 25, 0, 53, 0, 39, 18, 0x59d0ff),
-      this.add.triangle(25, 21, 10, 15, 25, 7, 25, 28, 0x71d2b6),
-      this.add.triangle(39, 21, 25, 7, 53, 15, 39, 28, 0xffd166),
+      this.add.rectangle(34, 14, 30, 24, 0xf7fbff).setStrokeStyle(2, 0x103047, 1),
+      this.add.triangle(27, 8, 18, 2, 34, 2, 27, 16, 0xff8f66),
+      this.add.triangle(41, 8, 34, 2, 50, 2, 41, 16, 0x59d0ff),
+      this.add.rectangle(34, 14, 8, 8, 0xffd166).setStrokeStyle(1, 0x103047, 1),
+      this.add.triangle(27, 20, 19, 15, 27, 15, 27, 25, 0x71d2b6),
+      this.add.triangle(41, 20, 41, 15, 49, 15, 41, 25, 0x8d5b34),
     ]);
     this.goalBanner.add(this.goalFlag);
   }
@@ -623,29 +733,41 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       const container = this.add.container(pad.x + pad.width / 2, pad.y + pad.height / 2);
       container.setDepth(4);
       container.add([
-        this.add.rectangle(0, 0, pad.width, pad.height, pad.color),
-        this.add.triangle(0, 0, -8, 6, 8, 6, 0, -8, 0x103047),
+        this.add.rectangle(-pad.width * 0.3, 8, 5, 14, 0x103047),
+        this.add.rectangle(pad.width * 0.3, 8, 5, 14, 0x103047),
+        this.add.rectangle(0, 2, pad.width - 8, 6, 0x103047),
+        this.add.ellipse(0, -5, pad.width, 13, pad.color).setStrokeStyle(3, 0x103047, 1),
+        this.add.line(-pad.width * 0.28, 8, 0, 0, -8, 13, 0xfff1b8).setLineWidth(3),
+        this.add.line(pad.width * 0.28, 8, 0, 0, 8, 13, 0xfff1b8).setLineWidth(3),
       ]);
       return container;
     });
   }
 
   private createPowerSnack(): void {
-    this.powerBlock = this.add.container(this.level.powerup.x + this.level.powerup.width / 2, this.level.powerup.y + 26);
-    this.powerBlock.setDepth(4);
-    this.powerBlock.add([
-      this.add.rectangle(0, 0, 46, 46, 0xffd166),
-      this.add.rectangle(0, -16, 46, 8, 0xfff0a8),
-      this.add.triangle(0, 4, -12, 8, 12, 8, 0, -10, 0x8d5b34),
-    ]);
-    this.powerSnack = this.add.container(this.level.powerup.x + this.level.powerup.width / 2, this.level.powerup.y - 18);
-    this.powerSnack.setDepth(4);
-    this.powerSnack.add([
-      this.add.ellipse(0, 0, 40, 28, 0x71d2b6),
-      this.add.rectangle(0, 0, 25, 14, 0xffd166),
-      this.add.circle(-13, 0, 5, 0xffd166),
-      this.add.circle(13, 0, 5, 0xffd166),
-    ]);
+    const outlineWidth = 5;
+    this.powerBlocks = this.level.powerups.map((powerup) => {
+      const block = this.add.container(powerup.x + powerup.width / 2, powerup.y + 26).setDepth(4);
+      block.add([
+        this.add.rectangle(0, 0, 46, 46, 0xffd166).setStrokeStyle(outlineWidth, 0x103047, 1),
+        this.add.rectangle(0, -16, 46, 8, 0xfff0a8),
+        this.add.rectangle(0, 4, 24, 24, 0xf7fbff).setStrokeStyle(3, 0x103047, 1),
+        this.add.triangle(-6, 0, -12, -6, 0, -6, -6, 6, 0xff8f66),
+        this.add.triangle(6, 0, 0, -6, 12, -6, 6, 6, 0x59d0ff),
+        this.add.triangle(0, 9, -6, 4, 6, 4, 0, 14, 0x71d2b6),
+      ]);
+      return block;
+    });
+    this.powerSnacks = this.level.powerups.map((powerup) => {
+      const snack = this.add.container(powerup.x + powerup.width / 2, powerup.y - 18).setDepth(4);
+      snack.add([
+        this.add.ellipse(0, 0, 40, 28, 0x71d2b6).setStrokeStyle(4, 0x103047, 1),
+        this.add.rectangle(0, 0, 25, 14, 0xffd166),
+        this.add.circle(-13, 0, 5, 0xffd166),
+        this.add.circle(13, 0, 5, 0xffd166),
+      ]);
+      return snack;
+    });
   }
 
   private createPlayer(): Phaser.GameObjects.Container {
@@ -657,81 +779,199 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     container.setDepth(6);
     const bodyColor = Phaser.Display.Color.HexStringToColor(this.character.body).color;
     const accentColor = Phaser.Display.Color.HexStringToColor(this.character.accent).color;
-    const accessoryColor = Phaser.Display.Color.HexStringToColor(this.character.accessory).color;
     const shadow = this.add.ellipse(0, 22, 38, 14, 0x000000, 0.18);
+    const isPenguin = this.character.id === 'penguin';
     const isCrocodile = this.character.id === 'crocodile';
     const isTurtle = this.character.id === 'turtle';
-    const body = this.add.ellipse(0, -8, isCrocodile ? 58 : isTurtle ? 42 : 44, isCrocodile ? 34 : isTurtle ? 44 : 56, bodyColor);
-    const belly = this.add.ellipse(0, -2, isCrocodile ? 34 : isTurtle ? 22 : 24, isCrocodile ? 14 : isTurtle ? 24 : 30, isTurtle ? 0x9fd8b4 : this.character.id === 'penguin' ? 0xf7fbff : accessoryColor);
-    const limbWidth = isCrocodile ? 12 : 10;
-    const limbHeight = isCrocodile ? 10 : 24;
-    const limbY = isCrocodile ? 8 : -8;
-    const leftFlipper = this.add.rectangle(-20, limbY, limbWidth, limbHeight, accessoryColor);
-    const rightFlipper = this.add.rectangle(20, limbY, limbWidth, limbHeight, accessoryColor);
-    const footColor = isCrocodile || isTurtle ? bodyColor : this.character.id === 'penguin' ? 0xffb15f : accessoryColor;
-    const leftFoot = this.add.ellipse(-10, 22, 14, 8, footColor);
-    const rightFoot = this.add.ellipse(10, 22, 14, 8, footColor);
-    const eyeCenterX = isCrocodile || isTurtle ? 24 : 0;
-    const eyeY = isCrocodile || isTurtle ? -19 : -18;
-    const eyes = [
-      this.add.circle(eyeCenterX - 5, eyeY, 4, 0xffffff),
-      this.add.circle(eyeCenterX + 5, eyeY, 4, 0xffffff),
-      this.add.circle(eyeCenterX - 5, eyeY, 2, 0x103047),
-      this.add.circle(eyeCenterX + 5, eyeY, 2, 0x103047),
-    ];
+    const isKangaroo = this.character.id === 'kangaroo';
+    const isLion = this.character.id === 'lion';
+    const body = this.add.ellipse(
+      0,
+      -8,
+      isCrocodile ? 48 : isTurtle ? 56 : isKangaroo ? 42 : isLion ? 46 : isPenguin ? 46 : 44,
+      isCrocodile ? 58 : isTurtle ? 52 : isKangaroo ? 64 : isLion ? 62 : isPenguin ? 70 : 60,
+      bodyColor,
+    );
+    const belly = this.add.ellipse(
+      isPenguin ? 1 : 0,
+      isPenguin ? -1 : -2,
+      isCrocodile ? 30 : isTurtle ? 30 : isKangaroo || isLion ? 28 : isPenguin ? 32 : 27,
+      isCrocodile ? 34 : isTurtle ? 28 : isKangaroo || isLion ? 34 : isPenguin ? 48 : 36,
+      isCrocodile ? 0xd9f0c4
+        : isTurtle ? 0x9fd8b4
+          : isKangaroo ? 0xf2c6a5
+            : isLion ? 0xffe0a3
+              : isPenguin ? 0xf7fbff
+                : 0xe6b78a,
+    );
+    const limbWidth = isPenguin ? 12 : isTurtle ? 11 : 10;
+    const limbHeight = isPenguin ? 30 : isCrocodile ? 18 : isTurtle ? 14 : isKangaroo ? 18 : 22;
+    const limbY = isCrocodile ? 0 : isTurtle ? 4 : isKangaroo ? -1 : isLion ? 9 : isPenguin ? -4 : -6;
+    const limbOffset = isPenguin ? 24 : isTurtle ? 25 : isCrocodile ? 23 : isKangaroo ? 17 : isLion ? 18 : 21;
+    const flipperColor = isPenguin ? 0x274a67 : bodyColor;
+    const leftFlipper = this.add.ellipse(-limbOffset, limbY, limbWidth, limbHeight, flipperColor);
+    const rightFlipper = this.add.ellipse(limbOffset, limbY, limbWidth, limbHeight, flipperColor);
+    const innerFlippers = isPenguin
+      ? [
+        this.add.ellipse(-24, limbY, 5, 18, 0xf7fbff),
+        this.add.ellipse(24, limbY, 5, 18, 0xf7fbff),
+      ]
+      : [];
+    const footColor = isPenguin ? 0xffb15f : isLion ? 0xd99a43 : bodyColor;
+    const footWidth = isPenguin ? 18 : isTurtle ? 16 : 15;
+    const leftFoot = this.add.ellipse(-11, 22, footWidth, 8, footColor);
+    const rightFoot = this.add.ellipse(11, 22, footWidth, 8, footColor);
+    const eyeCenterX = isCrocodile ? 15 : isTurtle ? 27 : isKangaroo ? 6 : isLion ? 17 : isPenguin ? 8 : 0;
+    const eyeY = isCrocodile ? -25 : isTurtle ? -17 : isKangaroo ? -27 : isLion ? -23 : -20;
+    const eyes = isPenguin
+      ? [
+        this.add.ellipse(2, -20, 11, 14, 0xf7fbff).setStrokeStyle(2, 0x103047, 1),
+        this.add.ellipse(14, -20, 11, 14, 0xf7fbff).setStrokeStyle(2, 0x103047, 1),
+        this.add.circle(2, -19, 3, 0x103047),
+        this.add.circle(14, -19, 3, 0x103047),
+      ]
+      : [
+        this.add.circle(eyeCenterX - 5, eyeY, 4, 0xffffff),
+        this.add.circle(eyeCenterX + 5, eyeY, 4, 0xffffff),
+        this.add.circle(eyeCenterX - 5, eyeY, 2, 0x103047),
+        this.add.circle(eyeCenterX + 5, eyeY, 2, 0x103047),
+      ];
     const speciesArt: Phaser.GameObjects.GameObject[] = [];
+    const speciesDetails: Phaser.GameObjects.GameObject[] = [];
     switch (this.character.id) {
-      case 'crocodile':
+      case 'crocodile': {
+        const torso = this.add.graphics();
+        torso.fillStyle(bodyColor, 1);
+        torso.fillRoundedRect(-21, -30, 39, 53, 15);
+        torso.lineStyle(4, 0x103047, 1);
+        torso.strokeRoundedRect(-21, -30, 39, 53, 15);
         speciesArt.push(
-          this.add.triangle(-34, -5, -30, -12, -30, 10, -50, 2, bodyColor),
-          this.add.rectangle(38, -8, 28, 14, bodyColor).setStrokeStyle(2, 0x103047, 1),
-          this.add.triangle(39, 1, 31, -4, 31, 5, 42, 2, 0xf7d86c),
-          this.add.circle(33, -12, 3, 0x103047),
+          torso,
+          this.add.ellipse(-29, 6, 30, 12, bodyColor).setStrokeStyle(2, 0x103047, 1),
+        );
+        speciesDetails.push(
+          this.add.ellipse(-2, 4, 26, 29, 0xd9f0c4).setStrokeStyle(2, 0x103047, 1),
+          this.add.ellipse(24, -13, 32, 18, 0x80d36d).setStrokeStyle(3, 0x103047, 1),
+          this.add.circle(30, -13, 2, 0x103047),
+          this.add.circle(38, -13, 2, 0x103047),
+          this.add.circle(-10, -33, 4, 0x80d36d),
+          this.add.circle(0, -36, 4, 0x80d36d),
         );
         break;
-      case 'monkey':
+      }
+      case 'monkey': {
+        const torso = this.add.graphics();
+        torso.fillStyle(bodyColor, 1);
+        torso.fillRoundedRect(-17, -22, 34, 45, 14);
+        torso.lineStyle(4, 0x103047, 1);
+        torso.strokeRoundedRect(-17, -22, 34, 45, 14);
         speciesArt.push(
-          this.add.circle(-23, -15, 11, bodyColor),
-          this.add.circle(23, -15, 11, bodyColor),
-          this.add.arc(-25, 10, 44, 65, 275, false, bodyColor, 7),
-          this.add.ellipse(0, 28, 28, 10, bodyColor),
+          torso,
+          this.add.ellipse(-28, 8, 12, 38, bodyColor).setRotation(0.5).setStrokeStyle(2, 0x103047, 1),
+          this.add.circle(-31, 24, 8, bodyColor).setStrokeStyle(2, 0x103047, 1),
+          this.add.circle(-20, -25, 10, bodyColor).setStrokeStyle(2, 0x103047, 1),
+          this.add.circle(20, -25, 10, bodyColor).setStrokeStyle(2, 0x103047, 1),
+        );
+        speciesDetails.push(
+          this.add.circle(0, -24, 20, bodyColor).setStrokeStyle(3, 0x103047, 1),
+          this.add.ellipse(0, 4, 24, 28, 0xe6b78a).setStrokeStyle(2, 0x103047, 1),
+          this.add.ellipse(0, -9, 28, 22, 0xe6b78a).setStrokeStyle(2, 0x103047, 1),
+          this.add.circle(-5, -10, 1.5, 0x103047),
+          this.add.circle(5, -10, 1.5, 0x103047),
         );
         break;
+      }
       case 'turtle':
         speciesArt.push(
-          this.add.ellipse(-3, -8, 60, 42, accentColor).setStrokeStyle(3, 0x355342, 1),
-          this.add.arc(-3, -8, 44, 0, 180, false, 0x355342, 2),
-          this.add.circle(28, -8, 12, bodyColor),
+          this.add.ellipse(-31, 5, 22, 9, bodyColor).setStrokeStyle(2, 0x103047, 1),
+          this.add.ellipse(-3, -8, 64, 52, accentColor).setStrokeStyle(3, 0x355342, 1),
+        );
+        speciesDetails.push(
+          this.add.ellipse(-3, 5, 42, 26, bodyColor).setStrokeStyle(2, 0x103047, 1),
+          this.add.ellipse(-4, 5, 30, 17, 0x9fd8b4).setStrokeStyle(2, 0x355342, 1),
+          this.add.ellipse(28, -10, 24, 21, bodyColor).setStrokeStyle(2, 0x103047, 1),
+          this.add.circle(-14, -18, 6, 0x9fd8b4).setStrokeStyle(2, 0x355342, 1),
+          this.add.circle(0, -26, 6, 0x9fd8b4).setStrokeStyle(2, 0x355342, 1),
+          this.add.circle(13, -13, 6, 0x9fd8b4).setStrokeStyle(2, 0x355342, 1),
+          this.add.circle(-1, 6, 6, 0x9fd8b4).setStrokeStyle(2, 0x355342, 1),
         );
         break;
       case 'kangaroo':
         speciesArt.push(
-          this.add.ellipse(-10, -40, 10, 28, bodyColor),
-          this.add.ellipse(10, -40, 10, 28, bodyColor),
-          this.add.ellipse(0, 10, 28, 24, accentColor).setStrokeStyle(2, 0x103047, 1),
-          this.add.arc(-22, 12, 46, 120, 260, false, bodyColor, 6),
+          this.add.ellipse(-30, 14, 52, 13, bodyColor).setRotation(-0.16).setStrokeStyle(2, 0x103047, 1),
+          this.add.ellipse(-6, 7, 34, 35, bodyColor).setStrokeStyle(3, 0x103047, 1),
+          this.add.ellipse(3, -10, 28, 34, bodyColor).setStrokeStyle(3, 0x103047, 1),
+          this.add.ellipse(-2, -46, 8, 25, bodyColor).setStrokeStyle(2, 0x103047, 1),
+          this.add.ellipse(13, -46, 8, 25, bodyColor).setStrokeStyle(2, 0x103047, 1),
+        );
+        speciesDetails.push(
+          this.add.ellipse(-5, 10, 24, 22, 0xf2c6a5).setStrokeStyle(2, 0x103047, 1),
+          this.add.ellipse(6, -30, 27, 23, bodyColor).setStrokeStyle(3, 0x103047, 1),
+          this.add.ellipse(17, -29, 14, 9, 0xf2c6a5).setStrokeStyle(2, 0x103047, 1),
+          this.add.circle(21, -29, 2, 0x103047),
         );
         break;
-      case 'lion':
+      case 'lion': {
+        const torso = this.add.graphics();
+        torso.fillStyle(bodyColor, 1);
+        torso.fillRoundedRect(-28, -7, 45, 27, 12);
+        torso.lineStyle(4, 0x103047, 1);
+        torso.strokeRoundedRect(-28, -7, 45, 27, 12);
         speciesArt.push(
-          this.add.circle(0, -10, 30, accentColor).setStrokeStyle(3, 0x8d5b34, 1),
-          this.add.circle(-18, -32, 8, accentColor),
-          this.add.circle(18, -32, 8, accentColor),
-          this.add.arc(24, 10, 34, -80, 100, false, bodyColor, 5),
+          torso,
+          this.add.ellipse(-39, -1, 38, 8, bodyColor).setRotation(0.14).setStrokeStyle(2, 0x103047, 1),
+          this.add.circle(-54, -4, 5, accentColor).setStrokeStyle(2, 0x8d5b34, 1),
+          this.add.ellipse(19, -25, 50, 51, accentColor).setStrokeStyle(3, 0x8d5b34, 1),
+          this.add.circle(7, -40, 7, accentColor).setStrokeStyle(2, 0x8d5b34, 1),
+          this.add.circle(30, -40, 7, accentColor).setStrokeStyle(2, 0x8d5b34, 1),
+        );
+        speciesDetails.push(
+          this.add.ellipse(-5, 5, 23, 15, 0xffe0a3).setStrokeStyle(2, 0x8d5b34, 1),
+          this.add.circle(19, -25, 18, 0xffc45b).setStrokeStyle(3, 0x8d5b34, 1),
+          this.add.ellipse(23, -16, 22, 13, 0xffe0a3).setStrokeStyle(2, 0x8d5b34, 1),
+          this.add.circle(24, -19, 3, 0x805a2a),
         );
         break;
-      default:
-        speciesArt.push(this.add.triangle(0, -8, -8, -4, 8, -4, 0, 8, 0xffb15f));
-        break;
+      }
     }
+    const penguinFace: Phaser.GameObjects.GameObject[] = isPenguin
+      ? [this.add.ellipse(5, -18, 32, 27, 0xf7fbff)]
+      : [];
+    const penguinDetails: Phaser.GameObjects.GameObject[] = isPenguin
+      ? [
+        this.add.ellipse(-8, -34, 16, 6, 0x5f8ee0, 0.45),
+        this.add.ellipse(23, -10, 16, 10, 0xffb15f).setStrokeStyle(2, 0x103047, 1),
+        this.add.ellipse(24, -6, 10, 4, 0xe37b3f),
+        this.add.circle(1, -22, 1.3, 0xf7fbff),
+        this.add.circle(13, -22, 1.3, 0xf7fbff),
+        this.add.ellipse(-18, 1, 5, 17, 0x5f8ee0, 0.45),
+        this.add.ellipse(18, 1, 5, 17, 0x5f8ee0, 0.45),
+        this.add.ellipse(-8, 14, 8, 3, 0xd9e3ea),
+        this.add.ellipse(8, 14, 8, 3, 0xd9e3ea),
+      ]
+      : [];
+    if (!isPenguin) {
+      body.setVisible(false);
+      belly.setVisible(false);
+    }
+    body.setStrokeStyle(5, 0x103047, 1);
+    belly.setStrokeStyle(3, 0x103047, 1);
+    leftFlipper.setStrokeStyle(3, 0x103047, 1);
+    rightFlipper.setStrokeStyle(3, 0x103047, 1);
+    leftFoot.setStrokeStyle(2, 0x103047, 1);
+    rightFoot.setStrokeStyle(2, 0x103047, 1);
     container.add([
       shadow,
       ...speciesArt,
       body,
       belly,
+      ...penguinFace,
       leftFlipper,
       rightFlipper,
+      ...innerFlippers,
+      ...speciesDetails,
       ...eyes,
+      ...penguinDetails,
       leftFoot,
       rightFoot,
     ]);
@@ -739,6 +979,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     this.playerBody = body;
     this.playerBelly = belly;
     this.playerFlippers = [leftFlipper, rightFlipper];
+    this.playerInnerFlippers = innerFlippers;
     this.playerFeet = [leftFoot, rightFoot];
     return container;
   }
@@ -747,18 +988,36 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     const badge = this.add.container(x, y);
     badge.setDepth(4);
     badge.add([
-      this.add.circle(0, 0, 13, baseColor),
-      this.add.circle(0, 0, 9, 0xfff1b8),
+      this.add.circle(0, 0, 13, baseColor).setStrokeStyle(3, 0x103047, 1),
+      this.add.circle(0, 0, 9, 0xfff1b8).setStrokeStyle(2, 0x103047, 1),
       this.add.text(0, 0, '★', { fontFamily: 'Arial, sans-serif', fontSize: '18px', color: '#8d5b34', fontStyle: 'bold' }).setOrigin(0.5),
     ]);
     return badge;
+  }
+
+  private emitBadges(x: number, y: number, count: number): void {
+    for (let index = 0; index < count; index += 1) {
+      const badge = this.createBadge(x, y, 0xffd166).setDepth(8).setScale(0.55);
+      this.tweens.add({
+        targets: badge,
+        x: x + (index - (count - 1) / 2) * 28,
+        y: y - 56 - index * 16,
+        alpha: 0,
+        scaleX: 0.9,
+        scaleY: 0.9,
+        duration: 650,
+        delay: index * 75,
+        ease: 'Cubic.easeOut',
+        onComplete: () => badge.destroy(),
+      });
+    }
   }
 
   private createPuddle(hazard: Rect): Phaser.GameObjects.Container {
     const puddle = this.add.container(hazard.x + hazard.width / 2, hazard.y + hazard.height / 2);
     puddle.setDepth(3.5);
     puddle.add([
-      this.add.ellipse(0, 0, hazard.width, hazard.height - 8, 0x5cc8ff),
+      this.add.ellipse(0, 0, hazard.width, hazard.height - 8, 0x5cc8ff).setStrokeStyle(4, 0x103047, 1),
       this.add.ellipse(-20, -4, hazard.width * 0.36, hazard.height * 0.36, 0x9fe4ff, 0.85),
       this.add.ellipse(16, 5, hazard.width * 0.28, hazard.height * 0.24, 0x9fe4ff, 0.75),
     ]);
@@ -840,9 +1099,11 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     this.previousGrounded = playerState.grounded;
     this.previousPowered = powered;
     this.previousBossHits = this.simulation.boss?.hitsRemaining ?? null;
-    this.player.x = playerState.x + TANGRAM_PLAYER_WIDTH / 2;
-    this.player.y = playerState.y + TANGRAM_PLAYER_HEIGHT / 2;
-    const playerScale = powered ? 1.18 : 1;
+    if (!this.respawnTransition) {
+      this.player.x = playerState.x + TANGRAM_PLAYER_WIDTH / 2;
+      this.player.y = playerState.y + TANGRAM_PLAYER_HEIGHT / 2;
+    }
+    const playerScale = (powered ? 1.18 : 1) * ACTOR_DISPLAY_SCALE;
     this.player.scaleX = playerState.facing * playerScale;
     this.player.scaleY = playerScale;
     this.player.rotation = this.simulation.goalPhase === 'none'
@@ -858,14 +1119,16 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       sprite.x = enemyState.x + definition.width / 2;
       sprite.y = definition.y + definition.height / 2
         + (this.reducedMotion ? 0 : Math.sin(this.time.now * 0.004 + index) * 2);
-      sprite.scaleX = enemyState.direction;
+      sprite.scaleX = enemyState.direction * ACTOR_DISPLAY_SCALE;
+      sprite.scaleY = ACTOR_DISPLAY_SCALE;
     }
     if (this.bossSprite && this.simulation.boss && this.level.boss) {
       const bossState = this.simulation.boss;
       this.bossSprite.setVisible(bossState.active);
       this.bossSprite.x = bossState.x + this.level.boss.width / 2;
       this.bossSprite.y = this.level.boss.y + this.level.boss.height / 2;
-      this.bossSprite.scaleX = bossState.direction;
+      this.bossSprite.scaleX = bossState.direction * ACTOR_DISPLAY_SCALE;
+      this.bossSprite.scaleY = ACTOR_DISPLAY_SCALE;
       this.bossSprite.alpha = bossState.stunRemaining > 0
         ? this.reducedMotion ? 0.65 : 0.55 + Math.sin(this.time.now * 0.04) * 0.35
         : 1;
@@ -893,38 +1156,53 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       sprite.setVisible(!this.simulation.collected[index]);
       if (!this.simulation.collected[index]) {
         const pulse = this.reducedMotion ? 1 : 1 + Math.sin(this.time.now * 0.005 + index) * 0.08;
-        sprite.setScale(pulse);
+        sprite.setScale(pulse * ACTOR_DISPLAY_SCALE);
         sprite.rotation = this.reducedMotion ? 0 : Math.sin(this.time.now * 0.002 + index) * 0.08;
       }
     }
-    this.powerBlock.setVisible(!this.simulation.powerBlockHit);
-    this.powerSnack.setVisible(this.simulation.powerBlockHit && this.simulation.powerSnackAvailable);
+    for (let index = 0; index < this.powerBlocks.length; index += 1) {
+      const powerup = this.level.powerups[index];
+      const snack = this.powerSnacks[index];
+      this.powerBlocks[index].setVisible(!this.simulation.powerBlockHit[index]);
+      snack.setVisible(this.simulation.powerBlockHit[index] && this.simulation.powerSnackAvailable[index]);
+      snack.y = powerup.y - 18 + (this.reducedMotion ? 0 : Math.sin(this.time.now * 0.004 + index) * 5);
+      snack.rotation = this.reducedMotion ? 0 : Math.sin(this.time.now * 0.002 + index) * 0.12;
+      snack.setScale(
+        (this.reducedMotion ? 1 : 1 + Math.sin(this.time.now * 0.006 + index) * 0.06) * ACTOR_DISPLAY_SCALE,
+      );
+    }
     for (let index = 0; index < this.breakableBlocks.length; index += 1) {
       this.breakableBlocks[index].setVisible(!this.simulation.breakableBlocksBroken[index]);
     }
-    this.powerSnack.y = this.level.powerup.y - 18 + (this.reducedMotion ? 0 : Math.sin(this.time.now * 0.004) * 5);
-    this.powerSnack.rotation = this.reducedMotion ? 0 : Math.sin(this.time.now * 0.002) * 0.12;
-    this.powerSnack.setScale(this.reducedMotion ? 1 : 1 + Math.sin(this.time.now * 0.006) * 0.06);
-    this.checkpointBanner.y = this.level.checkpoint.y + 60 + (this.reducedMotion ? 0 : Math.sin(this.time.now * 0.003) * 2);
+    for (let index = 0; index < this.checkpointBanners.length; index += 1) {
+      const checkpoint = this.level.checkpoints[index];
+      const banner = this.checkpointBanners[index];
+      banner.y = checkpoint.y + 60 + (this.reducedMotion ? 0 : Math.sin(this.time.now * 0.003 + index) * 2);
+      if (this.simulation.checkpointIndex >= index) {
+        banner.list.forEach((child) => {
+          if ('setTint' in child && typeof child.setTint === 'function') child.setTint(0x7dfc8a);
+        });
+      }
+    }
     this.goalFlag.y = this.simulation.goalPhase === 'none'
       ? this.level.goal.y + 28
       : this.simulation.goalFlagY + 28;
-    this.playerAura.setVisible(powered);
+    this.playerAura.setVisible(powered && !this.respawnTransition);
     this.playerAura.x = this.player.x;
     this.playerAura.y = this.player.y - 10;
-    if (this.simulation.checkpointActivated) {
-      this.checkpointBanner.list.forEach((child) => {
-        if ('setTint' in child && typeof child.setTint === 'function') child.setTint(0x7dfc8a);
-      });
-    }
+    this.playerAura.setScale(ACTOR_DISPLAY_SCALE);
   }
 
   private animatePlayer(): void {
       const playerState = this.simulation.player;
       const speed = Math.abs(playerState.velocityX);
       const walking = playerState.grounded && speed > 12;
-      const phase = this.reducedMotion ? 0 : this.time.now * (walking ? 0.024 : 0.008);
-      const stride = walking ? Math.sin(phase) * 5 : 0;
+      const phase = this.reducedMotion ? 0 : this.time.now * (walking ? 0.012 : 0.008);
+      const isPenguin = this.character.id === 'penguin';
+      const step = walking ? Math.sin(this.time.now * 0.012) : 0;
+      const stride = step * (isPenguin ? 11 : 8);
+      const leftFootLift = Math.max(0, step) * (isPenguin ? 12 : 8);
+      const rightFootLift = Math.max(0, -step) * (isPenguin ? 12 : 8);
       const bob = playerState.grounded
         ? walking
           ? Math.abs(Math.sin(phase)) * 1.4
@@ -933,7 +1211,15 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       const airborne = !playerState.grounded;
       const tuck = airborne ? Math.min(1, Math.abs(playerState.velocityY) / 900) : 0;
       const powered = isTangramPoweredUp(this.simulation);
-      const limbRestY = this.character.id === 'crocodile' ? 8 : -8;
+      const limbRestY = this.character.id === 'crocodile'
+        ? 0
+        : this.character.id === 'turtle'
+          ? 4
+          : this.character.id === 'kangaroo'
+            ? -1
+            : this.character.id === 'lion'
+              ? 9
+              : -8;
 
       this.playerShadow.setScale(walking ? 1.08 : 1, walking ? 0.9 : 1);
       this.playerShadow.setAlpha(airborne ? 0.1 : 0.18);
@@ -944,17 +1230,24 @@ class PenguinsOfTangramScene extends Phaser.Scene {
       this.playerFlippers[1].y = limbRestY + bob - tuck * 3;
       this.playerFlippers[0].rotation = -0.18 - Math.sin(phase) * (walking ? 0.22 : 0.04);
       this.playerFlippers[1].rotation = 0.18 + Math.sin(phase) * (walking ? 0.22 : 0.04);
-      this.playerFeet[0].x = -10 + stride;
-      this.playerFeet[1].x = 10 - stride;
-      this.playerFeet[0].y = 22 + bob - tuck * 5;
-      this.playerFeet[1].y = 22 + bob - tuck * 5;
+      this.playerInnerFlippers.forEach((flipper, index) => {
+        flipper.y = limbRestY + bob - tuck * 3;
+        flipper.rotation = this.playerFlippers[index].rotation;
+      });
+      const footSpacing = isPenguin ? 11 : this.character.id === 'lion' ? 17 : 10;
+      this.playerFeet[0].x = -footSpacing + stride;
+      this.playerFeet[1].x = footSpacing - stride;
+      this.playerFeet[0].y = 22 + bob - tuck * 5 - leftFootLift;
+      this.playerFeet[1].y = 22 + bob - tuck * 5 - rightFootLift;
   }
 
   private applySimulationEvents(): void {
     let shouldUpdateHud = false;
     for (const event of this.simulationEvents) {
       if (event.type === 'hud') shouldUpdateHud = true;
+      if (event.type === 'respawn') this.transitionToRespawn(event.fromX, event.fromY);
       if (event.type === 'shake' && !this.reducedMotion) this.cameras.main.shake(180, 0.004);
+      if (event.type === 'badge') this.emitBadges(event.x, event.y, event.count);
       if (event.type === 'complete') {
         this.effects?.fanfare();
         this.completeLevel();
@@ -964,13 +1257,40 @@ class PenguinsOfTangramScene extends Phaser.Scene {
     if (shouldUpdateHud && !this.simulation.finished) this.updateHud();
   }
 
+  private transitionToRespawn(fromX: number, fromY: number): void {
+    if (this.reducedMotion) return;
+    const camera = this.cameras.main;
+    const targetX = this.player.x;
+    const targetY = this.player.y;
+    this.respawnTransition = true;
+    this.player.setPosition(
+      fromX + TANGRAM_PLAYER_WIDTH / 2,
+      fromY + TANGRAM_PLAYER_HEIGHT / 2,
+    ).setVisible(true);
+    this.playerAura.setVisible(false);
+    camera.stopFollow();
+    camera.pan(targetX, camera.centerY, 2000, 'Sine.easeInOut', true);
+    this.tweens.killTweensOf(this.player);
+    this.tweens.add({
+      targets: this.player,
+      x: targetX,
+      y: targetY,
+      duration: 2000,
+      ease: 'Sine.easeInOut',
+      onComplete: () => {
+        this.respawnTransition = false;
+        camera.startFollow(this.player, true, 0.12, 0, 0, 30);
+      },
+    });
+  }
+
   private completeLevel(): void {
     const nextLevelId = nextTangramLevelId(this.level.id);
     this.callbacks.onComplete({
       characterName: this.character.name,
       levelTitle: this.level.title,
       badgesCollected: this.simulation.badgesCollected,
-      totalBadges: this.collectibles.length,
+      totalBadges: tangramBadgeTotal(this.level),
       durationSeconds: Math.max(1, Math.round(this.simulation.elapsedSeconds)),
       checkpointLabel: this.simulation.respawnPoint.label,
       checkpointReached: this.simulation.checkpointActivated,
@@ -988,7 +1308,7 @@ class PenguinsOfTangramScene extends Phaser.Scene {
   private currentSceneHookState(): SceneHookState {
     return {
       badgesCollected: this.simulation.badgesCollected,
-      totalBadges: this.collectibles.length,
+      totalBadges: tangramBadgeTotal(this.level),
       checkpointLabel: this.simulation.respawnPoint.label,
       poweredUp: isTangramPoweredUp(this.simulation),
       bossActive: this.simulation.boss?.active ?? false,
@@ -1048,8 +1368,27 @@ function createPauseButton(parent: HTMLElement, language: TangramLanguage, onPau
 function createPauseOverlay(
   parent: HTMLElement,
   language: TangramLanguage,
-  actions: { onResume: () => void; onMap: () => void; onRestart: () => void; onHelp: () => void },
-): { overlay: HTMLDivElement; show: () => void; hide: () => void; setLanguage: (language: TangramLanguage) => void } {
+  settings: { muted: boolean; reducedMotion: boolean; touchControlsEnabled: boolean },
+  actions: {
+    onResume: () => void;
+    onMap: () => void;
+    onRestart: () => void;
+    onExit: () => void;
+    onMuted: (muted: boolean) => void;
+    onReducedMotion: (reduced: boolean) => void;
+    onTouchControlsEnabled: (enabled: boolean) => void;
+    onLanguage: (language: TangramLanguage) => void;
+    onReset: () => void;
+  },
+): {
+  overlay: HTMLDivElement;
+  show: () => void;
+  hide: () => void;
+  setLanguage: (language: TangramLanguage) => void;
+  setMuted: (muted: boolean) => void;
+  setReducedMotion: (reduced: boolean) => void;
+  setTouchControlsEnabled: (enabled: boolean) => void;
+} {
   const overlay = document.createElement('div');
   overlay.className = 'tangram-platformer-overlay tangram-platformer-overlay--pause';
   overlay.hidden = true;
@@ -1058,184 +1397,158 @@ function createPauseOverlay(
       <p class="tangram-platformer-kicker" data-label="kicker">Tangram pause</p>
       <h2 data-label="title">Parade paused</h2>
       <p class="tangram-platformer-copy" data-label="copy">The simulation is frozen. Take a breath, then jump back into the route.</p>
+      <h3 data-label="how-to-play">How to play</h3>
+      <div class="tangram-platformer-help-list">
+        <p><strong data-label="keyboard">Keyboard</strong><br><span data-label="keyboard-copy">Arrow keys or A/D move. Space, W, or Up jumps.</span></p>
+        <p><strong data-label="touch">Touch</strong><br><span data-label="touch-copy">Tap ahead or behind the player to move. Tap the big circle to jump.</span></p>
+      </div>
       <div class="tangram-platformer-action-row">
         <button class="tangram-platformer-button" type="button" data-action="resume">Resume run</button>
         <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-action="restart">Restart level</button>
-        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-action="help">How to play</button>
         <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-action="map">Choose class</button>
+      </div>
+      <div class="tangram-platformer-action-row tangram-platformer-action-row--settings">
+        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-setting-action="sound"></button>
+        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-setting-action="language"></button>
+        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-setting-action="motion"></button>
+        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-setting-action="touch-controls"></button>
+        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-setting-action="reset"></button>
+        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-action="arcade">Back to arcade hall</button>
+      </div>
+      <div class="tangram-platformer-reset-confirmation" data-reset-confirmation hidden>
+        <p data-label="reset-copy">Reset the game and start again?</p>
+        <div class="tangram-platformer-action-row">
+          <button class="tangram-platformer-button" type="button" data-setting-action="confirm-reset">Yes, reset game</button>
+          <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-setting-action="cancel-reset">Keep playing</button>
+        </div>
       </div>
     </section>`;
   parent.append(overlay);
   overlay.querySelector<HTMLButtonElement>('[data-action="resume"]')?.addEventListener('click', actions.onResume);
   overlay.querySelector<HTMLButtonElement>('[data-action="restart"]')?.addEventListener('click', actions.onRestart);
-  overlay.querySelector<HTMLButtonElement>('[data-action="help"]')?.addEventListener('click', actions.onHelp);
   overlay.querySelector<HTMLButtonElement>('[data-action="map"]')?.addEventListener('click', actions.onMap);
-  const setLanguage = (nextLanguage: TangramLanguage): void => {
-    const labels: Record<string, string> = {
-      kicker: 'Tangram pause',
-      title: 'Parade paused',
-      copy: 'The simulation is frozen. Take a breath, then jump back into the route.',
-    };
-    for (const [key, value] of Object.entries(labels)) {
-      overlay.querySelector<HTMLElement>(`[data-label="${key}"]`)!.textContent = tangramText(nextLanguage, value);
-    }
-    for (const action of ['resume', 'restart', 'help', 'map'] as const) {
-      const text = action === 'resume' ? 'Resume run' : action === 'restart' ? 'Restart level' : action === 'help' ? 'How to play' : 'Choose class';
-      overlay.querySelector<HTMLButtonElement>(`[data-action="${action}"]`)!.textContent = tangramText(nextLanguage, text);
-    }
-  };
-  setLanguage(language);
-  return {
-    overlay,
-    show: () => { overlay.hidden = false; },
-    hide: () => { overlay.hidden = true; },
-    setLanguage,
-  };
-}
-
-function createAudioToggle(
-  parent: HTMLElement,
-  language: TangramLanguage,
-  muted: boolean,
-  onToggle: (muted: boolean) => void,
-): { setMuted: (muted: boolean) => void; setLanguage: (language: TangramLanguage) => void } {
-  const button = document.createElement('button');
-  button.className = 'tangram-platformer-audio-button';
-  button.type = 'button';
-  parent.append(button);
+  overlay.querySelector<HTMLButtonElement>('[data-action="arcade"]')?.addEventListener('click', actions.onExit);
+  const soundButton = overlay.querySelector<HTMLButtonElement>('[data-setting-action="sound"]');
+  const motionButton = overlay.querySelector<HTMLButtonElement>('[data-setting-action="motion"]');
+  const touchControlsButton = overlay.querySelector<HTMLButtonElement>('[data-setting-action="touch-controls"]');
+  const languageButton = overlay.querySelector<HTMLButtonElement>('[data-setting-action="language"]');
+  const resetConfirmation = overlay.querySelector<HTMLElement>('[data-reset-confirmation]');
   let currentLanguage = language;
-  const setMuted = (nextMuted: boolean): void => {
-    button.textContent = tangramText(currentLanguage, nextMuted ? 'Sound: Off' : 'Sound: On');
-    button.setAttribute('aria-pressed', String(nextMuted));
-    button.setAttribute('aria-label', tangramText(currentLanguage, nextMuted ? 'Turn sound on' : 'Mute sound'));
+  const setMuted = (muted: boolean): void => {
+    if (!soundButton) return;
+    soundButton.textContent = tangramText(currentLanguage, muted ? 'Sound: Off' : 'Sound: On');
+    soundButton.setAttribute('aria-pressed', String(muted));
+    soundButton.setAttribute('aria-label', tangramText(currentLanguage, muted ? 'Turn sound on' : 'Mute sound'));
   };
-  button.addEventListener('click', () => {
-    const nextMuted = button.getAttribute('aria-pressed') !== 'true';
-    setMuted(nextMuted);
-    onToggle(nextMuted);
-  });
-  setMuted(muted);
-  return {
-    setMuted,
-    setLanguage(nextLanguage) {
-      currentLanguage = nextLanguage;
-      setMuted(button.getAttribute('aria-pressed') === 'true');
-    },
-  };
-}
-
-function createChildHelpPanel(
-  parent: HTMLElement,
-  options: {
-    language: TangramLanguage;
-    reducedMotion: boolean;
-    playtestEnabled: boolean;
-    onReducedMotion: (reduced: boolean) => void;
-    onPlaytest: (enabled: boolean) => void;
-    onLanguage: (language: TangramLanguage) => void;
-    onReset: () => void;
-    onClose: () => void;
-  },
-): {
-  show: () => void;
-  hide: () => void;
-  setReducedMotion: (reduced: boolean) => void;
-  setPlaytestEnabled: (enabled: boolean) => void;
-  setLanguage: (language: TangramLanguage) => void;
-} {
-  const overlay = document.createElement('div');
-  overlay.className = 'tangram-platformer-overlay tangram-platformer-overlay--help';
-  overlay.hidden = true;
-  overlay.innerHTML = `
-    <section class="tangram-platformer-panel">
-      <p class="tangram-platformer-kicker" data-label="kicker">Tangram helper</p>
-      <h2 data-label="title">How to play</h2>
-      <p class="tangram-platformer-copy" data-label="copy">Move, jump, collect badges, and ring the bell. Falling is okay: checkpoints remember your place.</p>
-      <div class="tangram-platformer-help-list">
-        <p><strong data-label="keyboard">Keyboard</strong><br><span data-label="keyboard-copy">Arrow keys or A/D move. Space, W, or Up jumps.</span></p>
-        <p><strong data-label="touch">Touch</strong><br><span data-label="touch-copy">Tap ahead or behind the player to move. Tap the big circle to jump.</span></p>
-        <p><strong data-label="pause">Pause</strong><br><span data-label="pause-copy">Press P or Escape, or choose Pause.</span></p>
-      </div>
-      <div class="tangram-platformer-action-row tangram-platformer-action-row--settings">
-        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-help-action="language"></button>
-        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-help-action="motion"></button>
-        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-help-action="playtest"></button>
-        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-help-action="reset"></button>
-        <button class="tangram-platformer-button" type="button" data-help-action="close"></button>
-      </div>
-    </section>`;
-  parent.append(overlay);
-
-  const motionButton = overlay.querySelector<HTMLButtonElement>('[data-help-action="motion"]');
-  const playtestButton = overlay.querySelector<HTMLButtonElement>('[data-help-action="playtest"]');
-  const languageButton = overlay.querySelector<HTMLButtonElement>('[data-help-action="language"]');
-  let currentLanguage = options.language;
   const setReducedMotion = (reduced: boolean): void => {
     if (!motionButton) return;
     motionButton.textContent = tangramText(currentLanguage, reduced ? 'Motion: Reduced' : 'Motion: Normal');
     motionButton.setAttribute('aria-pressed', String(reduced));
   };
-  const setPlaytestEnabled = (enabled: boolean): void => {
-    if (!playtestButton) return;
-    playtestButton.textContent = tangramText(currentLanguage, enabled ? 'Route notes: On' : 'Route notes: Off');
-    playtestButton.setAttribute('aria-pressed', String(enabled));
+  const setTouchControlsEnabled = (enabled: boolean): void => {
+    if (!touchControlsButton) return;
+    touchControlsButton.textContent = tangramText(
+      currentLanguage,
+      enabled ? 'Touch controls: On' : 'Touch controls: Off',
+    );
+    touchControlsButton.setAttribute('aria-pressed', String(enabled));
   };
-  const show = (): void => {
-    overlay.hidden = false;
-    overlay.querySelector<HTMLButtonElement>('[data-help-action="close"]')?.focus();
-  };
-  const hide = (): void => {
-    overlay.hidden = true;
-    options.onClose();
-  };
-  overlay.querySelector<HTMLButtonElement>('[data-help-action="close"]')?.addEventListener('click', () => {
-    hide();
+  soundButton?.addEventListener('click', () => {
+    const muted = soundButton.getAttribute('aria-pressed') !== 'true';
+    setMuted(muted);
+    actions.onMuted(muted);
   });
   motionButton?.addEventListener('click', () => {
     const reduced = motionButton.getAttribute('aria-pressed') !== 'true';
     setReducedMotion(reduced);
-    options.onReducedMotion(reduced);
+    actions.onReducedMotion(reduced);
   });
-  playtestButton?.addEventListener('click', () => {
-    const enabled = playtestButton.getAttribute('aria-pressed') !== 'true';
-    setPlaytestEnabled(enabled);
-    options.onPlaytest(enabled);
+  touchControlsButton?.addEventListener('click', () => {
+    const enabled = touchControlsButton.getAttribute('aria-pressed') !== 'true';
+    setTouchControlsEnabled(enabled);
+    actions.onTouchControlsEnabled(enabled);
   });
   languageButton?.addEventListener('click', () => {
-    options.onLanguage(currentLanguage === 'nl' ? 'en' : 'nl');
+    actions.onLanguage(currentLanguage === 'nl' ? 'en' : 'nl');
   });
-  overlay.querySelector<HTMLButtonElement>('[data-help-action="reset"]')?.addEventListener('click', () => {
-    if (window.confirm(tangramText(currentLanguage, 'Reset the adventure and start again?'))) {
-      overlay.hidden = true;
-      options.onReset();
-    }
+  overlay.querySelector<HTMLButtonElement>('[data-setting-action="reset"]')?.addEventListener('click', () => {
+    if (!resetConfirmation) return;
+    resetConfirmation.hidden = false;
+    overlay.querySelector<HTMLButtonElement>('[data-setting-action="confirm-reset"]')?.focus();
   });
-  setReducedMotion(options.reducedMotion);
-  setPlaytestEnabled(options.playtestEnabled);
+  overlay.querySelector<HTMLButtonElement>('[data-setting-action="cancel-reset"]')?.addEventListener('click', () => {
+    if (resetConfirmation) resetConfirmation.hidden = true;
+  });
+  overlay.querySelector<HTMLButtonElement>('[data-setting-action="confirm-reset"]')?.addEventListener('click', () => {
+    if (resetConfirmation) resetConfirmation.hidden = true;
+    actions.onReset();
+  });
   const setLanguage = (nextLanguage: TangramLanguage): void => {
     currentLanguage = nextLanguage;
     const labels: Record<string, string> = {
-      kicker: 'Tangram helper',
-      title: 'How to play',
-      copy: 'Move, jump, collect badges, and ring the bell. Falling is okay: checkpoints remember your place.',
+      kicker: 'Tangram pause',
+      title: 'Parade paused',
+      copy: 'The simulation is frozen. Take a breath, then jump back into the route.',
+      'how-to-play': 'How to play',
       keyboard: 'Keyboard',
       'keyboard-copy': 'Arrow keys or A/D move. Space, W, or Up jumps.',
       touch: 'Touch',
       'touch-copy': 'Tap ahead or behind the player to move. Tap the big circle to jump.',
-      pause: 'Pause',
-      'pause-copy': 'Press P or Escape, or choose Pause.',
+      'reset-copy': 'Reset the game and start again?',
     };
     for (const [key, value] of Object.entries(labels)) {
       overlay.querySelector<HTMLElement>(`[data-label="${key}"]`)!.textContent = tangramText(nextLanguage, value);
     }
+    for (const action of ['resume', 'restart', 'map', 'arcade'] as const) {
+      const text = action === 'resume' ? 'Resume run' : action === 'restart' ? 'Restart level' : action === 'map' ? 'Choose class' : 'Back to arcade hall';
+      overlay.querySelector<HTMLButtonElement>(`[data-action="${action}"]`)!.textContent = tangramText(nextLanguage, text);
+    }
     if (languageButton) languageButton.textContent = `${tangramLanguageLabel(nextLanguage)} / ${nextLanguage === 'nl' ? 'English' : 'Nederlands'}`;
-    overlay.querySelector<HTMLButtonElement>('[data-help-action="reset"]')!.textContent = tangramText(nextLanguage, 'Reset campaign');
-    overlay.querySelector<HTMLButtonElement>('[data-help-action="close"]')!.textContent = tangramText(nextLanguage, 'Close');
-    setReducedMotion(Boolean(motionButton?.getAttribute('aria-pressed') === 'true'));
-    setPlaytestEnabled(Boolean(playtestButton?.getAttribute('aria-pressed') === 'true'));
+    overlay.querySelector<HTMLButtonElement>('[data-setting-action="reset"]')!.textContent = tangramText(nextLanguage, 'Reset game');
+    overlay.querySelector<HTMLButtonElement>('[data-setting-action="confirm-reset"]')!.textContent = tangramText(nextLanguage, 'Yes, reset game');
+    overlay.querySelector<HTMLButtonElement>('[data-setting-action="cancel-reset"]')!.textContent = tangramText(nextLanguage, 'Keep playing');
+    setMuted(soundButton?.getAttribute('aria-pressed') === 'true');
+    setReducedMotion(motionButton?.getAttribute('aria-pressed') === 'true');
+    setTouchControlsEnabled(touchControlsButton?.getAttribute('aria-pressed') === 'true');
   };
-  setLanguage(options.language);
-  return { show, hide, setReducedMotion, setPlaytestEnabled, setLanguage };
+  setMuted(settings.muted);
+  setReducedMotion(settings.reducedMotion);
+  setTouchControlsEnabled(settings.touchControlsEnabled);
+  setLanguage(language);
+  return {
+    overlay,
+    show: () => {
+      if (resetConfirmation) resetConfirmation.hidden = true;
+      overlay.hidden = false;
+    },
+    hide: () => {
+      if (resetConfirmation) resetConfirmation.hidden = true;
+      overlay.hidden = true;
+    },
+    setLanguage,
+    setMuted,
+    setReducedMotion,
+    setTouchControlsEnabled,
+  };
+}
+
+function characterPreviewSvg(character: TangramCharacterDefinition): string {
+  const { accent, body, id } = character;
+  if (id === 'kangaroo') {
+    return `<svg viewBox="-60 -60 120 120" focusable="false"><ellipse cx="0" cy="22" rx="19" ry="7" fill="#000" opacity=".18"/><ellipse cx="-30" cy="14" rx="26" ry="6.5" fill="${body}" stroke="#103047" stroke-width="2" transform="rotate(-9 -30 14)"/><ellipse cx="-6" cy="7" rx="17" ry="17.5" fill="${body}" stroke="#103047" stroke-width="3"/><ellipse cx="3" cy="-10" rx="14" ry="17" fill="${body}" stroke="#103047" stroke-width="3"/><ellipse cx="-2" cy="-46" rx="4" ry="12.5" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="13" cy="-46" rx="4" ry="12.5" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="6" cy="-30" rx="13.5" ry="11.5" fill="${body}" stroke="#103047" stroke-width="3"/><ellipse cx="17" cy="-29" rx="7" ry="4.5" fill="#f2c6a5" stroke="#103047" stroke-width="2"/><circle cx="1" cy="-30" r="4" fill="#fff"/><circle cx="11" cy="-30" r="4" fill="#fff"/><circle cx="1" cy="-30" r="2" fill="#103047"/><circle cx="11" cy="-30" r="2" fill="#103047"/><ellipse cx="-17" cy="-1" rx="5" ry="9" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="17" cy="-1" rx="5" ry="9" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="-5" cy="10" rx="12" ry="11" fill="#f2c6a5" stroke="#103047" stroke-width="2"/><ellipse cx="-11" cy="22" rx="8" ry="4" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="11" cy="22" rx="8" ry="4" fill="${body}" stroke="#103047" stroke-width="2"/></svg>`;
+  }
+  if (id === 'lion') {
+    return `<svg viewBox="-60 -60 120 120" focusable="false"><ellipse cx="0" cy="22" rx="19" ry="7" fill="#000" opacity=".18"/><ellipse cx="-39" cy="-1" rx="19" ry="4" fill="${body}" stroke="#103047" stroke-width="2" transform="rotate(8 -39 -1)"/><circle cx="-54" cy="-4" r="5" fill="${accent}" stroke="#8d5b34" stroke-width="2"/><rect x="-28" y="-7" width="45" height="27" rx="12" fill="${body}" stroke="#103047" stroke-width="3"/><ellipse cx="19" cy="-25" rx="25" ry="25.5" fill="${accent}" stroke="#8d5b34" stroke-width="3"/><circle cx="7" cy="-40" r="7" fill="${accent}" stroke="#8d5b34" stroke-width="2"/><circle cx="30" cy="-40" r="7" fill="${accent}" stroke="#8d5b34" stroke-width="2"/><circle cx="19" cy="-25" r="18" fill="#ffc45b" stroke="#8d5b34" stroke-width="3"/><ellipse cx="23" cy="-16" rx="11" ry="6.5" fill="#ffe0a3" stroke="#8d5b34" stroke-width="2"/><circle cx="24" cy="-19" r="3" fill="${body}"/><circle cx="12" cy="-23" r="4" fill="#fff"/><circle cx="22" cy="-23" r="4" fill="#fff"/><circle cx="12" cy="-23" r="2" fill="#103047"/><circle cx="22" cy="-23" r="2" fill="#103047"/><ellipse cx="-18" cy="9" rx="5" ry="11" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="18" cy="9" rx="5" ry="11" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="-17" cy="22" rx="7.5" ry="4" fill="#d99a43" stroke="#103047" stroke-width="2"/><ellipse cx="17" cy="22" rx="7.5" ry="4" fill="#d99a43" stroke="#103047" stroke-width="2"/></svg>`;
+  }
+  const previews: Record<TangramCharacterId, string> = {
+    crocodile: `<ellipse cx="0" cy="22" rx="19" ry="7" fill="#000" opacity=".18"/><ellipse cx="-29" cy="6" rx="15" ry="6" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="0" cy="-8" rx="24" ry="29" fill="${body}" stroke="#103047" stroke-width="4"/><ellipse cx="0" cy="-2" rx="15" ry="17" fill="#d9f0c4" stroke="#103047" stroke-width="2"/><ellipse cx="24" cy="-13" rx="16" ry="9" fill="#80d36d" stroke="#103047" stroke-width="2"/><circle cx="10" cy="-25" r="4" fill="#fff"/><circle cx="20" cy="-25" r="4" fill="#fff"/><circle cx="10" cy="-25" r="2" fill="#103047"/><circle cx="20" cy="-25" r="2" fill="#103047"/><circle cx="30" cy="-13" r="2" fill="#103047"/><circle cx="38" cy="-13" r="2" fill="#103047"/><ellipse cx="-23" cy="0" rx="5" ry="9" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="23" cy="0" rx="5" ry="9" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="-11" cy="22" rx="8" ry="4" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="11" cy="22" rx="8" ry="4" fill="${body}" stroke="#103047" stroke-width="2"/><circle cx="-10" cy="-33" r="4" fill="#80d36d"/><circle cx="0" cy="-36" r="4" fill="#80d36d"/>`,
+    monkey: `<ellipse cx="0" cy="22" rx="19" ry="7" fill="#000" opacity=".18"/><ellipse cx="-28" cy="8" rx="6" ry="19" fill="${body}" stroke="#103047" stroke-width="2" transform="rotate(28 -28 8)"/><circle cx="-31" cy="24" r="8" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="0" cy="-8" rx="22" ry="30" fill="${body}" stroke="#103047" stroke-width="4"/><ellipse cx="0" cy="-2" rx="14" ry="18" fill="#e6b78a" stroke="#103047" stroke-width="2"/><circle cx="-20" cy="-25" r="10" fill="${body}" stroke="#103047" stroke-width="2"/><circle cx="20" cy="-25" r="10" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="0" cy="-9" rx="14" ry="11" fill="#e6b78a" stroke="#103047" stroke-width="2"/><circle cx="-5" cy="-20" r="4" fill="#fff"/><circle cx="5" cy="-20" r="4" fill="#fff"/><circle cx="-5" cy="-20" r="2" fill="#103047"/><circle cx="5" cy="-20" r="2" fill="#103047"/><ellipse cx="-21" cy="-6" rx="5" ry="11" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="21" cy="-6" rx="5" ry="11" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="-11" cy="22" rx="8" ry="4" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="11" cy="22" rx="8" ry="4" fill="${body}" stroke="#103047" stroke-width="2"/>`,
+    turtle: `<ellipse cx="0" cy="22" rx="19" ry="7" fill="#000" opacity=".18"/><ellipse cx="-31" cy="5" rx="11" ry="4.5" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="-3" cy="-8" rx="32" ry="26" fill="${accent}" stroke="#355342" stroke-width="3"/><ellipse cx="0" cy="-8" rx="28" ry="26" fill="${body}" stroke="#103047" stroke-width="3"/><ellipse cx="0" cy="-2" rx="15" ry="14" fill="#9fd8b4" stroke="#103047" stroke-width="2"/><ellipse cx="28" cy="-10" rx="12" ry="10.5" fill="${body}" stroke="#103047" stroke-width="2"/><circle cx="-14" cy="-18" r="6" fill="#9fd8b4" stroke="#355342" stroke-width="2"/><circle cx="0" cy="-26" r="6" fill="#9fd8b4" stroke="#355342" stroke-width="2"/><circle cx="13" cy="-13" r="6" fill="#9fd8b4" stroke="#355342" stroke-width="2"/><circle cx="-1" cy="6" r="6" fill="#9fd8b4" stroke="#355342" stroke-width="2"/><circle cx="22" cy="-17" r="4" fill="#fff"/><circle cx="32" cy="-17" r="4" fill="#fff"/><circle cx="22" cy="-17" r="2" fill="#103047"/><circle cx="32" cy="-17" r="2" fill="#103047"/><ellipse cx="-25" cy="4" rx="5.5" ry="7" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="25" cy="4" rx="5.5" ry="7" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="-11" cy="22" rx="8" ry="4" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="11" cy="22" rx="8" ry="4" fill="${body}" stroke="#103047" stroke-width="2"/>`,
+    kangaroo: `<ellipse cx="0" cy="22" rx="19" ry="7" fill="#000" opacity=".18"/><ellipse cx="-30" cy="11" rx="25" ry="7.5" fill="${body}" stroke="#103047" stroke-width="2" transform="rotate(-10 -30 11)"/><ellipse cx="0" cy="-8" rx="21" ry="32" fill="${body}" stroke="#103047" stroke-width="4"/><ellipse cx="0" cy="-2" rx="14" ry="17" fill="#f2c6a5" stroke="#103047" stroke-width="2"/><ellipse cx="-10" cy="-42" rx="5" ry="14" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="10" cy="-42" rx="5" ry="14" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="0" cy="-24" rx="12" ry="7" fill="#f2c6a5" stroke="#103047" stroke-width="2"/><circle cx="-5" cy="-27" r="4" fill="#fff"/><circle cx="5" cy="-27" r="4" fill="#fff"/><circle cx="-5" cy="-27" r="2" fill="#103047"/><circle cx="5" cy="-27" r="2" fill="#103047"/><ellipse cx="-21" cy="-6" rx="5" ry="11" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="21" cy="-6" rx="5" ry="11" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="0" cy="8" rx="15" ry="12.5" fill="#f2c6a5" stroke="#103047" stroke-width="2"/><ellipse cx="-11" cy="22" rx="8" ry="4" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="11" cy="22" rx="8" ry="4" fill="${body}" stroke="#103047" stroke-width="2"/>`,
+    lion: `<ellipse cx="0" cy="22" rx="19" ry="7" fill="#000" opacity=".18"/><ellipse cx="-29" cy="10" rx="21" ry="5" fill="${body}" stroke="#103047" stroke-width="2" transform="rotate(12 -29 10)"/><ellipse cx="0" cy="-17" rx="32" ry="33" fill="${accent}" stroke="#8d5b34" stroke-width="3"/><ellipse cx="0" cy="-8" rx="23" ry="31" fill="${body}" stroke="#103047" stroke-width="4"/><ellipse cx="0" cy="-2" rx="14" ry="17" fill="#ffe0a3" stroke="#8d5b34" stroke-width="2"/><circle cx="-18" cy="-39" r="8" fill="${accent}" stroke="#8d5b34" stroke-width="2"/><circle cx="18" cy="-39" r="8" fill="${accent}" stroke="#8d5b34" stroke-width="2"/><ellipse cx="0" cy="-7" rx="14" ry="9.5" fill="#ffe0a3" stroke="#8d5b34" stroke-width="2"/><circle cx="0" cy="-11" r="3" fill="${body}"/><circle cx="-7" cy="-23" r="4" fill="#fff"/><circle cx="7" cy="-23" r="4" fill="#fff"/><circle cx="-7" cy="-23" r="2" fill="#103047"/><circle cx="7" cy="-23" r="2" fill="#103047"/><ellipse cx="-21" cy="-6" rx="5" ry="11" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="21" cy="-6" rx="5" ry="11" fill="${body}" stroke="#103047" stroke-width="2"/><ellipse cx="-11" cy="22" rx="8" ry="4" fill="#d99a43" stroke="#103047" stroke-width="2"/><ellipse cx="11" cy="22" rx="8" ry="4" fill="#d99a43" stroke="#103047" stroke-width="2"/>`,
+    penguin: `<ellipse cx="0" cy="22" rx="19" ry="7" fill="#000" opacity=".18"/><ellipse cx="0" cy="-8" rx="23" ry="35" fill="${body}" stroke="#103047" stroke-width="4"/><ellipse cx="1" cy="-1" rx="16" ry="24" fill="#f7fbff" stroke="#103047" stroke-width="2"/><ellipse cx="5" cy="-18" rx="16" ry="13.5" fill="#f7fbff"/><ellipse cx="-24" cy="-4" rx="6" ry="15" fill="#274a67" stroke="#103047" stroke-width="2"/><ellipse cx="24" cy="-4" rx="6" ry="15" fill="#274a67" stroke="#103047" stroke-width="2"/><ellipse cx="-24" cy="-4" rx="2.5" ry="9" fill="#f7fbff"/><ellipse cx="24" cy="-4" rx="2.5" ry="9" fill="#f7fbff"/><ellipse cx="2" cy="-20" rx="5.5" ry="7" fill="#f7fbff" stroke="#103047" stroke-width="2"/><ellipse cx="14" cy="-20" rx="5.5" ry="7" fill="#f7fbff" stroke="#103047" stroke-width="2"/><circle cx="2" cy="-19" r="3" fill="#103047"/><circle cx="14" cy="-19" r="3" fill="#103047"/><ellipse cx="23" cy="-10" rx="8" ry="5" fill="#ffb15f" stroke="#103047" stroke-width="2"/><ellipse cx="24" cy="-6" rx="5" ry="2" fill="#e37b3f"/><ellipse cx="-11" cy="22" rx="9" ry="4" fill="#ffb15f" stroke="#103047" stroke-width="2"/><ellipse cx="11" cy="22" rx="9" ry="4" fill="#ffb15f" stroke="#103047" stroke-width="2"/>`,
+  };
+  return `<svg viewBox="-60 -60 120 120" focusable="false">${previews[id]}</svg>`;
 }
 
 function createCharacterSelect(
@@ -1243,62 +1556,54 @@ function createCharacterSelect(
   language: TangramLanguage,
   selectedCharacterId: TangramCharacterId,
   onSelect: (id: TangramCharacterId) => void,
-  onStart: () => void,
+  onLanguage: (language: TangramLanguage) => void,
 ): { overlay: HTMLDivElement; updateSelection: (id: TangramCharacterId) => void; setLanguage: (language: TangramLanguage) => void } {
   const overlay = document.createElement('div');
   overlay.className = 'tangram-platformer-overlay';
   const title = document.createElement('section');
   title.className = 'tangram-platformer-panel';
-  const description = document.createElement('p');
+  const header = document.createElement('div');
+  header.className = 'tangram-platformer-selection-header';
+  const heading = document.createElement('h2');
+  const languageButton = document.createElement('button');
+  languageButton.className = 'tangram-platformer-button tangram-platformer-button--ghost';
+  languageButton.type = 'button';
+  header.append(heading, languageButton);
   const roster = document.createElement('div');
   roster.className = 'tangram-platformer-character-grid';
-  const startButton = document.createElement('button');
-  startButton.className = 'tangram-platformer-button';
-  startButton.type = 'button';
   let currentLanguage = language;
   let currentCharacterId = selectedCharacterId;
-  startButton.textContent = tangramText(language, 'Start adventure');
-  startButton.addEventListener('click', onStart);
-  const header = document.createElement('div');
-  title.append(header);
   const buttons = PLAYABLE_CHARACTERS.map((character) => {
     const button = document.createElement('button');
     button.className = 'tangram-platformer-character';
     button.type = 'button';
     button.dataset.characterId = character.id;
-    button.innerHTML = '<span class="tangram-platformer-character-art" aria-hidden="true"></span><strong></strong><span data-role="class"></span><small></small>';
+    button.innerHTML = `<span class="tangram-platformer-character-art" aria-hidden="true">${characterPreviewSvg(character)}</span><strong></strong>`;
     button.classList.add(`tangram-platformer-character--${character.id}`);
     button.style.setProperty('--accent', character.accent);
     button.addEventListener('click', () => onSelect(character.id));
     roster.append(button);
     return button;
   });
-  description.className = 'tangram-platformer-selection-note';
-  title.append(roster, description, startButton);
+  languageButton.addEventListener('click', () => onLanguage(currentLanguage === 'nl' ? 'en' : 'nl'));
+  title.append(header, roster);
   overlay.append(title);
   parent.append(overlay);
   const updateSelection = (id: TangramCharacterId): void => {
     currentCharacterId = id;
-    const character = getTangramCharacter(id);
     for (const button of buttons) {
       const selected = button.dataset.characterId === id;
       button.classList.toggle('is-selected', selected);
       button.setAttribute('aria-pressed', String(selected));
     }
-    description.textContent = tangramText(currentLanguage, character.description);
   };
   const setLanguage = (nextLanguage: TangramLanguage): void => {
     currentLanguage = nextLanguage;
-    header.innerHTML = `
-      <p class="tangram-platformer-kicker">${tangramText(nextLanguage, 'Tangram school adventure')}</p>
-      <h2>${tangramText(nextLanguage, 'Penguins of Tangram')}</h2>
-      <p class="tangram-platformer-copy">${tangramText(nextLanguage, 'Pick a classmate and jump through the school.')}</p>`;
-    startButton.textContent = tangramText(nextLanguage, 'Start adventure');
+    heading.textContent = tangramText(nextLanguage, 'Penguins of Tangram');
+    languageButton.textContent = `${tangramLanguageLabel(nextLanguage)} / ${nextLanguage === 'nl' ? 'English' : 'Nederlands'}`;
     for (const button of buttons) {
       const character = getTangramCharacter(button.dataset.characterId as TangramCharacterId);
-      button.querySelector('strong')!.textContent = tangramText(nextLanguage, character.name);
-      button.querySelector('[data-role="class"]')!.textContent = tangramText(nextLanguage, character.className);
-      button.querySelector('small')!.textContent = tangramText(nextLanguage, character.description);
+      button.querySelector('strong')!.textContent = tangramText(nextLanguage, character.className);
     }
     updateSelection(currentCharacterId);
   };
@@ -1313,7 +1618,7 @@ function createCompletionOverlay(
     onReplay: () => void;
     onMap: () => void;
     onChooseAnother: () => void;
-    onNext: () => void;
+    onResume: () => void;
   },
 ): {
   overlay: HTMLDivElement;
@@ -1336,14 +1641,14 @@ function createCompletionOverlay(
       </div>
       <p class="tangram-platformer-copy tangram-platformer-copy--soft" data-field="best"></p>
       <div class="tangram-platformer-action-row">
-        <button class="tangram-platformer-button" type="button" data-action="next">Next zone</button>
+        <button class="tangram-platformer-button" type="button" data-action="resume">Resume</button>
         <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-action="map">Choose class</button>
-        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-action="replay">Replay zone</button>
+        <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-action="replay">Replay level</button>
         <button class="tangram-platformer-button tangram-platformer-button--ghost" type="button" data-action="choose">Choose another class</button>
       </div>
     </section>`;
   parent.append(overlay);
-  overlay.querySelector<HTMLButtonElement>('[data-action="next"]')?.addEventListener('click', actions.onNext);
+  overlay.querySelector<HTMLButtonElement>('[data-action="resume"]')?.addEventListener('click', actions.onResume);
   overlay.querySelector<HTMLButtonElement>('[data-action="map"]')?.addEventListener('click', actions.onMap);
   overlay.querySelector<HTMLButtonElement>('[data-action="replay"]')?.addEventListener('click', actions.onReplay);
   overlay.querySelector<HTMLButtonElement>('[data-action="choose"]')?.addEventListener('click', actions.onChooseAnother);
@@ -1355,15 +1660,15 @@ function createCompletionOverlay(
   const checkpoint = overlay.querySelector('[data-field="checkpoint"]') as HTMLSpanElement;
   const falls = overlay.querySelector('[data-field="falls"]') as HTMLSpanElement;
   const best = overlay.querySelector('[data-field="best"]') as HTMLParagraphElement;
-  const nextButton = overlay.querySelector('[data-action="next"]') as HTMLButtonElement;
+  const resumeButton = overlay.querySelector('[data-action="resume"]') as HTMLButtonElement;
   let currentLanguage = language;
   const setLanguage = (nextLanguage: TangramLanguage): void => {
     currentLanguage = nextLanguage;
     for (const [key, value] of Object.entries({ badges: 'Badges', time: 'Time', checkpoint: 'Checkpoint', falls: 'Falls' })) {
       overlay.querySelector<HTMLElement>(`[data-label="${key}"]`)!.textContent = tangramText(nextLanguage, value);
     }
-    for (const action of ['next', 'map', 'replay', 'choose'] as const) {
-      const text = action === 'next' ? 'Next zone' : action === 'map' ? 'Choose class' : action === 'replay' ? 'Replay zone' : 'Choose another class';
+    for (const action of ['resume', 'map', 'replay', 'choose'] as const) {
+      const text = action === 'resume' ? 'Resume' : action === 'map' ? 'Choose class' : action === 'replay' ? 'Replay level' : 'Choose another class';
       overlay.querySelector<HTMLButtonElement>(`[data-action="${action}"]`)!.textContent = tangramText(nextLanguage, text);
     }
   };
@@ -1372,22 +1677,19 @@ function createCompletionOverlay(
     overlay,
     show(summary, personalBest?: TangramLevelBest) {
       const nextLevel = summary.nextLevelId ? getTangramLevel(summary.nextLevelId) : null;
-      kicker.textContent = tangramText(currentLanguage, summary.campaignComplete ? 'Campaign complete' : 'Zone complete');
+      kicker.textContent = tangramText(currentLanguage, summary.campaignComplete ? 'Game complete' : 'Level complete');
       title.textContent = summary.campaignComplete
         ? tangramText(currentLanguage, 'School festival complete!')
         : `${tangramText(currentLanguage, summary.levelTitle)} ${currentLanguage === 'nl' ? 'afgerond!' : 'cleared!'}`;
       summaryText.textContent = summary.campaignComplete
         ? `${tangramText(currentLanguage, summary.characterName)} ${currentLanguage === 'nl' ? 'bracht elke klassenparade naar de laatste bel en maakte de hele Tangram-schooldag af.' : 'carried every class parade to the final bell and wrapped the full Tangram school day.'}`
-        : `${tangramText(currentLanguage, summary.characterName)} ${currentLanguage === 'nl' ? 'maakte' : 'cleared'} ${tangramText(currentLanguage, summary.levelTitle)} ${currentLanguage === 'nl' ? 'af en opende' : 'and unlocked'} ${tangramText(currentLanguage, nextLevel?.title ?? 'Next route')}.`;
+        : `${tangramText(currentLanguage, summary.characterName)} ${currentLanguage === 'nl' ? 'maakte' : 'cleared'} ${tangramText(currentLanguage, summary.levelTitle)} ${currentLanguage === 'nl' ? 'af en opende' : 'and unlocked'} ${tangramText(currentLanguage, nextLevel?.title ?? 'Next level')}.`;
       badges.textContent = `${summary.badgesCollected}/${summary.totalBadges}`;
       time.textContent = `${summary.durationSeconds}s`;
       checkpoint.textContent = tangramText(currentLanguage, summary.checkpointLabel);
       falls.textContent = String(summary.falls);
       best.textContent = formatBest(currentLanguage, personalBest);
-      nextButton.hidden = summary.nextLevelId === null;
-      nextButton.textContent = summary.campaignComplete
-        ? tangramText(currentLanguage, 'Choose class')
-        : `${currentLanguage === 'nl' ? 'Volgende' : 'Next'}: ${tangramText(currentLanguage, nextLevel?.kicker ?? 'Next zone')}`;
+      resumeButton.hidden = summary.nextLevelId === null;
       overlay.hidden = false;
     },
     setLanguage,
@@ -1437,7 +1739,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
   let activeScene: PenguinsOfTangramScene | null = null;
   let lastHookState: SceneHookState = {
     badgesCollected: 0,
-    totalBadges: getTangramLevel(selectedLevelId).collectibles.length,
+    totalBadges: tangramBadgeTotal(getTangramLevel(selectedLevelId)),
     checkpointLabel: getTangramLevel(selectedLevelId).start.label,
     poweredUp: false,
     jumpAudit: buildJumpAudit(getTangramLevel(selectedLevelId), getTangramCharacter(selectedCharacterId)),
@@ -1447,26 +1749,91 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
   let isPaused = false;
   let audioMuted = progress.audioMuted;
   let reducedMotion = progress.reducedMotion || (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false);
-  let playtestEnabled = progress.playtestEnabled;
-  let openHelp = (): void => {};
+  let touchControlsEnabled = progress.touchControlsEnabled;
+  let lastSingleTouchEnd = -Infinity;
+  let multiTouchGesture = false;
+  const isTouchControlGesture = (event: TouchEvent): boolean => event.composedPath().some(
+    (target) => target instanceof HTMLElement
+      && target.classList.contains('tangram-platformer-touch-controls'),
+  );
+  const trackTouchStart = (event: TouchEvent): void => {
+    multiTouchGesture ||= event.touches.length > 1;
+  };
+  const preventDoubleTapZoom = (event: TouchEvent): void => {
+    if (isTouchControlGesture(event)) {
+      event.preventDefault();
+      multiTouchGesture = false;
+      lastSingleTouchEnd = -Infinity;
+      return;
+    }
+    if (event.touches.length > 0) return;
+    if (multiTouchGesture) {
+      multiTouchGesture = false;
+      lastSingleTouchEnd = -Infinity;
+      return;
+    }
+    const now = event.timeStamp;
+    if (now - lastSingleTouchEnd < 300) event.preventDefault();
+    lastSingleTouchEnd = now;
+  };
+  parent.addEventListener('touchstart', trackTouchStart, { passive: true });
+  parent.addEventListener('touchend', preventDoubleTapZoom, { passive: false });
 
   const pauseButton = createPauseButton(parent, language, () => togglePause());
-  const pauseOverlay = createPauseOverlay(parent, language, {
-    onResume: () => togglePause(false),
-    onRestart: () => startLevel(selectedLevelId),
-    onHelp: () => {
-      pauseOverlay.hide();
-      openHelp();
+  const pauseOverlay = createPauseOverlay(
+    parent,
+    language,
+    { muted: audioMuted, reducedMotion, touchControlsEnabled },
+    {
+      onResume: () => togglePause(false),
+      onRestart: () => startLevel(selectedLevelId),
+      onMap: () => showCharacterSelect(),
+      onExit,
+      onMuted(muted) {
+        audioMuted = muted;
+        progress = { ...progress, audioMuted };
+        saveTangramProgress(progress);
+        activeScene?.setMuted(muted);
+        emitHook();
+      },
+      onReducedMotion(reduced) {
+        reducedMotion = reduced;
+        progress = { ...progress, reducedMotion };
+        saveTangramProgress(progress);
+        emitHook();
+      },
+      onTouchControlsEnabled(enabled) {
+        touchControlsEnabled = enabled;
+        progress = { ...progress, touchControlsEnabled };
+        saveTangramProgress(progress);
+        activeScene?.setTouchControlsEnabled(enabled);
+        emitHook();
+      },
+      onLanguage: applyLanguage,
+      onReset() {
+        progress = resetTangramProgress();
+        language = progress.language;
+        selectedCharacterId = progress.selectedCharacterId;
+        selectedLevelId = FIRST_LEVEL_ID;
+        completedLevelIds.splice(0, completedLevelIds.length);
+        unlockedLevelIds.splice(0, unlockedLevelIds.length, ...getUnlockedTangramLevelIds([]));
+        audioMuted = progress.audioMuted;
+        reducedMotion = progress.reducedMotion;
+        touchControlsEnabled = progress.touchControlsEnabled;
+        touchControls.setLanguage(language);
+        score.setLanguage(language);
+        pauseButton.setLanguage(language);
+        pauseOverlay.setLanguage(language);
+        pauseOverlay.setMuted(audioMuted);
+        pauseOverlay.setReducedMotion(reducedMotion);
+        pauseOverlay.setTouchControlsEnabled(touchControlsEnabled);
+        select.setLanguage(language);
+        completion.setLanguage(language);
+        select.updateSelection(selectedCharacterId);
+        showCharacterSelect();
+      },
     },
-    onMap: () => showCharacterSelect(),
-  });
-  const audioToggle = createAudioToggle(parent, language, audioMuted, (muted) => {
-    audioMuted = muted;
-    progress = { ...progress, audioMuted };
-    saveTangramProgress(progress);
-    activeScene?.setMuted(muted);
-    emitHook();
-  });
+  );
 
   function togglePause(nextValue?: boolean): void {
     if (currentState !== 'running' || !activeScene) return;
@@ -1490,8 +1857,8 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
       poweredUp: lastHookState.poweredUp,
       audioMuted,
       reducedMotion,
+      touchControlsEnabled,
       language,
-      playtestEnabled,
       bossActive: lastHookState.bossActive ?? false,
       bossHitsRemaining: lastHookState.bossHitsRemaining ?? 0,
       bossWarning: lastHookState.bossWarning ?? false,
@@ -1512,7 +1879,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
     onReplay: () => startLevel(selectedLevelId),
     onMap: () => showCharacterSelect(),
     onChooseAnother: () => showCharacterSelect(),
-    onNext: () => {
+    onResume: () => {
       if (pendingSummary?.nextLevelId) startLevel(pendingSummary.nextLevelId);
       else showCharacterSelect();
     },
@@ -1531,76 +1898,30 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
         ...lastHookState,
         jumpAudit: buildJumpAudit(getTangramLevel(selectedLevelId), getTangramCharacter(selectedCharacterId)),
       };
-      emitHook();
+      startLevel(selectedLevelId);
     },
-    () => startLevel(selectedLevelId),
+    applyLanguage,
   );
 
-  const helpPanel = createChildHelpPanel(parent, {
-    language,
-    reducedMotion,
-    playtestEnabled,
-    onReducedMotion(reduced) {
-      reducedMotion = reduced;
-      progress = { ...progress, reducedMotion };
-      saveTangramProgress(progress);
-      emitHook();
-    },
-    onPlaytest(enabled) {
-      playtestEnabled = enabled;
-      progress = { ...progress, playtestEnabled };
-      saveTangramProgress(progress);
-      emitHook();
-    },
-    onLanguage(nextLanguage) {
-      const wasPaused = isPaused;
-      language = nextLanguage;
-      progress = { ...progress, language };
-      saveTangramProgress(progress);
-      touchControls.setLanguage(language);
-      score.setLanguage(language);
-      pauseButton.setLanguage(language);
-      pauseOverlay.setLanguage(language);
-      audioToggle.setLanguage(language);
-      helpPanel.setLanguage(language);
-      select.setLanguage(language);
-      completion.setLanguage(language);
-      if (currentState === 'running') {
-        startLevel(selectedLevelId);
-        if (wasPaused) togglePause(true);
-      }
-      else if (currentState === 'select') showCharacterSelect();
-      emitHook();
-    },
-    onClose: () => {
-      if (currentState === 'running' && isPaused) pauseOverlay.show();
-    },
-    onReset() {
-      progress = resetTangramProgress();
-      language = progress.language;
-      selectedCharacterId = progress.selectedCharacterId;
-      selectedLevelId = FIRST_LEVEL_ID;
-      completedLevelIds.splice(0, completedLevelIds.length);
-      unlockedLevelIds.splice(0, unlockedLevelIds.length, ...getUnlockedTangramLevelIds([]));
-      audioMuted = progress.audioMuted;
-      reducedMotion = progress.reducedMotion;
-      playtestEnabled = progress.playtestEnabled;
-      audioToggle.setMuted(audioMuted);
-      audioToggle.setLanguage(language);
-      touchControls.setLanguage(language);
-      score.setLanguage(language);
-      pauseButton.setLanguage(language);
-      pauseOverlay.setLanguage(language);
-      helpPanel.setLanguage(language);
-      select.setLanguage(language);
-      completion.setLanguage(language);
-      helpPanel.setReducedMotion(reducedMotion);
-      helpPanel.setPlaytestEnabled(playtestEnabled);
-      select.updateSelection(selectedCharacterId);
+  function applyLanguage(nextLanguage: TangramLanguage): void {
+    const wasPaused = isPaused;
+    language = nextLanguage;
+    progress = { ...progress, language };
+    saveTangramProgress(progress);
+    touchControls.setLanguage(language);
+    score.setLanguage(language);
+    pauseButton.setLanguage(language);
+    pauseOverlay.setLanguage(language);
+    select.setLanguage(language);
+    completion.setLanguage(language);
+    if (currentState === 'running') {
+      startLevel(selectedLevelId);
+      if (wasPaused) togglePause(true);
+    } else if (currentState === 'select') {
       showCharacterSelect();
-    },
-  });
-  openHelp = helpPanel.show;
+    }
+    emitHook();
+  }
 
   function showCharacterSelect(): void {
     destroyGame();
@@ -1613,7 +1934,7 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
     currentState = 'select';
     lastHookState = {
       badgesCollected: 0,
-      totalBadges: getTangramLevel(selectedLevelId).collectibles.length,
+      totalBadges: tangramBadgeTotal(getTangramLevel(selectedLevelId)),
       checkpointLabel: getTangramLevel(selectedLevelId).start.label,
       poweredUp: false,
       jumpAudit: buildJumpAudit(getTangramLevel(selectedLevelId), getTangramCharacter(selectedCharacterId)),
@@ -1631,13 +1952,6 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
         durationSeconds: pendingSummary.durationSeconds,
         falls: pendingSummary.falls,
       });
-      progress = recordTangramPlaytest(
-        progress,
-        levelId,
-        pendingSummary.durationSeconds,
-        pendingSummary.falls,
-        pendingSummary.checkpointReached,
-      );
       saveTangramProgress(progress);
     }
   }
@@ -1681,18 +1995,18 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
         if (summary.nextLevelId) {
           window.setTimeout(() => {
             if (currentState === 'complete' && pendingSummary === summary) startLevel(summary.nextLevelId!);
-          }, reducedMotion ? 0 : 900);
+          }, COMPLETION_AUTO_RESUME_MS);
         }
         emitHook();
       },
-    }, { muted: audioMuted, reducedMotion, language });
+    }, { muted: audioMuted, reducedMotion, touchControlsEnabled, language });
     activeScene = scene;
-    touchControls.setVisible(true);
+    touchControls.setVisible(touchControlsEnabled);
     pauseButton.setVisible(true);
     currentState = 'running';
     lastHookState = {
       badgesCollected: 0,
-      totalBadges: level.collectibles.length,
+      totalBadges: tangramBadgeTotal(level),
       checkpointLabel: level.start.label,
       poweredUp: false,
       jumpAudit: buildJumpAudit(level, character),
@@ -1721,6 +2035,8 @@ export function startGame(parent: HTMLElement, onExit: () => void): GameRuntime 
       destroyGame();
       touchControls.destroy();
       window.removeEventListener('keydown', keyboardHandler);
+      parent.removeEventListener('touchstart', trackTouchStart);
+      parent.removeEventListener('touchend', preventDoubleTapZoom);
       delete (window as unknown as { __penguinsOfTangram?: TestHook }).__penguinsOfTangram;
       parent.innerHTML = '';
       parent.classList.remove('tangram-platformer-stage');

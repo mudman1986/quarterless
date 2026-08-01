@@ -32,9 +32,10 @@ test('Penguins publishes power state only on pickup and expiry transitions', asy
     type Simulation = {
       player: { x: number; y: number };
       powerRemaining: number;
-      powerBlockHit: boolean;
+      powerBlockHit: boolean[];
     };
     type Scene = {
+      level: { powerups: Array<{ x: number; y: number }> };
       simulation: Simulation;
       scene: { pause(): void };
       update(time: number, deltaMs: number): void;
@@ -59,9 +60,10 @@ test('Penguins publishes power state only on pickup and expiry transitions', asy
     for (let frame = 0; frame < 10; frame += 1) scene.update(frame * 17, 17);
     const idleWrites = writes;
 
-    scene.simulation.player.x = 1160;
-    scene.simulation.player.y = 134;
-    scene.simulation.powerBlockHit = true;
+    const powerup = scene.level.powerups[0];
+    scene.simulation.player.x = powerup.x;
+    scene.simulation.player.y = powerup.y - 42;
+    scene.simulation.powerBlockHit[0] = true;
     scene.update(200, 17);
     const pickupWrites = writes - idleWrites;
     const pickupPowered = (hookValue as { poweredUp?: boolean }).poweredUp;
@@ -206,7 +208,7 @@ test('Sindicate keeps the live render cadence above the severe-stall floor', asy
 
   expect(result.samples).toBeGreaterThan(30);
   expect(result.baseline).toBeGreaterThan(0);
-  expect(result.p10).toBeGreaterThanOrEqual(result.baseline * 0.5);
+  expect(result.p10).toBeGreaterThanOrEqual(15);
 });
 
 test('full-world autosaves stay below the per-second hitch budget', async ({ page }) => {

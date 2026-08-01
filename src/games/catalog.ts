@@ -27,14 +27,6 @@ export const arcadeGames: readonly ArcadeGame[] = [
     load: () => import('./sindicate'),
   },
   {
-    id: 'pixel-sprint',
-    title: 'Pixel Sprint',
-    badge: 'Work in progress',
-    description: 'A twitchy side-scroller built from chunky pixels, hazards, coins, and rising speed.',
-    accent: '#ffd166',
-    load: () => import('./pixel-sprint'),
-  },
-  {
     id: 'penguins-of-tangram',
     title: 'Penguins of Tangram',
     badge: 'Work in progress',
@@ -42,6 +34,14 @@ export const arcadeGames: readonly ArcadeGame[] = [
       'A cartoony school-themed Phaser platformer with a five-zone map, light character traits, badges, secrets, checkpoints, and a festival finish.',
     accent: '#59d0ff',
     load: () => import('./penguins-of-tangram'),
+  },
+  {
+    id: 'pixel-sprint',
+    title: 'Pixel Sprint',
+    badge: 'Work in progress',
+    description: 'A twitchy side-scroller built from chunky pixels, hazards, coins, and rising speed.',
+    accent: '#ffd166',
+    load: () => import('./pixel-sprint'),
   },
   {
     id: 'void-sweep',

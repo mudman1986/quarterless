@@ -6,7 +6,17 @@ import {
   isTangramCharacterId,
 } from './data';
 import { CAMPAIGN_LEVELS } from './levels';
-import { buildTangramJumpAudit, getTangramCheckpointSupport } from '../../core/tangramPlatformer';
+import {
+  TANGRAM_FIXED_STEP,
+  TANGRAM_GRAVITY,
+  TANGRAM_PLAYER_HEIGHT,
+  TANGRAM_PLAYER_WIDTH,
+  buildTangramJumpAudit,
+  createTangramPlatformerState,
+  getTangramCheckpointSupport,
+  tickTangramPlatformer,
+  type TangramPlatformerEvent,
+} from '../../core/tangramPlatformer';
 
 describe('penguins of tangram character roster', () => {
   it('keeps penguin as the default class hero', () => {
@@ -67,13 +77,118 @@ describe('penguins of tangram character roster', () => {
 
   it('gives every checkpoint a platform to stand on', () => {
     for (const level of CAMPAIGN_LEVELS) {
-      const support = getTangramCheckpointSupport(level);
-      expect(support, `${level.id} checkpoint is unsupported`).not.toBeNull();
-      expect(support?.x).toBeLessThanOrEqual(level.checkpoint.x + level.checkpoint.width / 2);
-      expect((support?.x ?? 0) + (support?.width ?? 0)).toBeGreaterThanOrEqual(
-        level.checkpoint.x + level.checkpoint.width / 2,
+      expect(level.checkpoints).toHaveLength(3);
+      for (const checkpoint of level.checkpoints) {
+        const support = getTangramCheckpointSupport(level, checkpoint);
+        expect(support, `${level.id} checkpoint is unsupported`).not.toBeNull();
+        expect(support?.x).toBeLessThanOrEqual(checkpoint.x + checkpoint.width / 2);
+        expect((support?.x ?? 0) + (support?.width ?? 0)).toBeGreaterThanOrEqual(
+          checkpoint.x + checkpoint.width / 2,
+        );
+        expect(support?.y).toBeGreaterThanOrEqual(checkpoint.y);
+      }
+    }
+  });
+
+  it('extends ground behind every flagpole to the end of its route', () => {
+    for (const level of CAMPAIGN_LEVELS) {
+      const flagGround = level.platforms.find(
+        (platform) =>
+          platform.y + platform.height === level.worldHeight &&
+          platform.x <= level.goal.x + level.goal.width / 2 &&
+          platform.x + platform.width >= level.goal.x + level.goal.width / 2,
       );
-      expect(support?.y).toBeGreaterThanOrEqual(level.checkpoint.y);
+      expect(flagGround, `${level.id} flagpole has no ground`).toBeDefined();
+      expect((flagGround?.x ?? 0) + (flagGround?.width ?? 0)).toBe(level.worldWidth);
+    }
+  });
+
+  it('places a high trampoline before every flagpole', () => {
+    for (const level of CAMPAIGN_LEVELS) {
+      const trampolines = (level.bouncePads ?? []).filter((pad) => pad.label === 'Flagpole trampoline');
+      expect(trampolines, `${level.id} has no flagpole trampoline`).toHaveLength(1);
+      const trampoline = trampolines[0];
+      expect(level.goal.x - (trampoline.x + trampoline.width)).toBeGreaterThanOrEqual(TANGRAM_PLAYER_WIDTH * 3);
+      const rise = trampoline.strength ** 2 / (2 * TANGRAM_GRAVITY);
+      expect(trampoline.y - TANGRAM_PLAYER_HEIGHT - rise).toBeLessThanOrEqual(level.goal.y);
+    }
+  });
+
+  it('keeps every level at least three times as long as its original route', () => {
+    expect(CAMPAIGN_LEVELS.map((level) => level.worldWidth)).toEqual([13200, 12000, 11400, 12600, 13500]);
+    for (const level of CAMPAIGN_LEVELS) {
+      expect(level.goal.x).toBeGreaterThan(level.worldWidth * 0.98);
+    }
+  });
+
+  it('fills extended level space with the same gameplay density as the original route', () => {
+    for (const level of CAMPAIGN_LEVELS) {
+      const originalWidth = level.worldWidth / 3;
+      const extension = (items: readonly { x: number }[]) => items.filter((item) => item.x >= originalWidth);
+      expect(extension(level.collectibles)).toHaveLength(level.collectibles.length * 2 / 3);
+      expect(extension(level.enemies)).toHaveLength(level.enemies.length * 2 / 3);
+      expect(extension(level.hazards)).toHaveLength(level.hazards.length * 2 / 3);
+      if (level.breakableBlocks) {
+        expect(level.breakableBlocks).toHaveLength(40);
+        expect([0, 1, 2].map((section) => level.breakableBlocks?.filter(
+          (block) => block.x >= originalWidth * section && block.x < originalWidth * (section + 1),
+        ).length)).toEqual([13, 14, 13]);
+        const clusters = [...level.breakableBlocks]
+          .sort((left, right) => left.x - right.x)
+          .reduce<number[]>((sizes, block, index, blocks) => {
+            if (index === 0 || block.x - blocks[index - 1].x > block.width + 12) sizes.push(0);
+            sizes[sizes.length - 1] += 1;
+            return sizes;
+          }, []);
+        expect(clusters).toHaveLength(15);
+        expect(clusters.filter((size) => size === 3)).toHaveLength(10);
+        expect(clusters.filter((size) => size === 2)).toHaveLength(5);
+        for (const block of level.breakableBlocks) {
+          expect(level.platforms.some(
+            (platform) => platform.y + platform.height < level.worldHeight &&
+              block.x < platform.x + platform.width + TANGRAM_PLAYER_WIDTH &&
+              block.x + block.width + TANGRAM_PLAYER_WIDTH > platform.x,
+          ), `${level.id} badge box leaves too little ground access beside a stand-on platform`).toBe(false);
+        }
+      }
+      if (level.bouncePads) {
+        const routePads = level.bouncePads.filter((pad) => pad.label !== 'Flagpole trampoline');
+        expect(extension(routePads)).toHaveLength(routePads.length * 2 / 3);
+      }
+      if (level.movingPlatforms) expect(extension(level.movingPlatforms)).toHaveLength(level.movingPlatforms.length * 2 / 3);
+      const originalPlatforms = level.platforms.filter(
+        (platform) => platform.x < originalWidth && platform.y + platform.height < level.worldHeight,
+      );
+      const extensionPlatforms = level.platforms.filter(
+        (platform) => platform.x >= originalWidth && platform.y + platform.height < level.worldHeight,
+      );
+      expect(extensionPlatforms).toHaveLength(originalPlatforms.length * 2);
+    }
+  });
+
+  it('keeps every power snack block reachable from below', () => {
+    for (const level of CAMPAIGN_LEVELS) {
+      const state = createTangramPlatformerState(level);
+      const events: TangramPlatformerEvent[] = [];
+      for (let index = 0; index < level.powerups.length; index += 1) {
+        const snack = level.powerups[index];
+        state.player.x = snack.x;
+        state.player.y = snack.y + snack.height + 20;
+        state.player.velocityY = -740;
+
+        for (let tick = 0; tick < 30 && !state.powerBlockHit[index]; tick += 1) {
+          tickTangramPlatformer(
+            state,
+            level,
+            getTangramCharacter('penguin').movement,
+            { direction: 0, jumpPressed: false },
+            TANGRAM_FIXED_STEP,
+            events,
+          );
+        }
+
+        expect(state.powerBlockHit[index], `${level.id} power snack ${index} cannot be hit`).toBe(true);
+      }
     }
   });
 
