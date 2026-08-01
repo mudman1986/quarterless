@@ -19,6 +19,7 @@ test('Penguins of Tangram campaign unlocks every zone and keeps jump routes reac
     await completeTangramLevel(page);
 
     if (index < ZONES.length - 1) {
+      await page.getByRole('button', { name: 'Resume' }).click();
       await page.waitForFunction(
         (expectedZone) => {
           const hook = (window as unknown as { __penguinsOfTangram?: { state?: string; currentLevelId?: string } }).__penguinsOfTangram;

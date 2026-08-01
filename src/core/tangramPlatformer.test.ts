@@ -34,9 +34,9 @@ function level(platformY = 448): TangramSimulationLevel {
     collectibles: [],
     hazards: [],
     enemies: [],
-    checkpoint: { x: 1500, y: 300, width: 50, height: 120, label: 'Checkpoint' },
+    checkpoints: [{ x: 1500, y: 300, width: 50, height: 120, label: 'Checkpoint' }],
     goal: { x: 1800, y: 300, width: 80, height: 150 },
-    powerup: { x: 900, y: 300, width: 40, height: 50, label: 'Snack' },
+    powerups: [{ x: 900, y: 300, width: 40, height: 50, label: 'Snack' }],
   };
 }
 
@@ -69,9 +69,13 @@ function simulate(renderHz: number): ReturnType<typeof createTangramPlatformerSt
 }
 
 describe('Tangram platformer simulation', () => {
+  it('limits each power snack to five seconds', () => {
+    expect(TANGRAM_POWER_DURATION).toBe(5);
+  });
+
   it('places a checkpoint respawn on its supporting platform', () => {
     const simulationLevel = level();
-    expect(getTangramCheckpointRespawn(simulationLevel)).toEqual({
+    expect(getTangramCheckpointRespawn(simulationLevel, simulationLevel.checkpoints[0])).toEqual({
       x: 1512,
       y: 376,
       label: 'Checkpoint',
@@ -90,6 +94,30 @@ describe('Tangram platformer simulation', () => {
     tickTangramPlatformer(state, simulationLevel, movement, { direction: 0, jumpPressed: false }, TANGRAM_FIXED_STEP, events);
     expect(state.player.y).toBe(376);
     expect(state.player.grounded).toBe(true);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'respawn', fromX: 1500 }));
+  });
+
+  it('keeps the furthest checkpoint as the respawn point', () => {
+    const simulationLevel = {
+      ...level(),
+      checkpoints: [
+        { x: 600, y: 300, width: 50, height: 120, label: 'First' },
+        { x: 1400, y: 300, width: 50, height: 120, label: 'Second' },
+      ],
+    };
+    const state = createTangramPlatformerState(simulationLevel);
+    const events: TangramPlatformerEvent[] = [];
+
+    state.player.x = 600;
+    state.player.y = 300;
+    tickTangramPlatformer(state, simulationLevel, movement, { direction: 0, jumpPressed: false }, TANGRAM_FIXED_STEP, events);
+    state.player.x = 1400;
+    tickTangramPlatformer(state, simulationLevel, movement, { direction: 0, jumpPressed: false }, TANGRAM_FIXED_STEP, events);
+    state.player.x = 600;
+    tickTangramPlatformer(state, simulationLevel, movement, { direction: 0, jumpPressed: false }, TANGRAM_FIXED_STEP, events);
+
+    expect(state.respawnPoint.label).toBe('Second');
+    expect(state.checkpointIndex).toBe(1);
   });
 
   it('lets the first route finish without collecting bonus badges', () => {
@@ -122,7 +150,7 @@ describe('Tangram platformer simulation', () => {
     const state = createTangramPlatformerState(simulationLevel);
     const events: TangramPlatformerEvent[] = [];
     state.player.x = 100;
-    state.player.y = 80;
+    state.player.y = 220;
 
     tickTangramPlatformer(
       state,
@@ -133,6 +161,7 @@ describe('Tangram platformer simulation', () => {
       events,
     );
     expect(state.goalPhase).toBe('grab');
+    expect(state.goalFlagY).toBe(simulationLevel.goal.y);
     expect(state.finished).toBe(false);
 
     tickTangramPlatformer(
@@ -143,11 +172,11 @@ describe('Tangram platformer simulation', () => {
       TANGRAM_FIXED_STEP,
       events,
     );
-    expect(state.goalPhase).toBe('slide');
-    expect(state.goalFlagY).toBeGreaterThan(simulationLevel.goal.y);
-    expect(state.player.y).toBe(state.goalFlagY + 12);
+    expect(state.goalPhase).toBe('grab');
+    expect(state.goalFlagY).toBeCloseTo(simulationLevel.goal.y + 1, 5);
+    expect(state.player.y).toBeCloseTo(220.611111, 5);
 
-    for (let tick = 0; tick < 60 && !state.finished; tick += 1) {
+    for (let tick = 0; tick < 300 && !state.finished; tick += 1) {
       tickTangramPlatformer(
         state,
         simulationLevel,
@@ -231,7 +260,7 @@ describe('Tangram platformer simulation', () => {
     expect(isTangramPoweredUp(state)).toBe(false);
   });
 
-  it('breaks a Tangram block from below only while powered up', () => {
+  it('breaks a Tangram badge box from below', () => {
     const simulationLevel = {
       ...level(),
       breakableBlocks: [{ x: 300, y: 300, width: 48, height: 48, label: 'Tangram block' }],
@@ -249,25 +278,42 @@ describe('Tangram platformer simulation', () => {
       TANGRAM_FIXED_STEP,
       events,
     );
-    expect(state.breakableBlocksBroken[0]).toBe(false);
-
-    state.powerRemaining = 1;
-    tickTangramPlatformer(
-      state,
-      simulationLevel,
-      movement,
-      { direction: 0, jumpPressed: false },
-      TANGRAM_FIXED_STEP,
-      events,
-    );
     expect(state.breakableBlocksBroken[0]).toBe(true);
-    expect(events).toContainEqual({ type: 'shake' });
+    expect(state.badgesCollected).toBe(1);
+    expect(state.player.y).toBe(348);
+    expect(state.player.velocityY).toBe(0);
+    expect(events).toContainEqual({ type: 'badge', x: 324, y: 324, count: 1 });
+    expect(events).not.toContainEqual({ type: 'shake' });
+  });
+
+  it('awards more badges for reaching higher on the flagpole', () => {
+    const simulationLevel = {
+      ...level(),
+      goal: { x: 100, y: 80, width: 80, height: 368 },
+    };
+    const events: TangramPlatformerEvent[] = [];
+
+    const low = createTangramPlatformerState(simulationLevel);
+    low.player.x = 100;
+    low.player.y = 360;
+    tickTangramPlatformer(low, simulationLevel, movement, { direction: 0, jumpPressed: false }, TANGRAM_FIXED_STEP, events);
+    expect(low.badgesCollected).toBe(1);
+
+    const high = createTangramPlatformerState(simulationLevel);
+    high.player.x = 100;
+    high.player.y = 100;
+    tickTangramPlatformer(high, simulationLevel, movement, { direction: 0, jumpPressed: false }, TANGRAM_FIXED_STEP, events);
+    expect(high.badgesCollected).toBe(3);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'badge', x: 140, count: 3 }));
   });
 
   it('pops and collects a power snack after a clean underside hit', () => {
     const simulationLevel = {
       ...level(),
-      powerup: { x: 300, y: 300, width: 44, height: 56, label: 'Super Snack' },
+      powerups: [
+        { x: 300, y: 300, width: 44, height: 56, label: 'Super Snack' },
+        { x: 500, y: 300, width: 44, height: 56, label: 'Second Snack' },
+      ],
     };
     const state = createTangramPlatformerState(simulationLevel);
     const events: TangramPlatformerEvent[] = [];
@@ -284,8 +330,10 @@ describe('Tangram platformer simulation', () => {
       events,
     );
 
-    expect(state.powerBlockHit).toBe(true);
-    expect(state.powerSnackAvailable).toBe(true);
+    expect(state.powerBlockHit).toEqual([true, false]);
+    expect(state.powerSnackAvailable).toEqual([true, true]);
+    expect(state.player.y).toBe(356);
+    expect(state.player.velocityY).toBe(0);
     expect(events).toContainEqual({ type: 'hud' });
 
     state.player.y = 250;
@@ -299,9 +347,54 @@ describe('Tangram platformer simulation', () => {
       events,
     );
 
-    expect(state.powerSnackAvailable).toBe(false);
+    expect(state.powerSnackAvailable).toEqual([false, true]);
     expect(state.powerRemaining).toBe(TANGRAM_POWER_DURATION);
     expect(isTangramPoweredUp(state)).toBe(true);
+
+    state.player.x = 500;
+    state.player.y = 356;
+    state.player.velocityY = -700;
+    tickTangramPlatformer(
+      state,
+      simulationLevel,
+      movement,
+      { direction: 0, jumpPressed: false },
+      TANGRAM_FIXED_STEP,
+      events,
+    );
+    state.player.y = 250;
+    state.player.velocityY = 0;
+    tickTangramPlatformer(
+      state,
+      simulationLevel,
+      movement,
+      { direction: 0, jumpPressed: false },
+      TANGRAM_FIXED_STEP,
+      events,
+    );
+
+    expect(state.powerBlockHit).toEqual([true, true]);
+    expect(state.powerSnackAvailable).toEqual([false, false]);
+    expect(state.powerRemaining).toBe(TANGRAM_POWER_DURATION);
+  });
+
+  it('keeps an unopened power snack box solid from above', () => {
+    const simulationLevel = {
+      ...level(),
+      powerups: [{ x: 300, y: 300, width: 44, height: 56, label: 'Super Snack' }],
+    };
+    const state = createTangramPlatformerState(simulationLevel);
+    state.player.x = 300;
+    state.player.y = 220;
+    state.player.velocityY = 400;
+
+    tickTangramPlatformer(state, simulationLevel, movement, { direction: 0, jumpPressed: false }, TANGRAM_FIXED_STEP, []);
+    tickTangramPlatformer(state, simulationLevel, movement, { direction: 0, jumpPressed: false }, TANGRAM_FIXED_STEP, []);
+
+    expect(state.player.y).toBe(228);
+    expect(state.player.velocityY).toBe(0);
+    expect(state.player.grounded).toBe(true);
+    expect(state.powerBlockHit).toEqual([false]);
   });
 
   it('turns enemies around before they leave a platform edge', () => {
@@ -326,7 +419,7 @@ describe('Tangram platformer simulation', () => {
       events,
     );
 
-    expect(state.enemies[0].x).toBe(280);
+    expect(state.enemies[0].x).toBe(296);
     expect(state.enemies[0].direction).toBe(-1);
   });
 

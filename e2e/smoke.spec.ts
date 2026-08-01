@@ -12,6 +12,12 @@ test('landing page lists the playable games', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Play Pixel Sprint' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Play Penguins of Tangram' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Play Void Sweep' })).toBeVisible();
+  await expect(page.locator('.game-card h2')).toHaveText([
+    'Sindicate',
+    'Penguins of Tangram',
+    'Pixel Sprint',
+    'Void Sweep',
+  ]);
 });
 
 test('game boots and renders a canvas', async ({ page }) => {

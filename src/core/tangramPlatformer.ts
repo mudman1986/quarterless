@@ -3,10 +3,12 @@ export const TANGRAM_MAX_SUBSTEPS = 5;
 export const TANGRAM_MAX_FRAME_DT = 0.25;
 export const TANGRAM_PLAYER_WIDTH = 52;
 export const TANGRAM_PLAYER_HEIGHT = 72;
-export const TANGRAM_POWER_DURATION = 12;
+export const TANGRAM_POWER_DURATION = 5;
 
-const PLAYER_GRAVITY = 2200;
+export const TANGRAM_GRAVITY = 2200;
 const PLAYER_MAX_FALL_SPEED = 960;
+const FLAG_SLIDE_SPEED = 90;
+const FLAG_TO_PLAYER_SPEED = 60;
 
 export interface TangramRect {
   x: number;
@@ -61,16 +63,17 @@ export interface TangramSimulationLevel {
     TangramRect & { minX: number; maxX: number; speed: number }
   >;
   bouncePads?: ReadonlyArray<TangramRect & { label: string; strength: number }>;
-  checkpoint: TangramRect & { label: string };
+  checkpoints: readonly (TangramRect & { label: string })[];
   goal: TangramRect;
-  powerup: TangramRect & { label: string };
+  powerups: ReadonlyArray<TangramRect & { label: string }>;
   requiredBadges?: number;
 }
 
 export function getTangramCheckpointSupport(
   level: TangramSimulationLevel,
+  checkpoint: TangramRect,
 ): TangramRect | null {
-  const checkpointCenter = level.checkpoint.x + level.checkpoint.width / 2;
+  const checkpointCenter = checkpoint.x + checkpoint.width / 2;
   const platforms = level.platforms;
   return (
     platforms
@@ -78,8 +81,8 @@ export function getTangramCheckpointSupport(
         (platform) =>
           checkpointCenter > platform.x &&
           checkpointCenter < platform.x + platform.width &&
-          platform.y >= level.checkpoint.y &&
-          platform.y <= level.checkpoint.y + level.checkpoint.height + TANGRAM_PLAYER_HEIGHT,
+          platform.y >= checkpoint.y &&
+          platform.y <= checkpoint.y + checkpoint.height + TANGRAM_PLAYER_HEIGHT,
       )
       .sort((a, b) => a.y - b.y)[0] ?? null
   );
@@ -87,17 +90,18 @@ export function getTangramCheckpointSupport(
 
 export function getTangramCheckpointRespawn(
   level: TangramSimulationLevel,
+  checkpoint: TangramRect & { label: string },
 ): { x: number; y: number; label: string } | null {
-  const support = getTangramCheckpointSupport(level);
+  const support = getTangramCheckpointSupport(level, checkpoint);
   if (!support) return null;
   return {
     x: clamp(
-      level.checkpoint.x + 12,
+      checkpoint.x + 12,
       support.x,
       support.x + support.width - TANGRAM_PLAYER_WIDTH,
     ),
     y: support.y - TANGRAM_PLAYER_HEIGHT,
-    label: level.checkpoint.label,
+    label: checkpoint.label,
   };
 }
 
@@ -141,11 +145,12 @@ export interface TangramPlatformerState {
   collected: boolean[];
   badgesCollected: number;
   checkpointActivated: boolean;
+  checkpointIndex: number;
   respawnPoint: { x: number; y: number; label: string };
   falls: number;
   powerRemaining: number;
-  powerSnackAvailable: boolean;
-  powerBlockHit: boolean;
+  powerSnackAvailable: boolean[];
+  powerBlockHit: boolean[];
   breakableBlocksBroken: boolean[];
   invulnerableRemaining: number;
   hint: string;
@@ -163,7 +168,9 @@ export interface TangramPlatformerInput {
 
 export type TangramPlatformerEvent =
   | { type: 'hud' }
+  | { type: 'respawn'; fromX: number; fromY: number }
   | { type: 'shake' }
+  | { type: 'badge'; x: number; y: number; count: number }
   | { type: 'complete' };
 
 export interface TangramJumpAudit {
@@ -176,9 +183,10 @@ export interface TangramJumpAudit {
 export function createTangramPlatformerState(
   level: TangramSimulationLevel,
 ): TangramPlatformerState {
-  const checkpointRespawn = getTangramCheckpointRespawn(level);
-  if (!checkpointRespawn) {
-    throw new Error(`Tangram checkpoint has no supporting platform: ${level.title}`);
+  for (const checkpoint of level.checkpoints) {
+    if (!getTangramCheckpointRespawn(level, checkpoint)) {
+      throw new Error(`Tangram checkpoint has no supporting platform: ${level.title}`);
+    }
   }
   return {
     player: {
@@ -215,11 +223,12 @@ export function createTangramPlatformerState(
     collected: level.collectibles.map(() => false),
     badgesCollected: 0,
     checkpointActivated: false,
+    checkpointIndex: -1,
     respawnPoint: { ...level.start },
     falls: 0,
     powerRemaining: 0,
-    powerSnackAvailable: true,
-    powerBlockHit: false,
+    powerSnackAvailable: level.powerups.map(() => true),
+    powerBlockHit: level.powerups.map(() => false),
     breakableBlocksBroken: (level.breakableBlocks ?? []).map(() => false),
     invulnerableRemaining: 0,
     hint: level.hint,
@@ -242,6 +251,10 @@ export function tangramPlayerRect(state: TangramPlatformerState): TangramRect {
 
 export function isTangramPoweredUp(state: TangramPlatformerState): boolean {
   return state.powerRemaining > 0;
+}
+
+export function tangramBadgeTotal(level: TangramSimulationLevel): number {
+  return level.collectibles.length + (level.breakableBlocks?.length ?? 0) + 3;
 }
 
 function intersects(a: TangramRect, b: TangramRect): boolean {
@@ -267,12 +280,26 @@ function setHint(
   events.push({ type: 'hud' });
 }
 
+function awardBadges(
+  state: TangramPlatformerState,
+  count: number,
+  x: number,
+  y: number,
+  events: TangramPlatformerEvent[],
+): void {
+  state.badgesCollected += count;
+  events.push({ type: 'badge', x, y, count });
+  events.push({ type: 'hud' });
+}
+
 function respawn(
   state: TangramPlatformerState,
   movement: TangramMovementSpec,
   message: string,
   events: TangramPlatformerEvent[],
 ): void {
+  const fromX = state.player.x;
+  const fromY = state.player.y;
   state.falls += 1;
   state.player.x = state.respawnPoint.x;
   state.player.y = state.respawnPoint.y;
@@ -281,7 +308,7 @@ function respawn(
   state.player.grounded = false;
   state.invulnerableRemaining = movement.respawnShieldMs / 1000;
   setHint(state, message, events);
-  events.push({ type: 'shake' });
+  events.push({ type: 'respawn', fromX, fromY });
 }
 
 function updateTimers(
@@ -315,13 +342,25 @@ function updateEnemies(
     const definition = level.enemies[index];
     if (!enemy.active) continue;
     const nextX = enemy.x + definition.speed * enemy.direction * dt;
-    const supported = platformRects(state, level).some(
+    const platforms = platformRects(state, level);
+    const supported = platforms.some(
       (platform) =>
         Math.abs(platform.y - (definition.y + definition.height)) <= 4 &&
         nextX < platform.x + platform.width &&
         nextX + definition.width > platform.x,
     );
     if (!supported) {
+      const currentPlatform = platforms.find(
+        (platform) =>
+          Math.abs(platform.y - (definition.y + definition.height)) <= 4 &&
+          enemy.x < platform.x + platform.width &&
+          enemy.x + definition.width > platform.x,
+      );
+      if (currentPlatform) {
+        enemy.x = enemy.direction === 1
+          ? currentPlatform.x + currentPlatform.width - definition.width
+          : currentPlatform.x;
+      }
       enemy.direction = enemy.direction === 1 ? -1 : 1;
       continue;
     }
@@ -425,6 +464,7 @@ function platformRects(
     ...(level.breakableBlocks ?? []).filter(
       (_, index) => !state.breakableBlocksBroken[index],
     ),
+    ...level.powerups.filter((_, index) => !state.powerBlockHit[index]),
     ...state.movingPlatforms,
   ];
 }
@@ -483,11 +523,11 @@ function resolveVertical(
       const breakableIndex = (level.breakableBlocks ?? []).findIndex(
         (block) => block === platform,
       );
-      if (breakableIndex >= 0 && isTangramPoweredUp(state)) {
+      if (breakableIndex >= 0) {
+        const block = level.breakableBlocks![breakableIndex];
         state.breakableBlocksBroken[breakableIndex] = true;
-        setHint(state, `${level.breakableBlocks?.[breakableIndex].label} broken!`, events);
-        events.push({ type: 'shake' });
-        continue;
+        awardBadges(state, 1, block.x + block.width / 2, block.y + block.height / 2, events);
+        setHint(state, `${block.label} broken! Badge earned.`, events);
       }
       state.player.y = platform.y + platform.height;
       state.player.velocityY = 0;
@@ -497,6 +537,33 @@ function resolveVertical(
       state.player.grounded = true;
     }
     playerRect.y = state.player.y;
+  }
+}
+
+function handleBadgeBoxes(
+  state: TangramPlatformerState,
+  level: TangramSimulationLevel,
+  previousX: number,
+  previousY: number,
+  events: TangramPlatformerEvent[],
+): void {
+  if (state.player.velocityY >= 0) return;
+  const player = tangramPlayerRect(state);
+  for (let index = 0; index < (level.breakableBlocks?.length ?? 0); index += 1) {
+    const block = level.breakableBlocks![index];
+    if (
+      state.breakableBlocksBroken[index] ||
+      previousY < block.y + block.height ||
+      player.y + player.height <= block.y ||
+      previousX + player.width <= block.x ||
+      previousX >= block.x + block.width
+    ) continue;
+    state.breakableBlocksBroken[index] = true;
+    state.player.y = block.y + block.height;
+    state.player.velocityY = 0;
+    awardBadges(state, 1, block.x + block.width / 2, block.y + block.height / 2, events);
+    setHint(state, `${block.label} broken! Badge earned.`, events);
+    return;
   }
 }
 
@@ -544,12 +611,14 @@ function updatePlayer(
   player.x += player.velocityX * dt;
   resolveHorizontal(state, level, previousX);
   player.velocityY = clamp(
-    player.velocityY + PLAYER_GRAVITY * dt,
+    player.velocityY + TANGRAM_GRAVITY * dt,
     -1800,
     PLAYER_MAX_FALL_SPEED,
   );
   player.y += player.velocityY * dt;
   player.grounded = false;
+  handlePowerSnack(state, level, previousY, events);
+  handleBadgeBoxes(state, level, previousX, previousY, events);
   resolveVertical(state, level, previousY, events);
 
   if (player.y > level.worldHeight + 120 && player.x + TANGRAM_PLAYER_WIDTH < level.goal.x) {
@@ -706,10 +775,15 @@ function handleCheckpoint(
   level: TangramSimulationLevel,
   events: TangramPlatformerEvent[],
 ): void {
-  if (state.checkpointActivated || !intersects(tangramPlayerRect(state), level.checkpoint)) return;
-  state.checkpointActivated = true;
-  state.respawnPoint = getTangramCheckpointRespawn(level) ?? state.respawnPoint;
-  setHint(state, `Checkpoint reached: ${level.checkpoint.label}`, events);
+  for (let index = level.checkpoints.length - 1; index > state.checkpointIndex; index -= 1) {
+    const checkpoint = level.checkpoints[index];
+    if (!intersects(tangramPlayerRect(state), checkpoint)) continue;
+    state.checkpointActivated = true;
+    state.checkpointIndex = index;
+    state.respawnPoint = getTangramCheckpointRespawn(level, checkpoint) ?? state.respawnPoint;
+    setHint(state, `Checkpoint reached: ${checkpoint.label}`, events);
+    return;
+  }
 }
 
 function handlePowerSnack(
@@ -718,33 +792,37 @@ function handlePowerSnack(
   previousY: number,
   events: TangramPlatformerEvent[],
 ): void {
-  const block = level.powerup;
   const player = tangramPlayerRect(state);
-  const hitBlockFromBelow =
-    !state.powerBlockHit &&
-    state.player.velocityY < 0 &&
-    previousY >= block.y + block.height &&
-    player.y < block.y + block.height &&
-    player.x < block.x + block.width &&
-    player.x + player.width > block.x;
-  if (hitBlockFromBelow) {
-    state.powerBlockHit = true;
-    setHint(state, 'A super Tangram popped out!', events);
-    events.push({ type: 'hud' });
-    return;
+  for (let index = 0; index < level.powerups.length; index += 1) {
+    const block = level.powerups[index];
+    const hitBlockFromBelow =
+      !state.powerBlockHit[index] &&
+      state.player.velocityY < 0 &&
+      previousY >= block.y + block.height &&
+      player.y + player.height > block.y &&
+      player.y < block.y + block.height &&
+      player.x < block.x + block.width &&
+      player.x + player.width > block.x;
+    if (hitBlockFromBelow) {
+      state.powerBlockHit[index] = true;
+      state.player.y = block.y + block.height;
+      state.player.velocityY = 0;
+      setHint(state, 'A super Tangram popped out!', events);
+      continue;
+    }
+    if (
+      !state.powerBlockHit[index] ||
+      !state.powerSnackAvailable[index] ||
+      !intersects(player, { ...block, y: block.y - 42 })
+    ) continue;
+    state.powerSnackAvailable[index] = false;
+    state.powerRemaining = TANGRAM_POWER_DURATION;
+    setHint(
+      state,
+      `${block.label} active! Bigger jumps and faster waddles for a short time.`,
+      events,
+    );
   }
-  if (
-    !state.powerBlockHit ||
-    !state.powerSnackAvailable ||
-    !intersects(player, { ...block, y: block.y - 42 })
-  ) return;
-  state.powerSnackAvailable = false;
-  state.powerRemaining = TANGRAM_POWER_DURATION;
-  setHint(
-    state,
-    `${level.powerup.label} active! Bigger jumps and faster waddles for a short time.`,
-    events,
-  );
 }
 
 function handleGoal(
@@ -755,10 +833,18 @@ function handleGoal(
   if (state.goalPhase !== 'none') return;
   const player = tangramPlayerRect(state);
   if (!intersects(player, level.goal) && player.x + player.width < level.goal.x) return;
+  const height = level.goal.y + level.goal.height - player.y;
+  const badgeCount = clamp(Math.ceil(height / (level.goal.height / 3)), 1, 3);
+  awardBadges(
+    state,
+    badgeCount,
+    level.goal.x + level.goal.width / 2,
+    player.y,
+    events,
+  );
   state.goalPhase = 'grab';
   state.goalFlagY = level.goal.y;
   state.player.x = level.goal.x + level.goal.width / 2 - TANGRAM_PLAYER_WIDTH / 2;
-  state.player.y = level.goal.y + 30;
   state.player.velocityX = 0;
   state.player.velocityY = 0;
   state.player.grounded = false;
@@ -772,12 +858,21 @@ function updateGoalSequence(
   events: TangramPlatformerEvent[],
 ): void {
   if (state.goalPhase === 'grab') {
+    const grabY = clamp(
+      state.player.y - 12,
+      level.goal.y,
+      level.goal.y + level.goal.height - 30,
+    );
+    state.goalFlagY = Math.min(grabY, state.goalFlagY + FLAG_TO_PLAYER_SPEED * dt);
+    state.player.x = level.goal.x + level.goal.width / 2 - TANGRAM_PLAYER_WIDTH / 2;
+    state.player.y = grabY + 12;
+    if (state.goalFlagY < grabY) return;
     state.goalPhase = 'slide';
     events.push({ type: 'hud' });
   }
   if (state.goalPhase !== 'slide') return;
   const bottom = level.goal.y + level.goal.height - 30;
-  state.goalFlagY = Math.min(bottom, state.goalFlagY + 520 * dt);
+  state.goalFlagY = Math.min(bottom, state.goalFlagY + FLAG_SLIDE_SPEED * dt);
   state.player.x = level.goal.x + level.goal.width / 2 - TANGRAM_PLAYER_WIDTH / 2;
   state.player.y = state.goalFlagY + 12;
   state.player.velocityX = 0;
@@ -808,7 +903,6 @@ export function tickTangramPlatformer(
   updateMovingPlatforms(state, level, dt);
   updateBoss(state, level, dt, events);
   const previousY = updatePlayer(state, level, movement, input, dt, events);
-  handlePowerSnack(state, level, previousY, events);
   handleBouncePads(state, level, events);
   handleCollectibles(state, level, events);
   handleGoal(state, level, events);
@@ -820,7 +914,7 @@ export function tickTangramPlatformer(
 }
 
 function jumpRiseForVelocity(jumpVelocity: number): number {
-  return (jumpVelocity * jumpVelocity) / (2 * PLAYER_GRAVITY);
+  return (jumpVelocity * jumpVelocity) / (2 * TANGRAM_GRAVITY);
 }
 
 function horizontalGapBetween(
