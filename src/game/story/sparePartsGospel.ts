@@ -69,7 +69,7 @@ export const SPARE_PARTS_GOSPEL: StoryChapter = {
       failureState:
         'Fail if the rival sweep gets the wrecks stripped before Rook secures both pickups, or if Rook is taken out during the run.',
       payoff: 'The recovered shells point toward a stripped sedan carrying hidden route documents.',
-      startMarker: { x: 1600, y: 2176 },
+      startMarker: { x: 1536, y: 2240 },
       prototypeRuntime: {
         id: 'hook-chain',
         title: 'Hook Chain',

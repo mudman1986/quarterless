@@ -612,10 +612,10 @@ describe('compileStoryChapterRuntimeCampaign', () => {
     const plan = SPARE_PARTS_GOSPEL.missions.find((mission) => mission.id === 'hook-chain');
     const runtime = plan ? compileStoryMissionRuntime(plan) : null;
 
-    expect(plan?.startMarker).toEqual({ x: 1600, y: 2176 });
+    expect(plan?.startMarker).toEqual({ x: 1536, y: 2240 });
     expect(runtime?.objectives[0]).toMatchObject({
       kind: 'reach',
-      target: { x: 1600, y: 2176 },
+      target: { x: 1536, y: 2240 },
       radius: STORY_MISSION_MARKER_RADIUS,
     });
     expect(runtime?.objectives[1]).toMatchObject({
