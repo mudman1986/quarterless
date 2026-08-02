@@ -4,6 +4,7 @@ import { currentObjective } from '../../core/mission';
 import { describe, expect, it } from 'vitest';
 import { CITY_SPEC } from '../citySpec';
 import { DEAD_DROP_DISTRICT } from './deadDropDistrict';
+import { SPARE_PARTS_GOSPEL } from './sparePartsGospel';
 import { STORY_MODE_PROTOTYPE } from './storyCampaign';
 import { buildSandboxCampaigns } from './sandboxCampaigns';
 import {
@@ -25,6 +26,7 @@ import {
   formatStorySystem,
   mapStoryMissionPlanPositions,
   missionTargetSquadActor,
+  STORY_MISSION_MARKER_RADIUS,
   vehicleRouteActor,
   wantedPressureFailRule,
   isChapterRuntimeReady,
@@ -601,8 +603,32 @@ describe('compileStoryChapterRuntimeCampaign', () => {
     expect(runtime?.objectives[0]).toMatchObject({
       kind: 'reach',
       description: 'Go to the mission marker to start Night Ferry Run',
+      radius: STORY_MISSION_MARKER_RADIUS,
     });
     expect(storyMissionInitialObjectiveIndex(DEAD_DROP_DISTRICT.missions[0]!)).toBe(-1);
+  });
+
+  it('keeps a multi-stop route mission start marker separate from its first live objective target', () => {
+    const plan = SPARE_PARTS_GOSPEL.missions.find((mission) => mission.id === 'hook-chain');
+    const runtime = plan ? compileStoryMissionRuntime(plan) : null;
+
+    expect(plan?.startMarker).toEqual({ x: 1600, y: 2176 });
+    expect(runtime?.objectives[0]).toMatchObject({
+      kind: 'reach',
+      target: { x: 1600, y: 2176 },
+      radius: STORY_MISSION_MARKER_RADIUS,
+    });
+    expect(runtime?.objectives[1]).toMatchObject({
+      kind: 'route',
+      targets: [
+        { x: 1792, y: 2176 },
+        { x: 2496, y: 1984 },
+      ],
+    });
+    expect(plan?.prototypeScript?.actors).toMatchObject([
+      { kind: 'vehicleRoute', actorId: 'hook-chain-sweep-one', vehicleKind: 'tow' },
+      { kind: 'vehicleRoute', actorId: 'hook-chain-sweep-two', vehicleKind: 'tow' },
+    ]);
   });
 
   it('builds a playable runtime campaign from the current chapter and can resume mid-chapter', () => {

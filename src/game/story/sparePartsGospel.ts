@@ -61,21 +61,22 @@ export const SPARE_PARTS_GOSPEL: StoryChapter = {
     {
       id: 'hook-chain',
       title: 'Hook Chain',
-      hook: 'Two sensitive wrecks are about to vanish into a rival yard.',
+      hook: "Two sensitive wrecks are about to vanish into Grindle Yard's sweep fleet.",
       primaryGoal:
-        'Reach the wreck sites before the rivals do and secure both recovery points for the yard crew.',
+        "Beat Grindle Yard's rival tow crews to both wreck sites and lock each pickup down for your crew.",
       secondaryPressure:
-        'Each pickup should force a different route across the district instead of replaying the same drive twice.',
+        'Each wreck should force a separate cross-district run while the rival sweep trucks are already rolling in.',
       failureState:
-        'Fail if Rook loses the second recovery point for too long or is taken out while the wreck chain is live.',
+        'Fail if the rival sweep gets the wrecks stripped before Rook secures both pickups, or if Rook is taken out during the run.',
       payoff: 'The recovered shells point toward a stripped sedan carrying hidden route documents.',
+      startMarker: { x: 1600, y: 2176 },
       prototypeRuntime: {
         id: 'hook-chain',
         title: 'Hook Chain',
         objectives: [
           {
             kind: 'route',
-            description: 'Reach both wreck sites before the rival yard clears them',
+            description: "Secure both wreck sites before Grindle Yard's sweep crews strip them",
             targets: [
               { x: 1792, y: 2176 },
               { x: 2496, y: 1984 },
@@ -85,6 +86,35 @@ export const SPARE_PARTS_GOSPEL: StoryChapter = {
           },
         ],
         reward: 2600,
+      },
+      prototypeScript: {
+        primaryActorId: 'hook-chain-sweep-one',
+        actors: [
+          {
+            kind: 'vehicleRoute',
+            actorId: 'hook-chain-sweep-one',
+            vehicleKind: 'tow',
+            route: [
+              { x: 2944, y: 2176 },
+              { x: 2496, y: 2176 },
+              { x: 1792, y: 2176 },
+            ],
+            speed: 92,
+            followRadius: 240,
+          },
+          {
+            kind: 'vehicleRoute',
+            actorId: 'hook-chain-sweep-two',
+            vehicleKind: 'tow',
+            route: [
+              { x: 3264, y: 1984 },
+              { x: 2880, y: 1984 },
+              { x: 2496, y: 1984 },
+            ],
+            speed: 96,
+            followRadius: 240,
+          },
+        ],
       },
     },
     {

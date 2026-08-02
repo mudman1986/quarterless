@@ -290,7 +290,7 @@ test('story mode opens a dedicated story menu with chapter select', async ({ pag
   await expect(page.getByLabel("Court The City's Middle Powers")).toBeVisible();
 });
 
-test('story menu surfaces active consequences and dense scorecards for later reference', async ({
+test('story menu keeps consequences and scorecards player-facing', async ({
   page,
 }) => {
   await page.goto('/quarterless/');
@@ -352,14 +352,18 @@ test('story menu surfaces active consequences and dense scorecards for later ref
   await page.getByRole('button', { name: 'Play Sindicate' }).click();
 
   await expect(page.getByRole('heading', { name: 'Active Consequences' })).toBeVisible();
-  await expect(page.getByText('double-booking')).toBeVisible();
+  await expect(page.getByLabel('Active consequences')).toContainText(
+    'This choice is still shaping how the city answers Rook.',
+  );
+  await expect(page.getByLabel('Active consequences')).not.toContainText('double-booking');
   await expect(page.getByRole('heading', { name: 'City Standing' })).toBeVisible();
   await expect(page.getByLabel('City standing').getByText('Informant Network', { exact: false })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Recent Scorecards' })).toBeVisible();
   await expect(page.getByText('Harbor Echo')).toBeVisible();
   await expect(page.getByText('Reward')).toBeVisible();
-  await expect(page.getByLabel('Recent mission scorecards').getByText('Service', { exact: true })).toBeVisible();
-  await expect(page.getByLabel('Recent mission scorecards').getByText('Tail')).toBeVisible();
+  await expect(page.getByLabel('Recent mission scorecards').getByText('Aftermath', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Recent mission scorecards')).not.toContainText('Service');
+  await expect(page.getByLabel('Recent mission scorecards')).not.toContainText('Tail');
 });
 
 test('story menu can launch a later unlocked chapter from a different act', async ({ page }) => {
@@ -837,7 +841,11 @@ test('grouped chapter leads show simultaneous mission markers and start the chos
     const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
       .__game;
     const scene = game?.scene.getScene('City') as {
-      world: { player: { pos: { x: number; y: number } } };
+      world: {
+        player: { pos: { x: number; y: number } };
+        drivingCarIndex: number | null;
+        cars: Array<{ pos: { x: number; y: number } }>;
+      };
       maybeStartSelectedStoryMission?: () => boolean;
       storyMissionChoiceTargets?: () => Array<{
         mission: { id: string };
@@ -848,7 +856,14 @@ test('grouped chapter leads show simultaneous mission markers and start the chos
       ?.storyMissionChoiceTargets?.()
       .find((choice) => choice.mission.id === 'the-empty-shell');
     if (!scene || !target) throw new Error('Missing grouped mission choice target');
-    scene.world.player = { ...scene.world.player, pos: target.target };
+    const nearEdge = { x: target.target.x + 40, y: target.target.y };
+    scene.world.player = { ...scene.world.player, pos: nearEdge };
+    if (scene.world.drivingCarIndex !== null && scene.world.cars[scene.world.drivingCarIndex]) {
+      scene.world.cars[scene.world.drivingCarIndex] = {
+        ...scene.world.cars[scene.world.drivingCarIndex]!,
+        pos: nearEdge,
+      };
+    }
   });
 
   await page.waitForFunction(() => {
@@ -2467,6 +2482,7 @@ test('chapter completion preserves money, ammo, and health instead of resetting 
         window as unknown as { __game?: { scene: { getScene(name: string): unknown } } }
       ).__game;
       const scene = game?.scene.getScene('City') as {
+        banner?: { visible: boolean; text: string };
         pendingStoryRestart?: unknown;
         storyPanel?: { text: string };
         storyProgress?: {
@@ -2477,26 +2493,26 @@ test('chapter completion preserves money, ammo, and health instead of resetting 
       if (scene?.storyProgress?.current?.chapterId !== 'meter-running') return null;
       if (scene.storyProgress.current.missionId !== 'ghost-fare') return null;
       const text = scene.storyPanel?.text ?? '';
-      return text.includes('NEXT CHAPTER') || text.startsWith('CHAPTER 4\nMeter Running') ||
-        text.startsWith('MISSION BRIEF\nGhost Fare')
-        ? text
-        : null;
+      if (!text.startsWith('MISSION BRIEF\nGhost Fare')) return null;
+      return {
+        text,
+        bannerVisible: !!scene.banner?.visible,
+        bannerText: scene.banner?.text ?? '',
+      };
     },
     undefined,
     { timeout: 8_000 },
   );
 
-  const nextPanelText = (await nextPanel.jsonValue()) as string;
-  if (nextPanelText.includes('NEXT CHAPTER')) {
-    expect(nextPanelText).toContain('Opening lead: Ghost Fare');
-    await advanceStoryPanelOnce(page);
-  } else if (nextPanelText.startsWith('CHAPTER 4')) {
-    expect(nextPanelText).toContain('Meter Running');
-    await advanceStoryPanelOnce(page);
-  } else {
-    expect(nextPanelText).toContain('MISSION BRIEF');
-    expect(nextPanelText).toContain('Ghost Fare');
-  }
+  const nextPanelValue = (await nextPanel.jsonValue()) as {
+    text: string;
+    bannerVisible: boolean;
+    bannerText: string;
+  };
+  expect(nextPanelValue.text).toContain('MISSION BRIEF');
+  expect(nextPanelValue.text).toContain('Ghost Fare');
+  expect(nextPanelValue.bannerVisible).toBe(false);
+  expect(nextPanelValue.bannerText).toBe('');
 
   await waitForCitySceneReady(page, { requireCampaign: true });
 

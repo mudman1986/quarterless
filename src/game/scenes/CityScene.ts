@@ -77,6 +77,7 @@ import {
   mapStoryMissionPlanPositions,
   resolveStoryMissionPlan,
   STORY_MISSION_GROUP_SELECTION_INDEX,
+  STORY_MISSION_MARKER_RADIUS,
   storyMissionStartPosition,
   storyObjectiveIndexFromRuntime,
   summarizeStoryCityState,
@@ -334,6 +335,8 @@ interface CitySceneStartData {
    * story chapter transitions, which must preserve run stats but not the just-
    * finished chapter's mission state. */
   freshMissionOnResume?: boolean;
+  /** Skip the repeated chapter opener after a chapter-complete transition already introduced it. */
+  skipChapterBriefing?: boolean;
 }
 
 interface StoryScriptState {
@@ -539,6 +542,7 @@ export class CityScene extends Phaser.Scene {
    * state (e.g. a chapter-complete advance) instead of wiping progress (a
    * mission-failure retry, which intentionally resets to a clean slate). */
   private pendingStoryRestartResume = false;
+  private pendingSkipChapterBriefing = false;
   /** True when a resumed restart should rebuild the active mission/campaign fresh
    * rather than keep the restored snapshot's (often already-complete) one. */
   private freshMissionOnResume = false;
@@ -551,6 +555,7 @@ export class CityScene extends Phaser.Scene {
   private requestedMode: 'sandbox' | 'story' = 'sandbox';
   private mode: 'sandbox' | 'story' = 'sandbox';
   private requestedStoryProgress: StoryProgressSnapshot | null = null;
+  private requestedSkipChapterBriefing = false;
   private storyProgress: StoryProgressSnapshot | null = null;
   private storyScript: StoryScriptState | null = null;
   private storyMissionSummaryBaseline: StoryMissionSummaryBaseline | null = null;
@@ -586,6 +591,7 @@ export class CityScene extends Phaser.Scene {
     this.requestedLoadKey = data.loadSaveKey ?? launchRequest?.loadSaveKey ?? GAME_STATE_KEY;
     this.skipResumeOnCreate = !!(data.skipResume ?? launchRequest?.skipResume);
     this.freshMissionOnResume = !!data.freshMissionOnResume;
+    this.requestedSkipChapterBriefing = !!data.skipChapterBriefing;
     this.requestedMode = data.mode ?? launchRequest?.mode ?? this.queryRequestsStoryMode();
     this.requestedStoryProgress =
       data.storyProgress ?? launchRequest?.storyProgress ?? launchProgress ?? null;
@@ -656,6 +662,7 @@ export class CityScene extends Phaser.Scene {
     this.storyPanelQueue = [];
     this.pendingStoryRestart = null;
     this.pendingStoryRestartResume = false;
+    this.pendingSkipChapterBriefing = false;
     this.storyScript = null;
     this.storyMissionSummaryBaseline = null;
     this.storyReusableCarIndices = [];
@@ -734,9 +741,19 @@ export class CityScene extends Phaser.Scene {
     const handleStoryAcknowledge = (): void => {
       if (this.storyPanelRequiresAcknowledge) this.acknowledgeStoryPanel();
     };
+    const handleKeyboardVisibility = (): void => {
+      const keyboard = this.input.keyboard;
+      keyboard?.resetKeys();
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      this.deferKeyboardFocus();
+    };
     kb.on('keydown-ENTER', handleStoryAcknowledge);
     if (typeof window !== 'undefined') {
       window.addEventListener('beforeunload', this.beforeUnloadHandler);
+      window.addEventListener('focus', handleKeyboardVisibility);
+    }
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleKeyboardVisibility);
     }
     const handlePointerDown = (pointer: Phaser.Input.Pointer): void => {
       const pointerType = (pointer.event as PointerEvent | undefined)?.pointerType;
@@ -745,19 +762,41 @@ export class CityScene extends Phaser.Scene {
         if (!this.touchEnabled && !this.touchOptedOut) this.setTouchEnabled(true);
         else this.refreshPauseTouchButton();
       }
+      this.deferKeyboardFocus();
     };
     this.input.on('pointerdown', handlePointerDown);
+    this.deferKeyboardFocus();
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       kb.off('keydown-ENTER', handleStoryAcknowledge);
       this.input.off('pointerdown', handlePointerDown);
       if (typeof window !== 'undefined') {
         window.removeEventListener('beforeunload', this.beforeUnloadHandler);
+        window.removeEventListener('focus', handleKeyboardVisibility);
+      }
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleKeyboardVisibility);
       }
       if (!this.skipPersistOnShutdown) this.persistGameState();
       this.touchInput_?.destroy();
       this.sfx.destroy();
     });
     this.persistGameState();
+  }
+
+  private focusCanvas(): void {
+    const canvas = this.game.canvas as HTMLCanvasElement | undefined;
+    if (!canvas) return;
+    if (canvas.tabIndex < 0) canvas.tabIndex = 0;
+    try {
+      canvas.focus({ preventScroll: true });
+    } catch {
+      canvas.focus();
+    }
+  }
+
+  private deferKeyboardFocus(): void {
+    if (typeof window === 'undefined') return;
+    window.requestAnimationFrame(() => this.focusCanvas());
   }
 
   private buildWorldOptions(spawn: Vec2, bestScore: number): WorldOptions {
@@ -1283,6 +1322,7 @@ export class CityScene extends Phaser.Scene {
     );
     this.pendingStoryRestart = restart;
     this.pendingStoryRestartResume = true;
+    this.pendingSkipChapterBriefing = false;
   }
 
   private activeStoryStage(runtime: StoryRuntimeScript): StoryRuntimeStage | null {
@@ -2260,7 +2300,7 @@ export class CityScene extends Phaser.Scene {
   private createEntitySprites(): void {
     // A pulsing ring marking the current 'reach' objective.
     this.missionMarker = this.add
-      .circle(0, 0, 52, COLORS.marker, 0.12)
+      .circle(0, 0, STORY_MISSION_MARKER_RADIUS, COLORS.marker, 0.12)
       .setStrokeStyle(3, COLORS.marker)
       .setDepth(3)
       .setVisible(false);
@@ -3185,19 +3225,51 @@ export class CityScene extends Phaser.Scene {
       });
     }
 
-    for (let i = 0; i < this.world.pedestrians.length; i++) {
-      const ped = this.world.pedestrians[i];
-      if (!ped.missionTarget && !scriptedTargetIndices.has(i)) continue;
+    for (const target of this.storyMissionTargetMarkerPositions(scriptedTargetIndices)) {
       markers.push({
         kind: 'mission-target',
-        x: ped.pos.x,
-        y: ped.pos.y,
+        x: target.x,
+        y: target.y,
         color: COLORS.mmTarget,
         style: 'fill',
         radius: 2,
       });
     }
     return markers;
+  }
+
+  private storyMissionTargetMarkerPositions(scriptedTargetIndices: ReadonlySet<number>): Vec2[] {
+    const liveTargets = new Map<string, Vec2>();
+    for (let i = 0; i < this.world.pedestrians.length; i++) {
+      const ped = this.world.pedestrians[i];
+      if (!ped.missionTarget && !scriptedTargetIndices.has(i)) continue;
+      if (this.isOffMapStoryActorPosition(ped.pos)) continue;
+      liveTargets.set(`${Math.round(ped.pos.x)}:${Math.round(ped.pos.y)}`, ped.pos);
+    }
+    if (liveTargets.size > 0) return [...liveTargets.values()];
+
+    const objective = this.world.missionObjective;
+    if (objective?.kind !== 'eliminate' || !objective.targetsOnly) return [];
+    if (!this.storyScript || !this.storyProgress) return [];
+    const mission = currentStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress);
+    const runtime = mission?.prototypeScript;
+    const stage = runtime ? this.activeStoryStage(runtime) : null;
+    if (!stage) return [];
+
+    const authoredTargets: Vec2[] = [];
+    for (const actor of stage.actors) {
+      if (actor.kind !== 'pedestrianSquad' || !actor.missionTargets) continue;
+      for (let memberIndex = 0; memberIndex < actor.count; memberIndex += 1) {
+        const offsetX =
+          actor.count <= 1 ? 0 : (memberIndex - (actor.count - 1) / 2) * actor.spread;
+        authoredTargets.push(vec2(actor.center.x + offsetX, actor.center.y));
+      }
+    }
+    return authoredTargets;
+  }
+
+  private isOffMapStoryActorPosition(position: Vec2): boolean {
+    return position.y === STORY_ACTOR_DESPAWN_POS.y || position.x === STORY_ACTOR_DESPAWN_POS.x;
   }
 
   /** Include authored target squads even if the simulation has not yet completed
@@ -3223,7 +3295,7 @@ export class CityScene extends Phaser.Scene {
   private maybeStartSelectedStoryMission(): boolean {
     if (!this.selectingStoryMission() || !this.storyProgress) return false;
     const choice = this.storyMissionChoiceTargets().find(
-      (entry) => distance(this.world.focus, entry.target) <= 24,
+      (entry) => distance(this.world.focus, entry.target) <= STORY_MISSION_MARKER_RADIUS,
     );
     if (!choice) return false;
     const selected = selectStoryMission(
@@ -3300,8 +3372,10 @@ export class CityScene extends Phaser.Scene {
         }
         const progress = this.pendingStoryRestart;
         const resume = this.pendingStoryRestartResume;
+        const skipChapterBriefing = this.pendingSkipChapterBriefing;
         this.pendingStoryRestart = null;
         this.pendingStoryRestartResume = false;
+        this.pendingSkipChapterBriefing = false;
         this.hideStoryPanel();
         this.skipPersistOnShutdown = true;
         if (!resume) clearGameState(this.store);
@@ -3310,6 +3384,7 @@ export class CityScene extends Phaser.Scene {
           mode: 'story',
           storyProgress: progress,
           freshMissionOnResume: resume,
+          skipChapterBriefing,
         });
       }
       this.prevTouchConfirm = !!touchSnapshot?.confirmPressed;
@@ -3506,11 +3581,12 @@ export class CityScene extends Phaser.Scene {
           );
           this.pendingStoryRestart = this.storyProgress;
           this.pendingStoryRestartResume = true;
+          this.pendingSkipChapterBriefing = true;
           return;
         }
         this.showStoryPanel(
           this.storyProgress?.current
-            ? 'STORY PROTOTYPE COMPLETE\n\nThe next authored chapter has not been wired into runtime play yet.'
+            ? 'CASE FILE PAUSED\n\nThe next lead has gone cold for now. Rook will have to return when the trail opens again.'
             : 'STORY COMPLETE\n\nRook and Nia have broken the current live slice of the Switchboard.',
           3.2,
           'complete',
@@ -3527,9 +3603,11 @@ export class CityScene extends Phaser.Scene {
           if (this.prevMissionId !== null) this.showMissionTransitionPanel(this.prevMissionId);
           else if (!this.storyPanel.visible) this.showMissionBriefingPanel();
         }
-        this.showBanner(`NEW MISSION\n${w.mission.title}\n${objective}`, { stageBound: true });
+        if (!this.storyPanel.visible) {
+          this.showBanner(`NEW MISSION\n${w.mission.title}\n${objective}`, { stageBound: true });
+        }
       }
-    } else if (objective !== '' && objective !== this.prevObjective) {
+    } else if (objective !== '' && objective !== this.prevObjective && !this.storyPanel.visible) {
       this.showBanner(objective, { stageBound: true }); // next objective within the same mission
     }
 
@@ -3595,6 +3673,7 @@ export class CityScene extends Phaser.Scene {
       this.dismissBanner();
       return;
     }
+    if (this.storyPanel.visible) return;
     this.banner.setText(content).setVisible(true);
     this.bannerCloseButton.setVisible(true);
     this.announceRemaining = Math.max(0, options.seconds ?? BANNER_DEFAULT_SECONDS);
@@ -3910,6 +3989,7 @@ export class CityScene extends Phaser.Scene {
   private presentStoryPanelBeat(beat: StoryPanelBeat): void {
     const requiresAcknowledge = beat.requiresAcknowledge ?? false;
     const pauseGame = beat.pauseGame ?? requiresAcknowledge;
+    if (this.banner.visible) this.dismissBanner();
     this.applyStoryPanelTone(beat.tone);
     this.storyPanelFocusTarget = beat.focusTarget ?? null;
     this.syncStoryPortrait(beat.beat);
@@ -4309,7 +4389,16 @@ export class CityScene extends Phaser.Scene {
     const mission = currentStoryMission(STORY_MODE_PROTOTYPE, this.storyProgress);
     if (!chapter || !mission) return;
     if (this.storyProgress.current.objectiveIndex >= 0) return;
-    if (mission.id !== chapter.missions[0]?.id) return;
+    if (mission.id !== chapter.missions[0]?.id) {
+      this.requestedSkipChapterBriefing = false;
+      return;
+    }
+    if (this.requestedSkipChapterBriefing) {
+      this.requestedSkipChapterBriefing = false;
+      this.showMissionBriefingPanel();
+      return;
+    }
+    this.requestedSkipChapterBriefing = false;
     this.queueStoryPanelSequence(this.chapterOpenerSequence(chapter, mission));
     this.syncStoryStateText();
   }
@@ -4454,7 +4543,7 @@ export class CityScene extends Phaser.Scene {
     const endHealth = this.currentPlayerVehicleHealth();
     const vehicleConditionText =
       startHealth === null && endHealth === null
-        ? 'No tracked player vehicle'
+        ? 'No getaway vehicle used'
         : startHealth === null
           ? `Vehicle swap • ended at ${Math.round(endHealth ?? 0)}%`
           : endHealth === null
@@ -4507,9 +4596,7 @@ export class CityScene extends Phaser.Scene {
       `Duration: ${card.durationSeconds}s`,
       `Damage / Collateral: ${collateralText}`,
       `Vehicle Condition: ${card.vehicleConditionText}`,
-      `Service Lanes: ${card.serviceLaneText}`,
       `Faction Effects: ${card.factionEffectText}`,
-      `Systems: ${card.systemsText}`,
     ]
       .filter((line): line is string => Boolean(line))
       .join('\n');
@@ -4669,8 +4756,16 @@ export class CityScene extends Phaser.Scene {
     if (this.selectingStoryMission()) {
       this.storyChoiceMarkersGfx.lineStyle(3, COLORS.marker, 1).fillStyle(COLORS.marker, 0.12);
       for (const choice of this.storyMissionChoiceTargets()) {
-        this.storyChoiceMarkersGfx.strokeCircle(choice.target.x, choice.target.y, 52);
-        this.storyChoiceMarkersGfx.fillCircle(choice.target.x, choice.target.y, 52);
+        this.storyChoiceMarkersGfx.strokeCircle(
+          choice.target.x,
+          choice.target.y,
+          STORY_MISSION_MARKER_RADIUS,
+        );
+        this.storyChoiceMarkersGfx.fillCircle(
+          choice.target.x,
+          choice.target.y,
+          STORY_MISSION_MARKER_RADIUS,
+        );
       }
     }
 
