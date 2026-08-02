@@ -373,8 +373,6 @@ interface StoryMissionSummaryBaseline {
 interface StoryMissionSummaryCard {
   chapterTitle: string;
   title: string;
-  voiceText: string | null;
-  beatText: string | null;
   reward: number;
   outcome: string;
   durationSeconds: number;
@@ -4107,10 +4105,6 @@ export class CityScene extends Phaser.Scene {
     ].join(':');
   }
 
-  private currentStoryActTitle(chapter: { actId: string }): string {
-    return STORY_MODE_PROTOTYPE.acts.find((act) => act.id === chapter.actId)?.title ?? chapter.actId;
-  }
-
   private currentStoryCityStandingText(): string {
     if (this.mode !== 'story' || !this.storyProgress) {
       return 'City steady - no lasting shifts yet';
@@ -4124,15 +4118,6 @@ export class CityScene extends Phaser.Scene {
     return STORY_MODE_PROTOTYPE.acts
       .flatMap((act) => act.chapters)
       .find((chapter) => chapter.id === chapterId) ?? null;
-  }
-
-  private storyVoiceLine(beat: StoryBeatPresentation | undefined): string | null {
-    if (!beat) return null;
-    return beat.role ? `Voice: ${beat.speaker} (${beat.role})` : `Voice: ${beat.speaker}`;
-  }
-
-  private storyBeatLine(beat: StoryBeatPresentation | undefined): string | null {
-    return beat?.kicker ? `Beat: ${beat.kicker}` : null;
   }
 
   private chapterOpenerBeat(chapter: StoryChapter): StoryBeatPresentation | undefined {
@@ -4163,17 +4148,11 @@ export class CityScene extends Phaser.Scene {
     chapter: StoryChapter,
     mission: StoryMissionPlan,
   ): string {
-    const beat = this.missionBriefingBeat(chapter, mission);
     return [
       'MISSION BRIEF',
       mission.title,
       '',
       `Chapter ${chapter.order} • ${chapter.title}`,
-      `Act: ${this.currentStoryActTitle(chapter)}`,
-      this.storyVoiceLine(beat),
-      this.storyBeatLine(beat),
-      `Beat: ${chapter.storyRole}`,
-      '',
       mission.hook,
       '',
       `Goal: ${mission.primaryGoal}`,
@@ -4186,17 +4165,11 @@ export class CityScene extends Phaser.Scene {
   }
 
   private chapterBriefingText(chapter: StoryChapter): string {
-    const beat = this.chapterOpenerBeat(chapter);
     return [
       `CHAPTER ${chapter.order}`,
       chapter.title,
       '',
-      `Act: ${this.currentStoryActTitle(chapter)}`,
-      this.storyVoiceLine(beat),
-      this.storyBeatLine(beat),
-      `Role: ${chapter.storyRole}`,
-      '',
-      `Goal: ${chapter.combinedGoal}`,
+      chapter.combinedGoal,
       `City Standing: ${this.currentStoryCityStandingText()}`,
     ]
       .filter((line): line is string => Boolean(line))
@@ -4232,38 +4205,22 @@ export class CityScene extends Phaser.Scene {
     return [
       {
         text: [
-          'CHAPTER COMPLETE',
-          previousChapter.title,
+          `CHAPTER COMPLETE • ${previousChapter.title}`,
           '',
-          previousChapter.combinedGoal,
-          '',
-          `City Standing: ${this.currentStoryCityStandingText()}`,
-        ].join('\n'),
-        tone: 'complete',
-        beat: this.chapterOpenerBeat(previousChapter),
-        focusTarget: this.chapterOpenerFocus(previousChapter),
-        seconds: 1.8,
-        pauseGame: false,
-      },
-      {
-        text: [
           `NEXT CHAPTER • ${nextChapter.order}`,
           nextChapter.title,
           '',
-          `Act: ${this.currentStoryActTitle(nextChapter)}`,
-          this.storyVoiceLine(this.chapterOpenerBeat(nextChapter)),
-          this.storyBeatLine(this.chapterOpenerBeat(nextChapter)),
-          `Role: ${nextChapter.storyRole}`,
-          '',
           `Opening lead: ${nextMission.title}`,
           nextMission.primaryGoal,
+          '',
+          `City Standing: ${this.currentStoryCityStandingText()}`,
         ]
           .filter((line): line is string => Boolean(line))
           .join('\n'),
         tone: 'chapter',
         beat: this.chapterOpenerBeat(nextChapter),
         focusTarget: this.chapterOpenerFocus(nextChapter),
-        seconds: 2.2,
+        seconds: 2.6,
         pauseGame: false,
       },
     ];
@@ -4374,7 +4331,7 @@ export class CityScene extends Phaser.Scene {
           `CHAPTER ${chapter.order}`,
           chapter.title,
           '',
-          `Role: ${chapter.storyRole}`,
+          chapter.combinedGoal,
           `City Standing: ${this.currentStoryCityStandingText()}`,
         ].join('\n');
     this.showStoryPanel(
@@ -4558,12 +4515,9 @@ export class CityScene extends Phaser.Scene {
           : endHealth === null
             ? `Vehicle lost • started at ${Math.round(startHealth)}%`
             : `${Math.round(startHealth)}% → ${Math.round(endHealth)}%`;
-    const beat = chapter ? this.missionSummaryBeat(chapter, previousMission) : undefined;
     return {
       chapterTitle: chapter?.title ?? chapterId ?? 'Current chapter',
       title: previousMission.title,
-      voiceText: this.storyVoiceLine(beat),
-      beatText: this.storyBeatLine(beat),
       reward,
       outcome: previousMission.payoff,
       durationSeconds,
@@ -4593,10 +4547,7 @@ export class CityScene extends Phaser.Scene {
       'MISSION SUMMARY',
       card.title,
       '',
-      `Chapter: ${card.chapterTitle}`,
-      card.voiceText,
-      card.beatText,
-      `Objective Outcome: ${card.outcome}`,
+      card.outcome,
       `Story Changes: ${card.unlockText}`,
       `City Standing: ${card.cityStateText}`,
       card.nextText,
@@ -4605,7 +4556,7 @@ export class CityScene extends Phaser.Scene {
       `Duration: ${card.durationSeconds}s`,
       `Damage / Collateral: ${collateralText}`,
       `Vehicle Condition: ${card.vehicleConditionText}`,
-      `Faction Effects: ${card.factionEffectText}`,
+      `Aftermath: ${card.factionEffectText}`,
     ]
       .filter((line): line is string => Boolean(line))
       .join('\n');

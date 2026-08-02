@@ -128,17 +128,6 @@ async function acknowledgeStoryPanel(page: import('@playwright/test').Page): Pro
   });
 }
 
-async function advanceStoryPanelOnce(page: import('@playwright/test').Page): Promise<void> {
-  await page.evaluate(() => {
-    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
-      .__game;
-    const scene = game?.scene.getScene('City') as {
-      acknowledgeStoryPanel?: () => void;
-    };
-    scene?.acknowledgeStoryPanel?.();
-  });
-}
-
 async function acknowledgeVisibleStoryPanels(
   page: import('@playwright/test').Page,
   maxSteps = 4,
@@ -181,6 +170,21 @@ interface StoryRestartMetric {
   durationMs: number;
   pointerdownListeners: number;
   sameMinimapTexture: boolean;
+}
+
+interface PixelBox {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+  count: number;
+}
+
+interface StoryPanelMeasurement {
+  canvas: { w: number; h: number };
+  panel: PixelBox;
+  bannerVisible: boolean;
+  text: string;
 }
 
 async function measureStoryRestartStability(
@@ -241,6 +245,116 @@ async function measureStoryRestartStability(
     },
     { progress: storyProgress, repeats },
   );
+}
+
+function expectFullyVisible(label: string, box: PixelBox, canvas: { w: number; h: number }): void {
+  expect(box.count, `${label} should render on screen`).toBeGreaterThan(200);
+  expect(box.minX, `${label} left edge inside canvas`).toBeGreaterThanOrEqual(0);
+  expect(box.minY, `${label} top edge inside canvas`).toBeGreaterThanOrEqual(0);
+  expect(box.maxX, `${label} right edge inside canvas`).toBeLessThanOrEqual(canvas.w - 1);
+  expect(box.maxY, `${label} bottom edge inside canvas`).toBeLessThanOrEqual(canvas.h - 1);
+}
+
+async function measureVisibleStoryPanel(
+  page: import('@playwright/test').Page,
+): Promise<StoryPanelMeasurement> {
+  return page.evaluate(async () => {
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+    const game = (window as any).__game;
+    const scene = game?.scene.getScene('City');
+    if (!game || !scene?.storyPanel?.visible) throw new Error('Story panel is not visible');
+
+    const canvas: HTMLCanvasElement = game.canvas;
+    const w = canvas.width;
+    const h = canvas.height;
+    const gl: WebGLRenderingContext = game.renderer.gl;
+    const panelObjects = [
+      scene.storyPanel,
+      scene.storyPanelFrame,
+      scene.storyPanelAccent,
+      scene.storyPortraitBackdrop,
+      scene.storyPortraitFrame,
+      scene.storyPortraitBadge,
+      scene.storyPortraitMonogram,
+      scene.storyPortraitName,
+      scene.storyPortraitRole,
+      scene.storyPortraitKicker,
+    ];
+
+    const grab = (): Promise<Uint8Array> =>
+      new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          game.events.off('postrender', onPost);
+          reject(new Error('Timed out reading story panel pixels'));
+        }, 8000);
+        const onPost = (): void => {
+          game.events.off('postrender', onPost);
+          try {
+            const buf = new Uint8Array(w * h * 4);
+            gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+            clearTimeout(timer);
+            resolve(buf);
+          } catch (error) {
+            clearTimeout(timer);
+            reject(error as Error);
+          }
+        };
+        game.events.on('postrender', onPost);
+      });
+    const frame = (): Promise<void> => new Promise((resolve) => requestAnimationFrame(() => resolve()));
+    const boxOfDiff = (a: Uint8Array, b: Uint8Array): PixelBox => {
+      let minX = w;
+      let minBufY = h;
+      let maxX = -1;
+      let maxBufY = -1;
+      let count = 0;
+      for (let by = 0; by < h; by += 1) {
+        for (let x = 0; x < w; x += 1) {
+          const i = (by * w + x) * 4;
+          const delta =
+            Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]);
+          if (delta <= 24) continue;
+          count += 1;
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (by < minBufY) minBufY = by;
+          if (by > maxBufY) maxBufY = by;
+        }
+      }
+      return {
+        minX,
+        minY: count === 0 ? h : h - 1 - maxBufY,
+        maxX,
+        maxY: count === 0 ? -1 : h - 1 - minBufY,
+        count,
+      };
+    };
+
+    const wasPaused = scene.paused;
+    scene.paused = true;
+    await frame();
+    await frame();
+
+    panelObjects.forEach((object) => object.setVisible(false));
+    await frame();
+    await frame();
+    const base = await grab();
+
+    panelObjects.forEach((object) => object.setVisible(true));
+    await frame();
+    await frame();
+    const withPanel = await grab();
+
+    scene.paused = wasPaused;
+    await frame();
+
+    return {
+      canvas: { w, h },
+      panel: boxOfDiff(base, withPanel),
+      bannerVisible: !!scene.banner?.visible,
+      text: scene.storyPanel.text ?? '',
+    } satisfies StoryPanelMeasurement;
+  });
 }
 
 async function launchStoryModeWithOptions(
@@ -523,6 +637,8 @@ test('story chapter opener stages into a mission briefing that stays visible unt
   expect(opener.portraitMonogram).toBe('RV');
   expect(opener.text).toContain('CHAPTER 1');
   expect(opener.text).toContain('Dead Drop District');
+  expect(opener.text).not.toContain('Act:');
+  expect(opener.text).not.toContain('Role:');
   expect(opener.text).toContain('City Standing:');
   expect(opener.text).toContain('Press Enter or tap to continue');
 
@@ -576,11 +692,13 @@ test('story chapter opener stages into a mission briefing that stays visible unt
   expect(briefing.portraitRole).toContain('Returning wheelman');
   expect(briefing.portraitMonogram).toBe('RV');
   expect(briefing.text).toContain('MISSION BRIEF');
-  expect(briefing.text).toContain('Voice: Rook Vance');
-  expect(briefing.text).toContain('Beat: Back At The Waterfront');
+  expect(briefing.text).toContain('Rook lands in a district that already feels watched.');
   expect(briefing.text).toContain('Pressure:');
   expect(briefing.text).toContain('Failure:');
   expect(briefing.text).toContain('City Standing:');
+  expect(briefing.text).not.toContain('Act:');
+  expect(briefing.text).not.toContain('Voice:');
+  expect(briefing.text).not.toContain('Beat:');
   expect(briefing.text).toContain('Press Enter or tap to continue');
 
   await page.keyboard.press('Enter');
@@ -622,6 +740,28 @@ test('story HUD keeps objectives compact while the mission banner stays in the H
   expect(ui.hud).not.toContain('Night Ferry Run');
   expect(ui.bannerVisible).toBe(true);
   expect(ui.storyStateVisible).toBe(false);
+});
+
+test('story mission briefings stay fully on-screen and suppress the HUD banner on shorter viewports', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 720, height: 480 });
+  await launchStoryModeWithOptions(page, { acknowledgeBrief: false });
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => {
+    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
+      .__game;
+    const scene = game?.scene.getScene('City') as {
+      storyPanel?: { visible: boolean; text: string };
+    };
+    return !!scene?.storyPanel?.visible && scene.storyPanel.text.startsWith('MISSION BRIEF');
+  });
+
+  const measurement = await measureVisibleStoryPanel(page);
+
+  expect(measurement.text).toContain('MISSION BRIEF');
+  expect(measurement.bannerVisible).toBe(false);
+  expectFullyVisible('Story mission briefing', measurement.panel, measurement.canvas);
 });
 
 test('location-based story missions keep their start and route targets on the minimap', async ({
@@ -1454,12 +1594,15 @@ test('scripted encounter mission summaries keep their authored objective outcome
   expect(result.visible).toBe(true);
   expect(result.text).toContain('MISSION SUMMARY');
   expect(result.text).toContain('False Ambulance');
-  expect(result.text).toContain('Voice: Rook Vance');
-  expect(result.text).toContain('Beat: Back At The Waterfront');
   expect(result.text).toContain(
-    "Objective Outcome: The rescued contact confirms the cleaners are storing Nia's badge and paper trail in the Pier 9 office.",
+    "The rescued contact confirms the cleaners are storing Nia's badge and paper trail in the Pier 9 office.",
   );
+  expect(result.text).toContain('Story Changes: No new unlocks');
+  expect(result.text).toContain('Aftermath: No chapter-wide shifts');
   expect(result.text).toContain('Next: Last Call At Pier 9');
+  expect(result.text).not.toContain('Chapter:');
+  expect(result.text).not.toContain('Voice:');
+  expect(result.text).not.toContain('Beat:');
 });
 
 test('story mode resolves branch-dependent mission variants from saved outcomes', async ({
@@ -2303,29 +2446,37 @@ test('story mode can complete a longer multi-objective encounter and roll into t
     const scene = game?.scene.getScene('City') as {
       pendingStoryRestart?: unknown;
       storyPanel?: { text: string };
+      storyPanelQueue?: unknown[];
     };
     if (!scene?.pendingStoryRestart) return null;
-    return scene.storyPanel?.text ?? '';
+    return {
+      text: scene.storyPanel?.text ?? '',
+      queueLength: scene.storyPanelQueue?.length ?? 0,
+    };
   });
 
-  const completionText = (await completion.jsonValue()) as string;
+  const completionValue = (await completion.jsonValue()) as {
+    text: string;
+    queueLength: number;
+  };
 
-  expect(completionText).toContain('CHAPTER COMPLETE');
-  expect(completionText).toContain('Static On The Hospital Band');
+  expect(completionValue.text).toContain('CHAPTER COMPLETE • Static On The Hospital Band');
+  expect(completionValue.text).toContain('NEXT CHAPTER • 4');
+  expect(completionValue.text).toContain('Opening lead: Ghost Fare');
+  expect(completionValue.queueLength).toBe(0);
 
-  const nextChapterBeat = await page.waitForFunction(() => {
+  await page.evaluate(() => {
     const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
       .__game;
     const scene = game?.scene.getScene('City') as {
       pendingStoryRestart?: unknown;
-      storyPanel?: { text: string };
+      update(time: number, deltaMs: number): void;
     };
-    if (!scene?.pendingStoryRestart) return null;
-    const text = scene.storyPanel?.text ?? '';
-    return text.includes('NEXT CHAPTER') ? text : null;
+    if (!scene?.pendingStoryRestart) throw new Error('Expected a pending story restart');
+    for (let step = 0; step < 8 && scene.pendingStoryRestart; step += 1) {
+      scene.update(performance.now() + step * 1000, 1000);
+    }
   });
-
-  expect((await nextChapterBeat.jsonValue()) as string).toContain('Opening lead: Ghost Fare');
 
   const result = await page.waitForFunction(
     () => {
@@ -2345,9 +2496,11 @@ test('story mode can complete a longer multi-objective encounter and roll into t
       if (scene?.pendingStoryRestart) return null;
       if (scene?.storyProgress?.current?.chapterId !== 'meter-running') return null;
       if (scene.storyProgress.current.missionId !== 'ghost-fare') return null;
+      const text = scene.storyPanel?.text ?? '';
+      if (!text.startsWith('MISSION BRIEF\nGhost Fare')) return null;
       return {
         missionTitle: scene.world.mission?.title ?? '',
-        panel: scene.storyPanel?.text ?? '',
+        panel: text,
         unlocked: [...scene.storyProgress.unlockedChapterIds],
         completed: [...scene.storyProgress.completedChapterIds],
       };
@@ -2372,26 +2525,8 @@ test('story mode can complete a longer multi-objective encounter and roll into t
     ],
     completed: ['dead-drop-district', 'spare-parts-gospel', 'static-on-the-hospital-band'],
   });
-  expect(longEncounterValue.panel).toContain('NEXT CHAPTER • 4');
-  expect(longEncounterValue.panel).toContain('Opening lead: Ghost Fare');
-
-  await advanceStoryPanelOnce(page);
-
-  const missionBrief = await page.waitForFunction(() => {
-    const game = (window as unknown as { __game?: { scene: { getScene(name: string): unknown } } })
-      .__game;
-    const scene = game?.scene.getScene('City') as {
-      world: { mission?: { title: string } | null };
-      storyPanel?: { text: string };
-    };
-    if (scene?.world.mission?.title !== 'Ghost Fare') return null;
-    const text = scene.storyPanel?.text ?? '';
-    return text.startsWith('MISSION BRIEF\nGhost Fare') ? text : null;
-  });
-
-  const missionBriefText = (await missionBrief.jsonValue()) as string;
-  expect(missionBriefText).toContain('MISSION BRIEF');
-  expect(missionBriefText).toContain('Ghost Fare');
+  expect(longEncounterValue.panel).toContain('MISSION BRIEF');
+  expect(longEncounterValue.panel).toContain('Ghost Fare');
 });
 
 test('chapter completion preserves money, ammo, and health instead of resetting the run', async ({
