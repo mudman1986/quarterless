@@ -3673,12 +3673,20 @@ export class CityScene extends Phaser.Scene {
       this.dismissBanner();
       return;
     }
-    if (this.storyPanel.visible) return;
     this.banner.setText(content).setVisible(true);
     this.bannerCloseButton.setVisible(true);
     this.announceRemaining = Math.max(0, options.seconds ?? BANNER_DEFAULT_SECONDS);
     this.bannerStageKey = options.stageBound ? this.currentStoryStageKey() : null;
     this.layoutHud();
+  }
+
+  private maybeShowActiveObjectiveBanner(): void {
+    if (this.mode !== 'story' || !this.storyProgress?.current) return;
+    if (this.storyProgress.current.objectiveIndex < 0) return;
+    if (this.banner.visible || this.announceRemaining > 0) return;
+    const objective = this.world.missionObjective?.description?.trim() ?? '';
+    if (!objective) return;
+    this.showBanner(objective, { stageBound: true });
   }
 
   private shouldSuppressStageShiftBanner(missionId: string, nextStageId?: string): boolean {
@@ -4031,6 +4039,7 @@ export class CityScene extends Phaser.Scene {
     this.storyPanelAccent.setVisible(false);
     this.syncStoryPortrait(undefined);
     this.storyPanelQueue = [];
+    this.maybeShowActiveObjectiveBanner();
   }
 
   private showStoryPanel(
