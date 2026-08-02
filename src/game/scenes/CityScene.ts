@@ -3682,7 +3682,7 @@ export class CityScene extends Phaser.Scene {
 
   private maybeShowActiveObjectiveBanner(): void {
     if (this.mode !== 'story' || !this.storyProgress?.current) return;
-    if (this.storyProgress.current.objectiveIndex < 0) return;
+    if (this.selectingStoryMission()) return;
     if (this.banner.visible || this.announceRemaining > 0) return;
     const objective = this.world.missionObjective?.description?.trim() ?? '';
     if (!objective) return;
