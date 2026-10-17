@@ -27,7 +27,7 @@ import {
   type StoryLaunchRequest,
 } from './game/story/storyLaunchState';
 import { loadStoryMissionScorecards } from './game/story/storyMissionScorecards';
-import { chapterMissingSystems, formatStorySystem, summarizeStoryCityState } from './game/story/storyMode';
+import { summarizeStoryCityState } from './game/story/storyMode';
 import { arcadeGames as games, type ArcadeGame, type LaunchMode } from './games/catalog';
 
 let activeGame: GameRuntime | null = null;
@@ -65,11 +65,6 @@ function chapterCards(progress = createStoryProgress(STORY_MODE_PROTOTYPE)): str
               <span class="story-chapter-title">${chapter.title}</span>
               <span class="story-chapter-copy">${chapter.combinedGoal}</span>
               <span class="story-chapter-meta">${status} • ${completedMissionCount}/${chapter.missions.length} missions</span>
-              ${renderTagList(
-                chapterMissingSystems(chapter).map(formatStorySystem),
-                'story-tag-list story-tag-list--chapter',
-                'No tracked systems',
-              )}
             </button>`;
         })
         .join('');
@@ -123,20 +118,11 @@ function missionScorecardItems(): string {
             <span class="story-scorecard-metric"><strong>Reward</strong><span>$${card.reward}</span></span>
             <span class="story-scorecard-metric"><strong>Duration</strong><span>${card.durationSeconds}s</span></span>
             <span class="story-scorecard-metric"><strong>Vehicle</strong><span>${card.vehicleConditionText}</span></span>
-            <span class="story-scorecard-metric"><strong>Service</strong><span>${card.serviceLaneText}</span></span>
-            <span class="story-scorecard-metric"><strong>Faction</strong><span>${card.factionEffectText}</span></span>
+            <span class="story-scorecard-metric"><strong>Aftermath</strong><span>${card.factionEffectText}</span></span>
             <span class="story-scorecard-metric"><strong>City</strong><span>${card.cityStateText}</span></span>
             <span class="story-scorecard-metric"><strong>Story</strong><span>${card.unlockText}</span></span>
           </div>
           <span class="story-scorecard-copy">${card.nextText}</span>
-          ${renderTagList(
-            card.systemsText
-              .split('·')
-              .map((value) => value.trim())
-              .filter(Boolean),
-            'story-tag-list story-tag-list--scorecard',
-            'No tracked systems',
-          )}
         </li>`;
     })
     .join('');
@@ -152,7 +138,7 @@ function activeConsequenceItems(progress = createStoryProgress(STORY_MODE_PROTOT
       ([branchId, outcomeId]) => `
         <li class="story-archive-item">
           <span class="story-archive-title">${storyBranchOutcomeTitle(branchId, outcomeId)}</span>
-          <span class="story-archive-copy">${branchId}</span>
+          <span class="story-archive-copy">This choice is still shaping how the city answers Rook.</span>
         </li>`,
     )
     .join('');
@@ -226,20 +212,6 @@ type StoryRunOverview = {
   scoreText: string;
   choiceTitles: string[];
 };
-
-function renderTagList(
-  tags: readonly string[],
-  className = 'story-tag-list',
-  emptyText = 'None',
-): string {
-  const values = tags.filter((tag) => tag.trim().length > 0);
-  if (values.length === 0) {
-    return `<span class="${className}"><span class="story-tag">${emptyText}</span></span>`;
-  }
-  return `<span class="${className}">${values
-    .map((tag) => `<span class="story-tag">${tag}</span>`)
-    .join('')}</span>`;
-}
 
 function storyBranchOutcomeTitle(branchId: string, outcomeId: string): string {
   for (const act of STORY_MODE_PROTOTYPE.acts) {

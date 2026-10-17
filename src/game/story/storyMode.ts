@@ -127,6 +127,8 @@ export interface StoryMissionPlan {
   secondaryPressure: string;
   failureState: string;
   payoff: string;
+  /** Optional in-world marker used to start the mission before the authored objectives begin. */
+  startMarker?: Vec2;
   presentation?: StoryMissionPresentation;
   branchOutcome?: StoryMissionBranchOutcome;
   requiredSystems?: readonly StorySystem[];
@@ -289,6 +291,9 @@ export interface StoryRuntimeScript {
   stages?: readonly StoryRuntimeStage[];
 }
 
+/** The visible ring and activation radius used by story mission markers. */
+export const STORY_MISSION_MARKER_RADIUS = 52;
+
 function mapStoryObjectivePosition(objective: Objective, mapPosition: (position: Vec2) => Vec2): Objective {
   if (objective.kind === 'reach' || objective.kind === 'defend') {
     return { ...objective, target: mapPosition(objective.target) };
@@ -340,6 +345,7 @@ export function mapStoryMissionPlanPositions(
 ): StoryMissionPlan {
   return {
     ...plan,
+    startMarker: plan.startMarker ? mapPosition(plan.startMarker) : undefined,
     prototypeRuntime: plan.prototypeRuntime
       ? {
           ...plan.prototypeRuntime,
@@ -793,13 +799,14 @@ function storyMissionEntryObjective(plan: StoryMissionPlan): Objective | null {
     kind: 'reach',
     description: `Go to the mission marker to start ${plan.title}`,
     target: start,
-    radius: 24,
+    radius: STORY_MISSION_MARKER_RADIUS,
   };
 }
 
 export function storyMissionStartPosition(
-  plan: Pick<StoryMissionPlan, 'prototypeRuntime' | 'prototypeScript'>,
+  plan: Pick<StoryMissionPlan, 'startMarker' | 'prototypeRuntime' | 'prototypeScript'>,
 ): Vec2 | null {
+  if (plan.startMarker) return plan.startMarker;
   const firstObjective = plan.prototypeRuntime?.objectives[0];
   if (firstObjective?.kind === 'reach') return firstObjective.target;
   if (firstObjective?.kind === 'defend') return firstObjective.target;
